@@ -26,6 +26,7 @@
 #include "build123d/objects.hpp"
 #include "build123d/operations.hpp"
 #include "build123d/pack.hpp"
+#include "build123d/pbr.hpp"
 #include "build123d/pcbway.hpp"
 #include "build123d/persistence.hpp"
 #include "build123d/text.hpp"
