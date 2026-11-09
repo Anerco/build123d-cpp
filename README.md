@@ -44,6 +44,10 @@ export_step(plate, "plate.step")
   - convexity, mass/material/inertia, hashing, Gordon surfaces, wrapping faces onto surfaces;
   - the topology helpers `topo_explore_connected_edges`, `topo_explore_common_vertex`,
     `topo_distance_to`, `new_edges`, `delta`, `polar` and `edges_to_wires`.
+- **Materials**: `FinishedMaterial` with bd_materials' catalog of 95 materials, its finishes,
+  processes and colors, and their physically based looks (`PbrProperties`, with threejs_materials'
+  presets). Assigning a material colors the shape, `mass()` uses its density, and `export_gltf`
+  writes the looks with their textures.
 - **Assemblies**: `children`, with `parent()`, `root()`, `path()`, `descendants()`, `leaves()`,
   `global_location()`, … (build123d's anytree tree).
 - **Joints**: `RigidJoint`, `RevoluteJoint`, `LinearJoint`, `CylindricalJoint`, `BallJoint`,
@@ -75,7 +79,8 @@ export_step(plate, "plate.step")
   `make_face`, `make_hull`, `make_brake_formed`, `trace`, `bounding_box`, `pack`.
 - **Import and export**:
   - `export_step` (assemblies with names and colors), `export_brep`, `export_stl`,
-    `export_gltf` (glTF and GLB) and `export_obj`; 3MF and STL meshes with `Mesher`;
+    `export_gltf` (glTF and GLB, with the materials' looks) and `export_obj`; 3MF and STL meshes
+    with `Mesher`;
   - 2D drawings with `ExportSVG` and `ExportDXF`, from hidden-line views (`project_to_viewport`);
   - `import_svg`, `import_svg_as_buildline_code`, `import_dxf`, `import_step`, `import_brep`,
     `import_stl`, and `detect_primitives` (faces from a mesh);
@@ -159,6 +164,17 @@ target_link_libraries(my_app PRIVATE build123d::build123d)
 The bundled single-line font is installed to `<prefix>/share/build123d/fonts`. The library looks
 for it in `$BUILD123D_FONT_DIR`, next to the program or library, in the install prefix and in the
 source tree.
+
+The textures of the materials' looks (wood, brushed metal, 3D-printed layers, fabrics, …:
+67 PNG files, 87 MB) aren't part of the sources. `scripts/fetch-textures.sh` downloads them into
+`data/textures`; it fetches the pinned threejs_materials wheel from PyPI, checks its SHA-256 and
+extracts only the textures. `scripts/setup-toolchain.sh` offers to run it, and `cmake --install`
+installs them to `<prefix>/share/build123d/textures`. The library looks for them in
+`$BUILD123D_TEXTURE_DIR`, next to the library, in the install prefix and in the source tree.
+Looks without textures (plain metals, plastics, glass) don't need them. Without them,
+`export_gltf` of a textured look throws `std::runtime_error`, naming the script. Assigning a
+textured catalog material still gives the shape its color; a textured material with choices of
+its own leaves the color unchanged, with a warning.
 
 Programs that use VTK can `#include <build123d/vtk.hpp>` for `to_vtk_poly_data`, which returns a
 `vtkPolyData`; link VTK yourself. The rest of the library doesn't depend on VTK.
@@ -293,6 +309,11 @@ Smaller differences:
   formatted as floats.
 - `shape_to_html`, `to_vtkpoly_string` and `vtk_mesh` don't need VTK. The VTK text has the same
   content as Python's but isn't compressed.
+- Materials: images that Python re-encodes for glTF (packed metallic/roughness, palette
+  textures) are compressed by lodepng rather than zlib, so their bytes differ but their pixels
+  don't. Textures must be PNG files, as all of threejs_materials' are. Numbers that Python keeps
+  as ints are floats: in the catalog's `repr()` (`density=2700.0`) and in `PbrProperties::from_dict`
+  data written to glTF (`[1.0, 1.0]`).
 - `to_bytes` uses its own format, so it can't read Python pickles (the shape data inside them,
   `serialize_shape`'s bytes, is the same). Unlike Python, it can save a shape that has a color.
 - `export_to_pcbway` only opens http(s) pages, and never through a shell.
@@ -310,10 +331,13 @@ functions, `add`/`insert`, locations used as context managers and the `mode=` ar
 include/build123d/   public headers (build123d.hpp includes them all; vtk.hpp needs VTK)
 src/                 implementation
 data/fonts/          the bundled single-line font (SIL Open Font License)
+data/textures/       the materials' textures, once scripts/fetch-textures.sh has fetched them
+third_party/         lodepng (PNG files)
 examples/            ports of build123d's algebra examples; show.hpp prints results
 tests/test_*.cpp     unit tests
 tests/compare/       comparison with Python build123d
-scripts/             toolchain setup; render_examples.py draws docs/examples.png
+scripts/             toolchain setup, fetch-textures.sh, the gen_*.py generators of the tables
+                     in src/ (from the Python packages), render_examples.py (docs/examples.png)
 cmake/               the package config for find_package(build123d)
 ```
 
@@ -321,6 +345,13 @@ cmake/               the package config for find_package(build123d)
 
 This is a port of build123d, which is licensed under the Apache License 2.0; the files in
 `examples/` are ports of build123d's examples, and `src/template_render.inc` is build123d's
-`template_render.js`. Keep build123d's license and notices when distributing this code. The
-bundled Relief SingleLine CAD font is under the SIL Open Font License
-(`data/fonts/reliefsingleline/OFL.txt`).
+`template_render.js`. The material system is a port of bd_materials and threejs_materials (both
+Apache License 2.0), with their catalog and presets generated from their sources. Keep these
+projects' licenses and notices when distributing this code.
+
+Other files have their own licenses:
+- the bundled Relief SingleLine CAD font: SIL Open Font License
+  (`data/fonts/reliefsingleline/OFL.txt`);
+- lodepng, used for PNG files: zlib license (`third_party/lodepng/LICENSE`);
+- the textures that `scripts/fetch-textures.sh` downloads: CC0 (ambientCG), MIT (AMD GPUOpen)
+  and Apache License 2.0 (threejs_materials).
