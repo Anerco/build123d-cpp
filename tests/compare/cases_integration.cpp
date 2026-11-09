@@ -29,6 +29,47 @@ V joint_info(const Part& p) {
 }  // namespace
 
 COMPARE_CASES {
+    compare::add_value("integ_color_material_lookup", [] {
+        const auto c = [](const std::optional<Color>& color) { return color ? V::list_of(color->to_tuple()) : V(); };
+        const auto m = [](const std::optional<FinishedMaterial>& material) {
+            return material ? V(material->name()) : V();
+        };
+        std::vector<V> out;
+        Compound assembly = Compound::make_assembly({Box(1, 1, 1), Pos(3, 0, 0) * Sphere(1)});
+        assembly.color = Color("red");
+        out.push_back(c(assembly.children[0].color));  // the parent's
+        assembly.color = Color("blue");
+        out.push_back(c(assembly.children[0].color));  // kept from the first read
+        out.push_back(c(assembly.children[1].color));
+        out.push_back(c(assembly.children[0].color.raw()));
+        Compound inner = Compound::make_assembly({Box(1, 1, 1)});
+        Compound outer = Compound::make_assembly({inner});
+        outer.color = Color("green");
+        out.push_back(c(outer.children[0].children[0].color));  // two levels up
+        out.push_back(c(outer.children[0].color.raw()));       // the level between keeps none
+        Part box = Box(1, 1, 1);
+        box.material = "aluminum";
+        out.push_back(c(box.color));  // the material's look
+        out.push_back(m(box.material));
+        box.color = Color("red");
+        box.material = std::nullopt;
+        out.push_back(c(box.color));
+        Compound metal = Compound::make_assembly({Box(1, 1, 1)});
+        metal.material = "Mild Steel";
+        out.push_back(m(metal.children[0].material));
+        out.push_back(c(metal.children[0].color));
+        Compound holder = Compound::make_assembly({Box(1, 1, 1)});
+        holder.color = Color("red");
+        Part target = Box(2, 2, 2);
+        holder.children[0].copy_attributes_to(target);  // copies own values only
+        out.push_back(c(target.color.raw()));
+        Part copper = Box(1, 1, 1);
+        copper.material = "copper";
+        const BasePartObject object(copper);  // built with the part's material: its look's color
+        out.push_back(c(object.color));
+        out.push_back(m(object.material));
+        return V::list(out);
+    });
     compare::add_value("integ_unit_tables", [] {
         std::vector<V> per_meter, per_kilogram;
         for (const Unit u : {Unit::IN, Unit::FT, Unit::MC, Unit::MM, Unit::CM, Unit::M}) {

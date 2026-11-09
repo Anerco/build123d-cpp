@@ -132,3 +132,29 @@ TEST(readme_python_to_cpp_table) {
     CHECK_NEAR(cast_shape<Solid>(untyped).volume(), 64, 1e-9);
     CHECK(std::visit([](const auto& typed) { return typed.shape_type(); }, cast_shape(untyped)) == ShapeType::SOLID);
 }
+
+TEST(color_material_properties) {
+    Compound assembly = Compound::make_assembly({Box(1, 1, 1)});
+    assembly.color = "red";
+    const std::optional<Color> inherited = assembly.children[0].color;
+    CHECK(inherited && *inherited == Color("red"));
+    auto snapshot = assembly.children[0].color;  // a value of its own
+    snapshot = Color("blue");
+    CHECK(assembly.children[0].color == Color("red"));
+    CHECK(snapshot == Color("blue"));
+
+    Part part = Box(1, 1, 1);
+    CHECK(part.color == std::nullopt);
+    part.color = assembly.color;
+    CHECK(part.color.raw() == Color("red"));
+    part.color.set_raw(std::nullopt);
+    CHECK(!part.color);
+
+    part.material = std::string("aluminum");
+    CHECK(part.material->name() == "Alu_G6061_T6");
+    CHECK(part.color.has_value());  // the material's look
+    const Part copy = part;
+    CHECK(copy.material->name() == "Alu_G6061_T6" && copy.color == part.color);
+    part.material.set_raw(std::nullopt);
+    CHECK(!part.material && part.color.has_value());
+}

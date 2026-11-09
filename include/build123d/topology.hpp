@@ -245,6 +245,88 @@ public:                                                                         
     }
 
 // ---------------------------------------------------------------------------
+// Shape.color and Shape.material
+// ---------------------------------------------------------------------------
+
+namespace detail {
+/// The reading side of build123d's color and material properties, used like a
+/// std::optional<T>: the shape's own value or, when it has none, the nearest ancestor's in the
+/// assembly tree, which the shape then keeps as its own (as build123d's getters do).
+template <class T, class Self>
+class InheritedAttribute {
+public:
+    const std::optional<T>& get() const { return static_cast<const Self&>(*this).resolve(); }
+    operator const std::optional<T>&() const { return get(); }  // NOLINT(google-explicit-constructor)
+    explicit operator bool() const { return get().has_value(); }
+    bool has_value() const { return get().has_value(); }
+    const T& operator*() const { return *get(); }
+    const T* operator->() const { return &*get(); }
+    const T& value() const { return get().value(); }
+    T value_or(const T& fallback) const { return get().value_or(fallback); }
+    /// The shape's own value, without the lookup (build123d's _color or _material).
+    const std::optional<T>& raw() const { return value_; }
+    /// Set the shape's own value as it is, without the material setter's recoloring.
+    void set_raw(const std::optional<T>& value) { value_ = value; }
+
+    friend bool operator==(const InheritedAttribute& a, const InheritedAttribute& b) { return a.get() == b.get(); }
+    friend bool operator==(const InheritedAttribute& a, const std::optional<T>& b) { return a.get() == b; }
+    friend bool operator==(const InheritedAttribute& a, const T& b) { return a.get() == b; }
+    friend bool operator==(const InheritedAttribute& a, std::nullopt_t) { return !a.get(); }
+
+protected:
+    mutable std::optional<T> value_;
+};
+}  // namespace detail
+
+/// Shape::color, build123d's color property. Assign a Color, a color name or std::nullopt;
+/// read it like a std::optional<Color> (see detail::InheritedAttribute). A copy of the
+/// property on its own is a snapshot of the value.
+class ShapeColor : public detail::InheritedAttribute<Color, ShapeColor> {
+public:
+    ShapeColor(const ShapeColor& other) : owner_(nullptr) { value_ = other.get(); }
+    ShapeColor& operator=(const Color& color) { value_ = color; return *this; }
+    ShapeColor& operator=(const std::optional<Color>& color) { value_ = color; return *this; }
+    ShapeColor& operator=(std::nullopt_t) { value_.reset(); return *this; }
+    ShapeColor& operator=(const char* name) { value_ = Color(name); return *this; }
+    /// `a.color = b.color` reads b's color as build123d does, lookup included.
+    ShapeColor& operator=(const ShapeColor& other) { value_ = other.get(); return *this; }
+    void reset() { value_.reset(); }
+
+private:
+    friend class Shape;
+    friend class detail::InheritedAttribute<Color, ShapeColor>;
+    explicit ShapeColor(const Shape* owner) : owner_(owner) {}
+    ShapeColor(const Shape* owner, const ShapeColor& other) : owner_(owner) { value_ = other.value_; }
+    const std::optional<Color>& resolve() const;
+    const Shape* owner_;
+};
+
+/// Shape::material, build123d's material property. Assigning a catalog name or a
+/// FinishedMaterial also gives the shape the color of the material's look (build123d's
+/// setter); std::nullopt clears it. Read it like a std::optional<FinishedMaterial> (see
+/// detail::InheritedAttribute). A copy of the property on its own is a snapshot of the value.
+class ShapeMaterial : public detail::InheritedAttribute<FinishedMaterial, ShapeMaterial> {
+public:
+    ShapeMaterial(const ShapeMaterial& other) : owner_(nullptr) { value_ = other.get(); }
+    ShapeMaterial& operator=(const FinishedMaterial& material) { return *this = std::optional(material); }
+    ShapeMaterial& operator=(const std::optional<FinishedMaterial>& material);
+    ShapeMaterial& operator=(const std::string& name) { return *this = FinishedMaterial(name); }
+    ShapeMaterial& operator=(const char* name) { return *this = FinishedMaterial(name); }
+    ShapeMaterial& operator=(std::nullopt_t) { value_.reset(); return *this; }
+    /// `a.material = b.material` reads b's material as build123d does, lookup included.
+    ShapeMaterial& operator=(const ShapeMaterial& other) { return *this = other.get(); }
+    void reset() { value_.reset(); }
+
+private:
+    friend class Shape;
+    friend class detail::InheritedAttribute<FinishedMaterial, ShapeMaterial>;
+    explicit ShapeMaterial(Shape* owner) : owner_(owner) {}
+    ShapeMaterial(Shape* owner, const ShapeMaterial& other) : owner_(owner) { value_ = other.value_; }
+    const std::optional<FinishedMaterial>& resolve() const;
+    Shape* owner_;
+};
+
+// ---------------------------------------------------------------------------
 // Shape
 // ---------------------------------------------------------------------------
 
@@ -256,9 +338,12 @@ public:
     using topo_type = Shape;
 
     std::string label;
-    std::optional<Color> color;
-    /// What the shape is made of (mass() reads its density); see materials.hpp.
-    std::optional<FinishedMaterial> material;
+    /// The shape's color, or else its nearest ancestor's (see ShapeColor).
+    ShapeColor color{this};
+    /// What the shape is made of (mass() reads its density), or else what its nearest
+    /// ancestor is made of; assigning one also colors the shape (see ShapeMaterial,
+    /// materials.hpp).
+    ShapeMaterial material{this};
     /// Assembly children (with their own labels/colors); see Compound::make_assembly.
     ShapeChildren children;
     /// Joints bound to this shape, by label (see joints.hpp).
@@ -498,8 +583,8 @@ protected:
         T result(shape);
         Shape& base = result;
         base.label = label;
-        base.color = color;
-        base.material = material;
+        base.color.set_raw(color.raw());
+        base.material.set_raw(material.raw());
         base.children.assign_raw(children.items_);
         base.joints = joints;
         base.topo_path_ = topo_path_;
@@ -508,8 +593,8 @@ protected:
     }
     void copy_metadata_from(const Shape& other) {
         label = other.label;
-        color = other.color;
-        material = other.material;
+        color.set_raw(other.color.raw());
+        material.set_raw(other.material.raw());
     }
     void require_not_null(const char* what) const;
 
@@ -554,8 +639,8 @@ struct ShapeAccess {
     /// copies bound to `to`.
     static void copy_attributes(const Shape& from, Shape& to) {
         to.label = from.label;
-        to.color = from.color;
-        to.material = from.material;
+        to.color.set_raw(from.color.raw());
+        to.material.set_raw(from.material.raw());
         to.children.assign_raw(from.children.items_);
         to.joints = from.joints;
         to.topo_path_ = from.topo_path_;

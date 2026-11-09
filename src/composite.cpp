@@ -97,11 +97,11 @@ Curve::Curve(const TopoDS_Shape& obj) : Compound(obj) {}
 Curve::Curve(const Compound& compound) : Compound(compound) { check_dim(1, "Curve"); }
 Curve::Curve(const Edge& edge) : Compound(edge.wrapped()) {
     label = edge.label;
-    color = edge.color;
+    color.set_raw(edge.color.raw());
 }
 Curve::Curve(const Wire& wire) : Compound(wire.wrapped()) {
     label = wire.label;
-    color = wire.color;
+    color.set_raw(wire.color.raw());
 }
 
 ShapeList<Wire> Curve::wires(Select select) const { return Wire::combine(std::vector<Edge>(edges(select))); }
@@ -123,14 +123,14 @@ Sketch::Sketch(const TopoDS_Shape& obj) : Compound(obj) {}
 Sketch::Sketch(const Compound& compound) : Compound(compound) { check_dim(2, "Sketch"); }
 Sketch::Sketch(const Face& face) : Compound(face.wrapped()) {
     label = face.label;
-    color = face.color;
+    color.set_raw(face.color.raw());
 }
 
 Part::Part(const TopoDS_Shape& obj) : Compound(obj) {}
 Part::Part(const Compound& compound) : Compound(compound) { check_dim(3, "Part"); }
 Part::Part(const Solid& solid) : Compound(solid.wrapped()) {
     label = solid.label;
-    color = solid.color;
+    color.set_raw(solid.color.raw());
 }
 
 // ---------------------------------------------------------------------------

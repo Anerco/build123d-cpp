@@ -5,6 +5,7 @@
 #include <TopoDS.hxx>
 
 #include "internal.hpp"
+#include "pbr_colors.hpp"
 
 namespace build123d {
 
@@ -141,8 +142,8 @@ void ShapeChildren::assign_raw(const std::vector<Shape>& shapes) {
 // Every data member of Shape must be handled in these four functions.
 Shape::Shape(const Shape& other)
     : label(other.label),
-      color(other.color),
-      material(other.material),
+      color(this, other.color),
+      material(this, other.material),
       children(other.children),
       joints(other.joints),
       obj_(other.obj_),
@@ -153,8 +154,8 @@ Shape::Shape(const Shape& other)
 
 Shape::Shape(Shape&& other) noexcept
     : label(std::move(other.label)),
-      color(std::move(other.color)),
-      material(std::move(other.material)),
+      color(this, other.color),
+      material(this, other.material),
       children(std::move(other.children)),
       joints(std::move(other.joints)),
       obj_(std::move(other.obj_)),
@@ -167,8 +168,8 @@ Shape::Shape(Shape&& other) noexcept
 Shape& Shape::operator=(const Shape& other) {
     if (this != &other) {
         label = other.label;
-        color = other.color;
-        material = other.material;
+        color.set_raw(other.color.raw());
+        material.set_raw(other.material.raw());
         children.assign_raw(other.children.items_);
         joints = other.joints;
         obj_ = other.obj_;
@@ -182,8 +183,8 @@ Shape& Shape::operator=(const Shape& other) {
 Shape& Shape::operator=(Shape&& other) noexcept {
     if (this != &other) {
         label = std::move(other.label);
-        color = std::move(other.color);
-        material = std::move(other.material);
+        color.set_raw(other.color.raw());
+        material.set_raw(other.material.raw());
         children.items_ = std::move(other.children.items_);
         other.children.items_.clear();
         joints = std::move(other.joints);
@@ -334,6 +335,56 @@ Location Shape::global_location() const {
         result = result * node->location();
     }
     return result;
+}
+
+// ---------------------------------------------------------------------------
+// Shape.color and Shape.material (build123d's properties)
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// The color of a material's look, which build123d's material setter gives the shape
+/// (material.pbr.interpolate_color()).
+std::optional<Color> material_look_color(const FinishedMaterial& material) {
+    if (material.color) return std::nullopt;
+    const auto rgba = detail::catalog_pbr_color(material.material.name);
+    if (!rgba) return std::nullopt;
+    return Color((*rgba)[0], (*rgba)[1], (*rgba)[2], (*rgba)[3]);
+}
+
+}  // namespace
+
+// build123d's getters: without a value of its own, the shape takes its nearest ancestor's.
+const std::optional<Color>& ShapeColor::resolve() const {
+    if (!value_ && owner_ != nullptr) {
+        for (const Shape* node = owner_->parent(); node != nullptr; node = node->parent()) {
+            if (node->color.raw()) {
+                value_ = node->color.raw();
+                break;
+            }
+        }
+    }
+    return value_;
+}
+
+const std::optional<FinishedMaterial>& ShapeMaterial::resolve() const {
+    if (!value_ && owner_ != nullptr) {
+        for (const Shape* node = owner_->parent(); node != nullptr; node = node->parent()) {
+            if (node->material.raw()) {
+                value_ = node->material.raw();
+                break;
+            }
+        }
+    }
+    return value_;
+}
+
+ShapeMaterial& ShapeMaterial::operator=(const std::optional<FinishedMaterial>& material) {
+    value_ = material;
+    if (value_ && owner_ != nullptr) {
+        if (const std::optional<Color> look = material_look_color(*value_)) owner_->color = *look;
+    }
+    return *this;
 }
 
 }  // namespace build123d
