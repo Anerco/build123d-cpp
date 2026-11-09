@@ -1,9 +1,12 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <tuple>
 
 #include "build123d/objects.hpp"
+#include "build123d/text.hpp"
 #include "internal.hpp"
+#include "py_compat.hpp"
 
 namespace build123d {
 
@@ -334,9 +337,23 @@ Superellipse::Superellipse(double width_in, double height, double order_in, int 
       point_count(point_count_in),
       align(align_in) {}
 
+namespace {
+
+/// Text's single_line_width: 4% of the font size by default, else above 0.
+double text_line_width(double font_size, std::optional<double> single_line_width) {
+    if (!single_line_width) return 0.04 * font_size;
+    if (*single_line_width <= 0.0) {
+        throw std::invalid_argument("single_line_width (" + detail::py_float_repr(*single_line_width) +
+                                    ") must be greater than 0");
+    }
+    return *single_line_width;
+}
+
+}  // namespace
+
 Text::Text(const std::string& text, double size, const TextOptions& o)
     : BaseSketchObject(Compound::make_text(text, size, o.font, o.font_path, o.font_style, o.text_align, o.align,
-                                           o.position_on_path, o.path),
+                                           o.position_on_path, o.path, text_line_width(size, o.single_line_width)),
                        o.rotation, std::nullopt),
       txt(text),
       font_size(size),
@@ -346,6 +363,10 @@ Text::Text(const std::string& text, double size, const TextOptions& o)
       text_align(o.text_align),
       align(o.align),
       text_path(o.path),
-      position_on_path(o.position_on_path) {}
+      position_on_path(o.position_on_path),
+      single_line_width(text_line_width(size, o.single_line_width)) {
+    // The font that was used
+    std::tie(font, font_path, std::ignore) = Compound::resolve_font(o.font, o.font_path, o.font_style);
+}
 
 }  // namespace build123d

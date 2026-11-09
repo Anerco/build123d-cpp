@@ -1,5 +1,7 @@
 """Python twins of cases_objects.cpp (objects, operations, text and drafting)."""
 
+import os
+import tempfile
 from math import cos, exp, sin, sqrt
 
 from scipy.optimize import minimize, minimize_scalar
@@ -7,6 +9,8 @@ from scipy.spatial import Voronoi
 
 from build123d import *  # noqa: F403
 from build123d.pack_utils import _pack2d
+from build123d.text import FONT_ASPECT, FontInfo, FontManager
+from OCP.TCollection import TCollection_AsciiString
 from build123d.topology.utils import tuplify
 
 from values import V
@@ -384,6 +388,163 @@ RANDOM_SLOTS = [
     (4, 2), (5, 1), (18, 2), (4, 3), (4, 3), (6, 2), (12, 11), (20, 2), (11, 4), (16, 3),
     (18, 8), (12, 6), (13, 12), (10, 6), (9, 4), (5, 1), (10, 9), (10, 6), (4, 3), (5, 3),
 ]  # fmt: skip
+
+
+def _occt_messages_to_stderr():
+    """OCCT prints its messages (e.g. font substitutions) through C's buffered stdout, which can
+    split the JSON line of a case; send them to stderr instead (the C++ side shares one stream)."""
+    from OCP.Message import Message, Message_Gravity, Message_PrinterOStream
+
+    messenger = Message.DefaultMessenger_s()
+    messenger.RemovePrinters(Message_PrinterOStream.get_type_descriptor_s())
+    messenger.AddPrinter(Message_PrinterOStream("cerr", False, Message_Gravity.Message_Info))
+
+
+_occt_messages_to_stderr()
+
+BUNDLED_FONT = os.path.join(
+    os.path.dirname(__import__("build123d").__file__), "data/fonts/reliefsingleline/ReliefSingleLineCAD-Regular.ttf"
+)
+DEJAVU = "/usr/share/fonts/truetype/dejavu/"
+
+
+def font_path_value(path):
+    """A font path, from reliefsingleline/ on for the bundled font (installed elsewhere in C++)."""
+    i = path.find("reliefsingleline/")
+    return path[i:] if i >= 0 else path
+
+
+def font_info_values(fonts):
+    return V([[f.name, [s.name for s in f.styles]] for f in fonts])
+
+
+def system_font_values(font, style):
+    aspect = FONT_ASPECT[style]
+    return [font.FontName().ToCString(), font_path_value(font.FontPath(aspect).ToCString()), font.FontFaceId(aspect)]
+
+
+def top_level_values(compound):
+    shapes = compound.get_top_level_shapes()
+    return V([[type(s).__name__, len(s.edges()), s.length if hasattr(s, "length") else 0] for s in shapes])
+
+
+def obj_text_attrs():
+    t = Text(
+        "Hi",
+        8,
+        font_style=FontStyle.BOLD,
+        text_align=(TextAlign.LEFT, TextAlign.BOTTOM),
+        align=(Align.MIN, Align.MAX),
+        position_on_path=0.25,
+        rotation=15,
+    )
+    s = Text("Hey", 5, font="singleline", single_line_width=0.3)
+    return V(
+        {
+            "txt": t.txt,
+            "font_size": t.font_size,
+            "font": t.font,
+            "font_path": font_path_value(t.font_path),
+            "font_style": t.font_style,
+            "text_align": list(t.text_align),
+            "align": list(t.align),
+            "position_on_path": t.position_on_path,
+            "single_line_width": t.single_line_width,
+            "rotation": t.rotation,
+            "singleline": [s.font, font_path_value(s.font_path), s.single_line_width],
+        }
+    )
+
+
+def obj_text_styles_attrs():
+    out = []
+    for font in ["Arial", "DejaVu Sans Mono", "singleline"]:
+        for style in FontStyle:
+            t = Text("Ab", 4, font=font, font_style=style)
+            out.append([t.font, font_path_value(t.font_path)])
+    return V(out)
+
+
+def obj_text_font_path_attrs():
+    a = Text("Hi", 6, font_path=DEJAVU + "DejaVuSans-Bold.ttf")
+    b = Text("Hi", 6, font="DejaVu Sans Mono", font_path=DEJAVU + "DejaVuSansMono.ttf")
+    c = Text("Hi", 6, font="nothing", font_path=DEJAVU + "DejaVuSerif.ttf", font_style=FontStyle.BOLD)
+    return V([[x.font, x.font_path] for x in (a, b, c)])
+
+
+def obj_text_check_find():
+    manager = FontManager()
+    good = manager.check_font(BUNDLED_FONT)
+    bad = manager.check_font("reliefsingleline/ReliefSingleLineCAD-Regular.ttf")
+    found = manager.find_font("Relief SingleLine CAD", FontStyle.REGULAR)
+    other = manager.find_font("build123d", FontStyle.REGULAR)
+    return V(
+        [
+            font_path_value(good.FontPath(FONT_ASPECT[FontStyle.REGULAR]).ToCString()),
+            bad is None,
+            found.FontName().ToCString(),
+            found.IsSingleStrokeFont(),
+            other.FontName().ToCString() != "build123d",
+        ]
+    )
+
+
+def obj_text_register_fonts():
+    manager = FontManager()
+    out = []
+    for path in [
+        BUNDLED_FONT,
+        DEJAVU + "DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/ubuntu/Ubuntu[wdth,wght].ttf",
+        "/usr/share/fonts/truetype/ubuntu/UbuntuMono-Italic[wght].ttf",
+        "/usr/share/fonts/opentype/urw-base35/URWBookman-DemiItalic.otf",
+    ]:
+        out.append(manager.register_font(path))
+    out.append(system_font_values(manager.find_font("Ubuntu Condensed", FontStyle.BOLD), FontStyle.BOLD))
+    out.append(system_font_values(manager.find_font("Ubuntu Mono Medium", FontStyle.ITALIC), FontStyle.ITALIC))
+    return V(out)
+
+
+def obj_text_register_single_stroke():
+    manager = FontManager()
+    names = manager.register_font(DEJAVU + "DejaVuSansMono-Bold.ttf", override=True, single_stroke=True)
+    font = manager.find_font(names[0], FontStyle.BOLD)
+    result = [names, font.IsSingleStrokeFont(), len(Compound.make_text("A", 5, names[0], font_style=FontStyle.BOLD).edges())]
+    manager.register_font(DEJAVU + "DejaVuSansMono-Bold.ttf", override=True, single_stroke=False)
+    return V(result)
+
+
+def obj_text_register_folder():
+    return V(sorted(FontManager().register_folder(DEJAVU)))
+
+
+def obj_text_register_corrupt():
+    path = os.path.join(tempfile.gettempdir(), "build123d_corrupt.ttf")
+    with open(path, "wb") as f:
+        f.write(b"not a font")
+    return V(FontManager().register_font(path))
+
+
+def obj_text_register_collection_as_ttf():
+    from fontTools.ttLib import TTCollection, TTFont
+
+    collection = TTCollection()
+    collection.fonts = [TTFont(BUNDLED_FONT), TTFont(DEJAVU + "DejaVuSans-Bold.ttf")]
+    path = os.path.join(tempfile.gettempdir(), "build123d_collection_as.ttf")
+    collection.save(path)
+    return V(FontManager().register_font(path))
+
+
+def obj_text_system_fonts_rebuilt():
+    """As upstream test_register_system_fonts: the database rebuilt from build123d's own reading."""
+    manager = FontManager()
+    manager.manager.RemoveFontAlias(
+        TCollection_AsciiString("singleline"), TCollection_AsciiString("Relief SingleLine CAD")
+    )
+    manager.manager.ClearFontDataBase()
+    manager.register_system_fonts()
+    manager.__init__()
+    return font_info_values(manager.available_fonts())
 
 
 def obj_full_round_flipped():
@@ -994,4 +1155,68 @@ CASES = {
         Pos(5, 0, 0) * Rectangle(1, 1), Edge.make_helix(5, 10, 5), binormal=Edge.make_line((0, 0, 0), (0, 0, 10))
     ),
     "obj_ops_sweep_empty_list": lambda: sweep([], Edge.make_line((0, 0, 0), (0, 0, 5))),
+    # text and fonts (the cases that change the font database last)
+    "obj_text_available_fonts": lambda: font_info_values(available_fonts()),
+    "obj_text_font_info_repr": lambda: V(
+        [
+            repr(FontInfo("Arial", tuple(FontStyle))),
+            repr(FontInfo("O'Neil", (FontStyle.BOLD,))),
+            repr(FontInfo('Say "hi"', ())),
+            repr(FontInfo("Tab\tFont", (FontStyle.ITALIC, FontStyle.REGULAR))),
+        ]
+    ),
+    "obj_text_resolve": lambda: V(
+        [
+            [name, font_path_value(path)]
+            for name, path, _ in (
+                Compound.resolve_font(font, None, style)
+                for font, style in [
+                    ("Arial", FontStyle.REGULAR),
+                    ("Arial", FontStyle.BOLD),
+                    ("Arial", FontStyle.ITALIC),
+                    ("Arial", FontStyle.BOLDITALIC),
+                    ("singleline", FontStyle.REGULAR),
+                    ("singleline", FontStyle.ITALIC),
+                    ("Relief SingleLine CAD", FontStyle.REGULAR),
+                    ("DejaVu Sans Mono", FontStyle.BOLDITALIC),
+                    ("Liberation Serif", FontStyle.ITALIC),
+                    ("nonexistent", FontStyle.REGULAR),
+                ]
+            )
+        ]
+    ),
+    "obj_text_singleline": lambda: Text("Hello", 10, font="singleline"),
+    "obj_text_singleline_width": lambda: Text("build123d", 6, font="singleline", single_line_width=0.25),
+    "obj_text_singleline_bold": lambda: Text("Ab", 6, font="singleline", font_style=FontStyle.BOLD),
+    "obj_text_singleline_wires": lambda: Compound.make_text("Hello World", 10, "singleline"),
+    "obj_text_singleline_wire_types": lambda: top_level_values(Compound.make_text("Hello World", 10, "singleline")),
+    "obj_text_singleline_triad_x": lambda: Compound.make_text("X", 2.5, "singleline", align=(Align.MIN, Align.CENTER)),
+    "obj_text_singleline_triad_z": lambda: Compound.make_text("Z", 2.5, "singleline", align=(Align.CENTER, Align.MIN)),
+    "obj_text_singleline_joint": lambda: Compound.make_text("Y", 0.4, "singleline", align=(Align.CENTER, Align.CENTER)),
+    "obj_text_singleline_outline": lambda: Compound.make_text("Wire", 8, "singleline", single_line_width=0.5),
+    "obj_text_singleline_path": lambda: Text(
+        "Curved", 4, font="singleline", path=Wire([CenterArc((0, 0), 20, 30, 120)]), position_on_path=0.1
+    ),
+    "obj_text_singleline_wide": lambda: Text("Hi", 5, font="singleline", single_line_width=3),
+    "obj_text_singleline_too_wide": lambda: Text("ii", 5, font="singleline", single_line_width=20),
+    "obj_text_bad_width": lambda: Text("Hi", 5, single_line_width=0),
+    "obj_text_bad_width_negative": lambda: Text("Hi", 5, font="singleline", single_line_width=-1.5),
+    "obj_text_italic": lambda: Text("Hi", 10, font_style=FontStyle.ITALIC),
+    "obj_text_bolditalic": lambda: Text("Hi", 10, font_style=FontStyle.BOLDITALIC),
+    "obj_text_mono_bolditalic": lambda: Text("Mono", 7, font="DejaVu Sans Mono", font_style=FontStyle.BOLDITALIC),
+    "obj_text_attrs": obj_text_attrs,
+    "obj_text_styles_attrs": obj_text_styles_attrs,
+    "obj_text_align_error_h": lambda: Compound.make_text("x", 5, text_align=(TextAlign.TOP, TextAlign.CENTER)),
+    "obj_text_align_error_v": lambda: Compound.make_text("x", 5, text_align=(TextAlign.LEFT, TextAlign.RIGHT)),
+    "obj_text_font_path": lambda: Text("Hi", 10, font_path=DEJAVU + "DejaVuSans-Bold.ttf"),
+    "obj_text_font_path_attrs": obj_text_font_path_attrs,
+    "obj_text_check_find": obj_text_check_find,
+    "obj_text_register_fonts": obj_text_register_fonts,
+    "obj_text_register_single_stroke": obj_text_register_single_stroke,
+    "obj_text_register_folder": obj_text_register_folder,
+    "obj_text_register_corrupt": obj_text_register_corrupt,
+    "obj_text_register_missing": lambda: V(FontManager().register_font("/tmp/build123d_missing_font.ttf")),
+    "obj_text_register_collection_as_ttf": obj_text_register_collection_as_ttf,
+    "obj_text_available_fonts_after": lambda: font_info_values(available_fonts()),
+    "obj_text_system_fonts_rebuilt": obj_text_system_fonts_rebuilt,
 }

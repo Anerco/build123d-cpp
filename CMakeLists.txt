@@ -90,3 +90,12 @@ install(TARGETS build123d EXPORT build123dTargets
 install(DIRECTORY include/build123d DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(EXPORT build123dTargets NAMESPACE build123d::
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/build123d)
+
+# The fonts that come with build123d (its data/fonts: the single-line font Relief SingleLine CAD,
+# SIL Open Font License). The library looks for them at run time in $BUILD123D_FONT_DIR,
+# ../share/build123d/fonts next to itself, the install prefix and this source tree.
+install(DIRECTORY data/fonts DESTINATION ${CMAKE_INSTALL_DATADIR}/build123d)
+target_compile_definitions(build123d PRIVATE
+  BUILD123D_INSTALL_FONT_DIR="${CMAKE_INSTALL_FULL_DATADIR}/build123d/fonts"
+  BUILD123D_SOURCE_FONT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data/fonts")
+target_link_libraries(build123d PRIVATE ${CMAKE_DL_LIBS})

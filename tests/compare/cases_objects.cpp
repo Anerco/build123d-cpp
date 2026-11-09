@@ -1,6 +1,11 @@
 // Objects, operations, text and drafting compared with cases_objects_py.py.
 #include "case_registry.hpp"
 
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+
 #include "../../src/optimize.hpp"
 #include "../../src/voronoi.hpp"
 
@@ -118,6 +123,92 @@ V pack2d_values(const std::vector<std::pair<double, double>>& sizes) {
     for (const auto& [x, y] : detail::pack2d(sizes)) out.push_back(V::list({x, y}));
     return V::list(out);
 }
+
+// ---- fonts
+
+const std::string kDejaVu = "/usr/share/fonts/truetype/dejavu/";
+
+std::string bundled_font() { return FontManager::bundled_path() + "/reliefsingleline/ReliefSingleLineCAD-Regular.ttf"; }
+
+/// A font path, from reliefsingleline/ on for the bundled font (installed elsewhere in Python).
+std::string font_path_value(const std::string& path) {
+    const auto i = path.find("reliefsingleline/");
+    return i == std::string::npos ? path : path.substr(i);
+}
+
+V font_info_values(const std::vector<FontInfo>& fonts) {
+    std::vector<V> out;
+    for (const auto& f : fonts) {
+        std::vector<V> styles;
+        for (const auto s : f.styles) {
+            styles.emplace_back(s == FontStyle::REGULAR ? "REGULAR"
+                                : s == FontStyle::BOLD  ? "BOLD"
+                                : s == FontStyle::ITALIC ? "ITALIC"
+                                                         : "BOLDITALIC");
+        }
+        out.push_back(V::list({f.name, V::list(styles)}));
+    }
+    return V::list(out);
+}
+
+Font_FontAspect aspect_of(FontStyle s) {
+    return s == FontStyle::REGULAR ? Font_FA_Regular
+           : s == FontStyle::BOLD  ? Font_FA_Bold
+           : s == FontStyle::ITALIC ? Font_FA_Italic
+                                    : Font_FA_BoldItalic;
+}
+
+V system_font_values(const Handle(Font_SystemFont)& font, FontStyle style) {
+    return V::list({std::string(font->FontName().ToCString()),
+                    font_path_value(font->FontPath(aspect_of(style)).ToCString()), font->FontFaceId(aspect_of(style))});
+}
+
+V top_level_values(const Compound& compound) {
+    std::vector<V> out;
+    for (const auto& s : compound.get_top_level_shapes()) {
+        const double length = s.shape_type() == ShapeType::WIRE   ? Wire(s.wrapped()).length()
+                              : s.shape_type() == ShapeType::EDGE ? Edge(s.wrapped()).length()
+                                                                  : 0.0;
+        out.push_back(V::list({to_string(s.shape_type()), s.edges().size(), length}));
+    }
+    return V::list(out);
+}
+
+std::string read_bytes(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+}
+
+/// A TrueType collection of font files (their table offsets moved behind the collection header).
+void write_collection(const std::vector<std::string>& files, const std::string& path) {
+    const auto u32 = [](const std::string& d, std::size_t p) {
+        return (std::uint32_t(std::uint8_t(d[p])) << 24) | (std::uint32_t(std::uint8_t(d[p + 1])) << 16) |
+               (std::uint32_t(std::uint8_t(d[p + 2])) << 8) | std::uint32_t(std::uint8_t(d[p + 3]));
+    };
+    const auto put32 = [](std::string& d, std::size_t p, std::uint32_t v) {
+        for (int k = 0; k < 4; ++k) d[p + k] = char((v >> (24 - 8 * k)) & 0xFF);
+    };
+    std::string body;
+    std::vector<std::uint32_t> starts;
+    const std::size_t header = 12 + 4 * files.size();
+    for (const auto& file : files) {
+        std::string font = read_bytes(file);
+        const auto start = static_cast<std::uint32_t>(header + body.size());
+        const std::size_t num_tables = (std::uint8_t(font[4]) << 8) | std::uint8_t(font[5]);
+        for (std::size_t i = 0; i < num_tables; ++i) put32(font, 12 + 16 * i + 8, u32(font, 12 + 16 * i + 8) + start);
+        starts.push_back(start);
+        body += font;
+        while (body.size() % 4) body.push_back('\0');
+    }
+    std::string out(header, '\0');
+    out.replace(0, 4, "ttcf");
+    put32(out, 4, 0x00010000);
+    put32(out, 8, static_cast<std::uint32_t>(files.size()));
+    for (std::size_t i = 0; i < starts.size(); ++i) put32(out, 12 + 4 * i, starts[i]);
+    std::ofstream(path, std::ios::binary) << out << body;
+}
+
+std::string temp_file(const std::string& name) { return (std::filesystem::temp_directory_path() / name).string(); }
 
 /// (width, length) pairs drawn with random.seed(123456) as in upstream test_pack.py.
 const std::vector<std::pair<double, double>> random_boxes{
@@ -1000,4 +1091,167 @@ COMPARE_CASES {
                      {.binormal = Wire(Edge::make_line({0, 0, 0}, {0, 0, 10}))});
     });
     compare::add("obj_ops_sweep_empty_list", [=] { return sweep(std::vector<Face>{}, z5()); });
+
+    // ---- text and fonts (the cases that change the font database last)
+    compare::add_value("obj_text_available_fonts", [] { return font_info_values(available_fonts()); });
+    compare::add_value("obj_text_font_info_repr", [] {
+        return V::list({FontInfo{"Arial", {FontStyle::REGULAR, FontStyle::BOLD, FontStyle::ITALIC, FontStyle::BOLDITALIC}}.repr(),
+                        FontInfo{"O'Neil", {FontStyle::BOLD}}.repr(), FontInfo{"Say \"hi\"", {}}.repr(),
+                        FontInfo{"Tab\tFont", {FontStyle::ITALIC, FontStyle::REGULAR}}.repr()});
+    });
+    compare::add_value("obj_text_resolve", [] {
+        const std::vector<std::pair<std::string, FontStyle>> requests{
+            {"Arial", FontStyle::REGULAR},       {"Arial", FontStyle::BOLD},
+            {"Arial", FontStyle::ITALIC},        {"Arial", FontStyle::BOLDITALIC},
+            {"singleline", FontStyle::REGULAR},  {"singleline", FontStyle::ITALIC},
+            {"Relief SingleLine CAD", FontStyle::REGULAR}, {"DejaVu Sans Mono", FontStyle::BOLDITALIC},
+            {"Liberation Serif", FontStyle::ITALIC}, {"nonexistent", FontStyle::REGULAR}};
+        std::vector<V> out;
+        for (const auto& [font, style] : requests) {
+            const auto [name, path, system_font] = Compound::resolve_font(font, "", style);
+            out.push_back(V::list({name, font_path_value(path)}));
+        }
+        return V::list(out);
+    });
+    compare::add("obj_text_singleline", [] { return Text("Hello", 10, {.font = "singleline"}); });
+    compare::add("obj_text_singleline_width", [] {
+        return Text("build123d", 6, {.font = "singleline", .single_line_width = 0.25});
+    });
+    compare::add("obj_text_singleline_bold", [] {
+        return Text("Ab", 6, {.font = "singleline", .font_style = FontStyle::BOLD});
+    });
+    compare::add("obj_text_singleline_wires", [] { return Compound::make_text("Hello World", 10, "singleline"); });
+    compare::add_value("obj_text_singleline_wire_types", [] {
+        return top_level_values(Compound::make_text("Hello World", 10, "singleline"));
+    });
+    compare::add("obj_text_singleline_triad_x", [] {
+        return Compound::make_text("X", 2.5, "singleline", "", FontStyle::REGULAR, {TextAlign::CENTER, TextAlign::CENTER},
+                                   Align2(Align::MIN, Align::CENTER));
+    });
+    compare::add("obj_text_singleline_triad_z", [] {
+        return Compound::make_text("Z", 2.5, "singleline", "", FontStyle::REGULAR, {TextAlign::CENTER, TextAlign::CENTER},
+                                   Align2(Align::CENTER, Align::MIN));
+    });
+    compare::add("obj_text_singleline_joint", [] {
+        return Compound::make_text("Y", 0.4, "singleline", "", FontStyle::REGULAR, {TextAlign::CENTER, TextAlign::CENTER},
+                                   Align2(Align::CENTER, Align::CENTER));
+    });
+    compare::add("obj_text_singleline_outline", [] {
+        return Compound::make_text("Wire", 8, "singleline", "", FontStyle::REGULAR, {TextAlign::CENTER, TextAlign::CENTER},
+                                   std::nullopt, 0.0, std::nullopt, 0.5);
+    });
+    compare::add("obj_text_singleline_path", [] {
+        return Text("Curved", 4, {.font = "singleline", .path = Wire(CenterArc({0, 0}, 20, 30, 120)), .position_on_path = 0.1});
+    });
+    compare::add("obj_text_singleline_wide", [] { return Text("Hi", 5, {.font = "singleline", .single_line_width = 3}); });
+    compare::add("obj_text_singleline_too_wide", [] {
+        return Text("ii", 5, {.font = "singleline", .single_line_width = 20});
+    });
+    compare::add("obj_text_bad_width", [] { return Text("Hi", 5, {.single_line_width = 0}); });
+    compare::add("obj_text_bad_width_negative", [] {
+        return Text("Hi", 5, {.font = "singleline", .single_line_width = -1.5});
+    });
+    compare::add("obj_text_italic", [] { return Text("Hi", 10, {.font_style = FontStyle::ITALIC}); });
+    compare::add("obj_text_bolditalic", [] { return Text("Hi", 10, {.font_style = FontStyle::BOLDITALIC}); });
+    compare::add("obj_text_mono_bolditalic", [] {
+        return Text("Mono", 7, {.font = "DejaVu Sans Mono", .font_style = FontStyle::BOLDITALIC});
+    });
+    compare::add_value("obj_text_attrs", [] {
+        const Text t("Hi", 8, {.font_style = FontStyle::BOLD, .text_align = {TextAlign::LEFT, TextAlign::BOTTOM},
+                               .align = Align2(Align::MIN, Align::MAX), .position_on_path = 0.25, .rotation = 15});
+        const Text s("Hey", 5, {.font = "singleline", .single_line_width = 0.3});
+        return V::obj({{"txt", t.txt},
+                       {"font_size", t.font_size},
+                       {"font", t.font},
+                       {"font_path", font_path_value(t.font_path)},
+                       {"font_style", "BOLD"},
+                       {"text_align", V::list({"LEFT", "BOTTOM"})},
+                       {"align", align_values(*t.align)},
+                       {"position_on_path", t.position_on_path},
+                       {"single_line_width", t.single_line_width},
+                       {"rotation", t.rotation},
+                       {"singleline", V::list({s.font, font_path_value(s.font_path), s.single_line_width})}});
+    });
+    compare::add_value("obj_text_styles_attrs", [] {
+        std::vector<V> out;
+        for (const std::string font : {"Arial", "DejaVu Sans Mono", "singleline"}) {
+            for (const auto style : {FontStyle::REGULAR, FontStyle::BOLD, FontStyle::ITALIC, FontStyle::BOLDITALIC}) {
+                const Text t("Ab", 4, {.font = font, .font_style = style});
+                out.push_back(V::list({t.font, font_path_value(t.font_path)}));
+            }
+        }
+        return V::list(out);
+    });
+    compare::add("obj_text_align_error_h", [] {
+        return Compound::make_text("x", 5, "Arial", "", FontStyle::REGULAR, {TextAlign::TOP, TextAlign::CENTER});
+    });
+    compare::add("obj_text_align_error_v", [] {
+        return Compound::make_text("x", 5, "Arial", "", FontStyle::REGULAR, {TextAlign::LEFT, TextAlign::RIGHT});
+    });
+    compare::add("obj_text_font_path", [] { return Text("Hi", 10, {.font_path = kDejaVu + "DejaVuSans-Bold.ttf"}); });
+    compare::add_value("obj_text_font_path_attrs", [] {
+        const Text a("Hi", 6, {.font_path = kDejaVu + "DejaVuSans-Bold.ttf"});
+        const Text b("Hi", 6, {.font = "DejaVu Sans Mono", .font_path = kDejaVu + "DejaVuSansMono.ttf"});
+        const Text c("Hi", 6, {.font = "nothing", .font_path = kDejaVu + "DejaVuSerif.ttf", .font_style = FontStyle::BOLD});
+        return V::list({V::list({a.font, a.font_path}), V::list({b.font, b.font_path}), V::list({c.font, c.font_path})});
+    });
+    compare::add_value("obj_text_check_find", [] {
+        FontManager manager;
+        const auto good = manager.check_font(bundled_font());
+        const auto bad = manager.check_font("reliefsingleline/ReliefSingleLineCAD-Regular.ttf");
+        const auto found = manager.find_font("Relief SingleLine CAD", FontStyle::REGULAR);
+        const auto other = manager.find_font("build123d", FontStyle::REGULAR);
+        return V::list({font_path_value(good->FontPath(Font_FA_Regular).ToCString()), bad.IsNull(),
+                        std::string(found->FontName().ToCString()), found->IsSingleStrokeFont(),
+                        std::string(other->FontName().ToCString()) != "build123d"});
+    });
+    compare::add_value("obj_text_register_fonts", [] {
+        FontManager manager;
+        std::vector<V> out;
+        for (const auto& path : {bundled_font(), kDejaVu + "DejaVuSans-Bold.ttf",
+                                 std::string("/usr/share/fonts/truetype/ubuntu/Ubuntu[wdth,wght].ttf"),
+                                 std::string("/usr/share/fonts/truetype/ubuntu/UbuntuMono-Italic[wght].ttf"),
+                                 std::string("/usr/share/fonts/opentype/urw-base35/URWBookman-DemiItalic.otf")}) {
+            out.push_back(V::list_of(manager.register_font(path)));
+        }
+        out.push_back(system_font_values(manager.find_font("Ubuntu Condensed", FontStyle::BOLD), FontStyle::BOLD));
+        out.push_back(system_font_values(manager.find_font("Ubuntu Mono Medium", FontStyle::ITALIC), FontStyle::ITALIC));
+        return V::list(out);
+    });
+    compare::add_value("obj_text_register_single_stroke", [] {
+        FontManager manager;
+        const auto names = manager.register_font(kDejaVu + "DejaVuSansMono-Bold.ttf", true, true);
+        const auto font = manager.find_font(names.at(0), FontStyle::BOLD);
+        const V result = V::list({V::list_of(names), font->IsSingleStrokeFont(),
+                                  Compound::make_text("A", 5, names.at(0), "", FontStyle::BOLD).edges().size()});
+        manager.register_font(kDejaVu + "DejaVuSansMono-Bold.ttf", true, false);
+        return result;
+    });
+    compare::add_value("obj_text_register_folder", [] {
+        auto names = FontManager().register_folder(kDejaVu);
+        std::sort(names.begin(), names.end());
+        return V::list_of(names);
+    });
+    compare::add_value("obj_text_register_corrupt", [] {
+        const std::string path = temp_file("build123d_corrupt.ttf");
+        std::ofstream(path, std::ios::binary) << "not a font";
+        return V::list_of(FontManager().register_font(path));
+    });
+    compare::add_value("obj_text_register_missing", [] {
+        return V::list_of(FontManager().register_font("/tmp/build123d_missing_font.ttf"));
+    });
+    compare::add_value("obj_text_register_collection_as_ttf", [] {
+        const std::string path = temp_file("build123d_collection_as.ttf");
+        write_collection({bundled_font(), kDejaVu + "DejaVuSans-Bold.ttf"}, path);
+        return V::list_of(FontManager().register_font(path));
+    });
+    compare::add_value("obj_text_available_fonts_after", [] { return font_info_values(available_fonts()); });
+    compare::add_value("obj_text_system_fonts_rebuilt", [] {
+        // As upstream test_register_system_fonts: the database rebuilt from build123d's own reading
+        FontManager manager;
+        manager.manager->RemoveFontAlias(TCollection_AsciiString("singleline"), TCollection_AsciiString("Relief SingleLine CAD"));
+        manager.manager->ClearFontDataBase();
+        manager.register_system_fonts();
+        return font_info_values(FontManager().available_fonts());
+    });
 }

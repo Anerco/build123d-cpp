@@ -264,3 +264,35 @@ TEST(objects_operation_overloads) {
     CHECK_THROWS(offset(Rectangle(10, 2) - Circle(0.8), -0.3), std::invalid_argument);
     CHECK_NEAR(scale(std::vector<Part>{Box(2, 2, 2)}, Vector(1, 2, 3)).volume(), 48, 1e-9);
 }
+
+// ---------------------------------------------------------------------------
+// Text and fonts
+// ---------------------------------------------------------------------------
+
+static_assert(std::is_same_v<decltype(available_fonts()), std::vector<FontInfo>>);
+static_assert(std::is_same_v<decltype(FontManager().register_font("")), std::vector<std::string>>);
+static_assert(std::is_same_v<decltype(Compound::resolve_font()),
+                             std::tuple<std::string, std::string, Handle(Font_SystemFont)>>);
+
+TEST(objects_text_fonts) {
+    // The bundled single-line font is found (in the source tree here) and registered
+    CHECK(!FontManager::bundled_path().empty());
+    const auto [name, path, system_font] = Compound::resolve_font("singleline");
+    CHECK(name == "Relief SingleLine CAD");
+    CHECK(path.find("reliefsingleline/ReliefSingleLineCAD-Regular.ttf") != std::string::npos);
+    CHECK(system_font->IsSingleStrokeFont());
+    const auto fonts = available_fonts();
+    CHECK(std::is_sorted(fonts.begin(), fonts.end(), [](const FontInfo& a, const FontInfo& b) { return a.name < b.name; }));
+    CHECK(std::find(fonts.begin(), fonts.end(), FontInfo{"Relief SingleLine CAD", {FontStyle::REGULAR}}) != fonts.end());
+    CHECK(FontInfo({"Arial", {FontStyle::REGULAR}}).repr() == "Font(name='Arial', styles=('REGULAR',))");
+
+    // Single-line text: wires from make_text, outlined faces from Text
+    const Compound strokes = Compound::make_text("Hi", 5, "singleline");
+    CHECK(strokes.faces().empty() && !strokes.wires().empty());
+    const Text text("Hi", 5, {.font = "singleline"});
+    CHECK_NEAR(text.single_line_width, 0.2, 1e-12);
+    CHECK(!text.faces().empty());
+    CHECK(text.font == "Relief SingleLine CAD");
+    CHECK_THROWS(Text("Hi", 5, {.single_line_width = 0}), std::invalid_argument);
+    CHECK_THROWS(FontManager().register_font("/nonexistent/font.ttf"), std::runtime_error);
+}
