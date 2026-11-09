@@ -27,8 +27,8 @@ void copy_attributes_to(const Shape& from, Shape& to, const std::vector<std::str
     };
     // As build123d: an attribute is copied only when the target has none of its own.
     if (!excluded("label") && to.label.empty()) to.label = from.label;
-    if (!excluded("color") && !to.color) to.color = from.color;
-    if (!excluded("material") && !to.material) to.material = from.material;
+    if (!excluded("color") && !to.color.raw()) to.color.set_raw(from.color.raw());
+    if (!excluded("material") && !to.material.raw()) to.material.set_raw(from.material.raw());
     if (!excluded("topo_path") && !ShapeAccess::topo_path(to)) {
         ShapeAccess::set_topo_path(to, ShapeAccess::topo_path(from));
     }

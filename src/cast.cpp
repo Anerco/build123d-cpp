@@ -104,7 +104,7 @@ AnyShape cast_shape(const Shape& shape) {
             // A CompSolid: wrap it, as there is no build123d class for it
             Compound result(shape.wrapped());
             result.label = shape.label;
-            result.color = shape.color;
+            result.color.set_raw(shape.color.raw());
             result.children = shape.children;
             return result;
         }

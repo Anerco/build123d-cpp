@@ -73,7 +73,7 @@ T cast_shape(const Shape& shape) {
                       target == detail::CastTarget::PART) {
             // A single object has been wrapped into a compound: keep that geometry
             result.label = shape.label;
-            result.color = shape.color;
+            result.color.set_raw(shape.color.raw());
             result.children = shape.children;
             result.set_topo_parent(shape.topo_parent());
         } else {

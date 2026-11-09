@@ -98,15 +98,16 @@ public:
     void shape(const Shape& s) {
         const auto parent = s.topo_parent();
         std::uint8_t flags = 0;
-        if (s.color) flags |= 1;
+        const std::optional<Color>& color = s.color.raw();  // the shape's own, as pickled
+        if (color) flags |= 1;
         if (parent && !parent->is_null()) flags |= 2;
         u8(flags);
         str(s.label);
-        if (s.color) {
-            f64(s.color->red);
-            f64(s.color->green);
-            f64(s.color->blue);
-            f64(s.color->alpha);
+        if (color) {
+            f64(color->red);
+            f64(color->green);
+            f64(color->blue);
+            f64(color->alpha);
         }
         bytes(serialize_shape(s.wrapped()));
         if (flags & 2) bytes(serialize_shape(parent->wrapped()));

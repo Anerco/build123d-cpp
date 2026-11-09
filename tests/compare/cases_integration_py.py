@@ -5,6 +5,8 @@ from build123d import (
     Axis,
     BasePartObject,
     Box,
+    Color,
+    Compound,
     Cylinder,
     LinearJoint,
     Location,
@@ -83,7 +85,52 @@ def unit_tables():
     return V([per_meter, per_kilogram, [build123d.G, build123d.KG, build123d.LB, build123d.G_PER_LB]])
 
 
+def color_material_lookup():
+    def c(color):
+        return list(tuple(color)) if color is not None else None
+
+    def m(material):
+        return material.name if material is not None else None
+
+    out = []
+    assembly = Compound(children=[Box(1, 1, 1), Pos(3, 0, 0) * Sphere(1)])
+    assembly.color = Color("red")
+    out.append(c(assembly.children[0].color))
+    assembly.color = Color("blue")
+    out.append(c(assembly.children[0].color))
+    out.append(c(assembly.children[1].color))
+    out.append(c(assembly.children[0]._color))  # pylint: disable=protected-access
+    inner = Compound(children=[Box(1, 1, 1)])
+    outer = Compound(children=[inner])
+    outer.color = Color("green")
+    out.append(c(outer.children[0].children[0].color))
+    out.append(c(outer.children[0]._color))  # pylint: disable=protected-access
+    box = Box(1, 1, 1)
+    box.material = "aluminum"
+    out.append(c(box.color))
+    out.append(m(box.material))
+    box.color = Color("red")
+    box.material = None
+    out.append(c(box.color))
+    metal = Compound(children=[Box(1, 1, 1)])
+    metal.material = "Mild Steel"
+    out.append(m(metal.children[0].material))
+    out.append(c(metal.children[0].color))
+    holder = Compound(children=[Box(1, 1, 1)])
+    holder.color = Color("red")
+    target = Box(2, 2, 2)
+    holder.children[0].copy_attributes_to(target)
+    out.append(c(target._color))  # pylint: disable=protected-access
+    copper = Box(1, 1, 1)
+    copper.material = "copper"
+    obj = BasePartObject(copper)
+    out.append(c(obj.color))
+    out.append(m(obj.material))
+    return V(out)
+
+
 CASES = {
+    "integ_color_material_lookup": color_material_lookup,
     "integ_unit_tables": unit_tables,
     "integ_brake_select": brake_select,
     "integ_joints_through_booleans": joints_through_booleans,
