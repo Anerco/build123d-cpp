@@ -1,11 +1,15 @@
 // build123d-cpp: free topology helpers of build123d (topo_explore_connected_edges,
-// topo_explore_common_vertex, topo_distance_to, new_edges, delta, polar,
-// edges_to_wires). Mirrors build123d/topology/{one_d,zero_d,shape_core,utils}.py.
+// topo_explore_connected_faces, topo_explore_common_vertex, topo_distance_to, new_edges, delta,
+// polar, edges_to_wires, unwrap_topods_compound, offset_topods_face, find_max_dimension,
+// isclose_b). Mirrors build123d/topology/{one_d,zero_d,shape_core,utils}.py.
 #pragma once
 
 #include <functional>
 #include <optional>
 #include <vector>
+
+#include <TopoDS_Compound.hxx>
+#include <TopoDS_Face.hxx>
 
 #include "build123d/topology.hpp"
 
@@ -58,5 +62,29 @@ Vector polar(double length, double angle);
 
 /// Connect edges into as few wires as possible (ShapeAnalysis_FreeBounds).
 ShapeList<Wire> edges_to_wires(const std::vector<Edge>& edges, double tol = 1e-6);
+
+/// The faces of `parent` (default: edge.topo_parent()) that meet at `edge`, as OCCT faces in
+/// the edge's frame. std::invalid_argument for an empty edge or one without a parent.
+std::vector<TopoDS_Face> topo_explore_connected_faces(const Edge& edge,
+                                                      const std::optional<Shape>& parent = std::nullopt);
+
+/// Strip the compounds that only wrap one element: all of them with `fully`, else all but the
+/// innermost.
+TopoDS_Shape unwrap_topods_compound(const TopoDS_Compound& compound, bool fully = true);
+
+/// A face offset by `amount` (BRepOffset_MakeOffset, build123d's offset_topods_face).
+TopoDS_Shape offset_topods_face(const TopoDS_Face& face, double amount);
+
+/// The diagonal of the bounding box of the shapes together.
+double find_max_dimension(const Shape& shape);
+double find_max_dimension(const std::vector<Shape>& shapes);
+template <class T, std::enable_if_t<std::is_base_of_v<Shape, T> && !std::is_same_v<T, Shape>, int> = 0>
+double find_max_dimension(const std::vector<T>& shapes) {
+    return find_max_dimension(std::vector<Shape>(shapes.begin(), shapes.end()));
+}
+
+/// Python's math.isclose with build123d's tighter absolute tolerance (isclose_b).
+/// std::invalid_argument for a negative tolerance.
+bool isclose_b(double x, double y, double rel_tol = 1e-9, double abs_tol = 1e-14);
 
 }  // namespace build123d

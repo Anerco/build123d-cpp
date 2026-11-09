@@ -1,5 +1,7 @@
 // Core (geometry/topology) cases compared with cases_core_py.py.
 #include <algorithm>
+#include <cmath>
+#include <limits>
 #include <regex>
 #include <tuple>
 #include <unordered_set>
@@ -175,6 +177,38 @@ COMPARE_CASES {
                         describe(f1.touch(f3, 1e-6, found_faces)), describe(f1.touch(f2, 1e-6, none, none)),
                         describe(f1.touch(f3, 1e-6, none, f1_edges)),
                         describe(f1.touch(f3, 1e-6, std::nullopt, f1_edges))});
+    });
+    add_value("core_topology_utils_more", [] {
+        const auto raises = [](auto f) {
+            try {
+                f();
+            } catch (const std::invalid_argument&) {
+                return true;
+            }
+            return false;
+        };
+        const Part box = Box(1, 2, 3);
+        const Edge edge = box.edges().sort_by(Axis::Z)[0];
+        ShapeList<Face> connected, with_parent;
+        for (const auto& f : topo_explore_connected_faces(edge)) connected.push_back(Face(f));
+        for (const auto& f : topo_explore_connected_faces(edge, Shape(box))) with_parent.push_back(Face(f));
+        const Compound nested(std::vector<Shape>{Compound(std::vector<Shape>{box})});
+        const Shape fully(unwrap_topods_compound(TopoDS::Compound(nested.wrapped())));
+        const Shape partly(unwrap_topods_compound(TopoDS::Compound(nested.wrapped()), false));
+        const Compound two(std::vector<Shape>{box, Pos(5, 0, 0) * Sphere(1)});
+        const Shape both(unwrap_topods_compound(TopoDS::Compound(two.wrapped())));
+        const Shape offset(offset_topods_face(TopoDS::Face(Face::make_rect(2, 2).wrapped()), 0.5));
+        const double inf = std::numeric_limits<double>::infinity(), nan = std::nan("");
+        return V::list({describe(connected), describe(with_parent),
+                        V(raises([] { topo_explore_connected_faces(Edge()); })),
+                        V(raises([] { topo_explore_connected_faces(Edge::make_line({0, 0}, {1, 0})); })),
+                        V(to_string(fully.shape_type())), V(to_string(partly.shape_type())), V(partly.solids().size()),
+                        V(to_string(both.shape_type())), describe(ShapeList<Shape>{offset}), V(to_string(offset.shape_type())),
+                        V(find_max_dimension(box)), V(find_max_dimension(std::vector<Shape>{box, Pos(5, 0, 0) * Sphere(1)})),
+                        V::list({V(isclose_b(1, 1 + 1e-10)), V(isclose_b(0, 1e-15)), V(isclose_b(0, 1e-13)),
+                                 V(isclose_b(1, 1.1)), V(isclose_b(inf, inf)), V(isclose_b(nan, nan)),
+                                 V(isclose_b(1, 1.05, 0.1))}),
+                        V(raises([] { isclose_b(1, 1, -1); }))});
     });
     add_value("core_intersect_face_face_touched", [] {
         const Face f1 = Face::make_rect(2, 2);

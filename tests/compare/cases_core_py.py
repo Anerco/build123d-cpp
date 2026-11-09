@@ -119,6 +119,44 @@ def touch_found():
               describe(f1.touch(f3, found_edges=f1_edges))])
 
 
+def topology_utils_more():
+    from build123d.topology import (  # pylint: disable=import-outside-toplevel
+        find_max_dimension,
+        isclose_b,
+        offset_topods_face,
+        topo_explore_connected_faces,
+        unwrap_topods_compound,
+    )
+
+    def raises(f):
+        try:
+            f()
+        except ValueError:
+            return True
+        return False
+
+    box = Box(1, 2, 3)
+    edge = box.edges().sort_by(Axis.Z)[0]
+    connected = [Face(f) for f in topo_explore_connected_faces(edge)]
+    with_parent = [Face(f) for f in topo_explore_connected_faces(edge, box)]
+    nested = Compound([Compound([box])])
+    fully = Shape.cast(unwrap_topods_compound(nested.wrapped))
+    partly = Shape.cast(unwrap_topods_compound(nested.wrapped, False))
+    two = Compound([box, Pos(5, 0, 0) * Sphere(1)])
+    both = Shape.cast(unwrap_topods_compound(two.wrapped))
+    offset = Shape.cast(offset_topods_face(Face.make_rect(2, 2).wrapped, 0.5))
+    inf, nan = float("inf"), float("nan")
+    return V([describe(connected), describe(with_parent),
+              raises(lambda: topo_explore_connected_faces(Edge())),
+              raises(lambda: topo_explore_connected_faces(Edge.make_line((0, 0), (1, 0)))),
+              type(fully).__name__, type(partly).__name__, len(partly.solids()),
+              type(both).__name__, describe([offset]), type(offset).__name__,
+              find_max_dimension(box), find_max_dimension([box, Pos(5, 0, 0) * Sphere(1)]),
+              [isclose_b(1, 1 + 1e-10), isclose_b(0, 1e-15), isclose_b(0, 1e-13), isclose_b(1, 1.1),
+               isclose_b(inf, inf), isclose_b(nan, nan), isclose_b(1, 1.05, rel_tol=0.1)],
+              raises(lambda: isclose_b(1, 1, rel_tol=-1))])
+
+
 def face_face_touched():
     f1 = Face.make_rect(2, 2)
     f2 = Face.make_rect(2, 2, Plane((2, 2, 0)))
@@ -1138,6 +1176,7 @@ CASES = {
     "core_intersect_touched": intersect_touched,
     "core_touch": touch,
     "core_touch_found": touch_found,
+    "core_topology_utils_more": topology_utils_more,
     "core_intersect_face_face_touched": face_face_touched,
     "core_intersect_compound_children": compound_children,
     # 2: geometry

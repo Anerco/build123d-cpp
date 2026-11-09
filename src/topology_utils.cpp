@@ -9,11 +9,15 @@
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepLProp.hxx>
+#include <BRepOffset_MakeOffset.hxx>
 #include <BRep_Tool.hxx>
 #include <GeomAbs_Shape.hxx>
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
+#include <TopoDS_Compound.hxx>
+#include <TopoDS_Face.hxx>
+#include <TopoDS_Iterator.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Vertex.hxx>
 
@@ -281,6 +285,51 @@ ShapeList<Wire> edges_to_wires(const std::vector<Edge>& edges, double tol) {
     ShapeList<Wire> out;
     for (const auto& w : connect_edges_to_wires(topods, tol)) out.push_back(Wire(w));
     return out;
+}
+
+std::vector<TopoDS_Face> topo_explore_connected_faces(const Edge& edge, const std::optional<Shape>& parent) {
+    return detail::topo_explore_connected_faces(static_cast<const Shape&>(edge), parent);
+}
+
+TopoDS_Shape unwrap_topods_compound(const TopoDS_Compound& compound, bool fully) {
+    if (compound.NbChildren() == 1) {
+        TopoDS_Iterator iterator(compound);
+        const TopoDS_Shape single_element = iterator.Value();
+        // If the single element is another compound, unwrap it too
+        if (single_element.ShapeType() == TopAbs_COMPOUND) {
+            return unwrap_topods_compound(TopoDS::Compound(single_element), fully);
+        }
+        return fully ? single_element : TopoDS_Shape(compound);
+    }
+    return compound;
+}
+
+TopoDS_Shape offset_topods_face(const TopoDS_Face& face, double amount) {
+    return occt("offset_topods_face", [&] {
+        BRepOffset_MakeOffset offsetor;
+        offsetor.Initialize(face, amount, TOLERANCE);
+        offsetor.MakeOffsetShape();
+        return offsetor.Shape();
+    });
+}
+
+double find_max_dimension(const Shape& shape) { return find_max_dimension(std::vector<Shape>{shape}); }
+
+double find_max_dimension(const std::vector<Shape>& shapes) {
+    std::vector<TopoDS_Shape> topods;
+    for (const auto& s : shapes) {
+        if (!s.is_null()) topods.push_back(s.wrapped());
+    }
+    return BoundBox::from_topo_ds(make_compound(topods), TOLERANCE, true).diagonal();
+}
+
+bool isclose_b(double x, double y, double rel_tol, double abs_tol) {
+    // CPython's math.isclose
+    if (rel_tol < 0.0 || abs_tol < 0.0) throw std::invalid_argument("tolerances must be non-negative");
+    if (x == y) return true;
+    if (std::isinf(x) || std::isinf(y)) return false;
+    const double diff = std::fabs(y - x);
+    return diff <= std::fabs(rel_tol * y) || diff <= std::fabs(rel_tol * x) || diff <= abs_tol;
 }
 
 }  // namespace build123d
