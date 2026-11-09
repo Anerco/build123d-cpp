@@ -297,9 +297,11 @@ Compound import_step(const std::string& file_path) {
         }
         Compound result = Compound::make_assembly(roots);
         if (roots.size() == 1) {
-            result.label = roots[0].label;
-            result.color = roots[0].color;
-            result.children.clear();
+            // A single free shape: no assembly children.
+            Compound single(result.wrapped());
+            single.label = roots[0].label;
+            single.color = roots[0].color;
+            return single;
         }
         return result;
     });

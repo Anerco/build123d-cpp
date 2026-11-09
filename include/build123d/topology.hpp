@@ -7,6 +7,8 @@
 #include <cmath>
 #include <cstddef>
 #include <functional>
+#include <initializer_list>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -39,6 +41,115 @@ template <class T>
 class ShapeList;
 template <class T>
 class GroupBy;
+class Joint;
+namespace detail {
+struct JointState;
+}
+
+/// The children of a shape in an assembly tree, used like a std::vector<Shape>.
+/// Each child knows its parent (Shape::parent()). As when assigning `children` in build123d,
+/// changing the children of a compound (or of an empty shape) rebuilds its geometry as a
+/// compound of the children. The tree owns its children: adding a shape stores a copy.
+class ShapeChildren {
+public:
+    using value_type = Shape;
+    using size_type = std::size_t;
+    using reference = Shape&;
+    using const_reference = const Shape&;
+    using iterator = std::vector<Shape>::iterator;
+    using const_iterator = std::vector<Shape>::const_iterator;
+
+    ShapeChildren() = default;
+    ShapeChildren(const ShapeChildren& other);
+    ShapeChildren(ShapeChildren&& other) noexcept;
+    ShapeChildren& operator=(const ShapeChildren& other);
+    ShapeChildren& operator=(ShapeChildren&& other);
+    ShapeChildren& operator=(const std::vector<Shape>& shapes);
+    ShapeChildren& operator=(std::initializer_list<Shape> shapes);
+    ~ShapeChildren();
+
+    operator const std::vector<Shape>&() const { return items_; }  // NOLINT: read like a vector
+    const std::vector<Shape>& as_vector() const { return items_; }
+
+    size_type size() const;
+    bool empty() const;
+    iterator begin();
+    iterator end();
+    const_iterator begin() const;
+    const_iterator end() const;
+    const_iterator cbegin() const;
+    const_iterator cend() const;
+    Shape& operator[](size_type i);
+    const Shape& operator[](size_type i) const;
+    Shape& at(size_type i);
+    const Shape& at(size_type i) const;
+    Shape& front();
+    const Shape& front() const;
+    Shape& back();
+    const Shape& back() const;
+
+    void push_back(const Shape& child);
+    void push_back(Shape&& child);
+    template <class... Args>
+    Shape& emplace_back(Args&&... args);
+    iterator insert(const_iterator pos, const Shape& child);
+    iterator erase(const_iterator pos);
+    iterator erase(const_iterator first, const_iterator last);
+    void pop_back();
+    void clear();
+    void reserve(size_type n);
+
+private:
+    friend class Shape;
+    std::vector<Shape> items_;
+    Shape* owner_ = nullptr;
+
+    /// Set each child's parent and, if the children changed, rebuild the owner's geometry.
+    void changed(bool had_children);
+    void relink();
+    /// Replace the children without touching the owner's geometry.
+    void assign_raw(const std::vector<Shape>& shapes);
+};
+
+/// The joints bound to a shape, by label: build123d's `joints` dict (see joints.hpp).
+/// A copy of a shape gets copies of its joints, bound to the copy.
+class JointMap {
+public:
+    JointMap() = default;
+    JointMap(const JointMap& other);
+    JointMap(JointMap&& other) noexcept;
+    JointMap& operator=(const JointMap& other);
+    JointMap& operator=(JointMap&& other) noexcept;
+    ~JointMap();
+
+    /// The joint with this label; std::out_of_range if there is none.
+    Joint operator[](const std::string& label) const;
+    Joint at(const std::string& label) const;
+    /// The joint with this label as a specific joint type (std::invalid_argument if it isn't).
+    template <class J>
+    J get(const std::string& label) const;
+    bool contains(const std::string& label) const;
+    std::size_t count(const std::string& label) const;
+    std::size_t size() const;
+    bool empty() const;
+    /// Labels in insertion order.
+    std::vector<std::string> keys() const;
+    std::vector<Joint> values() const;
+    std::vector<std::pair<std::string, Joint>> items() const;
+    /// Bind `joint` to this map's shape under `label` (build123d: `part.joints[label] = joint`).
+    void insert(const std::string& label, const Joint& joint);
+    void erase(const std::string& label);
+    void clear();
+
+private:
+    friend class Shape;
+    friend class Joint;
+    std::vector<std::pair<std::string, std::shared_ptr<detail::JointState>>> items_;
+    Shape* owner_ = nullptr;
+
+    void rebind(Shape* owner);
+    void detach_all();
+};
 
 /// RAII guard that disables the automatic clean() after boolean operations,
 /// like build123d's `with SkipClean():`.
@@ -107,10 +218,52 @@ public:
     std::string label;
     std::optional<Color> color;
     /// Assembly children (with their own labels/colors); see Compound::make_assembly.
-    std::vector<Shape> children;
+    ShapeChildren children;
+    /// Joints bound to this shape, by label (see joints.hpp).
+    JointMap joints;
 
-    Shape() = default;
-    explicit Shape(const TopoDS_Shape& obj) : obj_(obj) {}
+    Shape() { bind(); }
+    explicit Shape(const TopoDS_Shape& obj) : obj_(obj) { bind(); }
+    Shape(const Shape& other);
+    Shape(Shape&& other) noexcept;
+    Shape& operator=(const Shape& other);
+    Shape& operator=(Shape&& other) noexcept;
+    ~Shape() = default;
+
+    // ---- Assembly tree (build123d's anytree NodeMixin) ----
+    /// The shape whose children hold this one, or nullptr.
+    Shape* parent() { return tree_parent_; }
+    const Shape* parent() const { return tree_parent_; }
+    /// The top of this shape's assembly tree (this shape if it has no parent).
+    Shape& root();
+    const Shape& root() const;
+    /// The shapes from the root down to this one.
+    std::vector<Shape*> path();
+    std::vector<const Shape*> path() const;
+    /// The shapes from this one up to the root.
+    std::vector<const Shape*> iter_path_reverse() const;
+    /// The shapes from the root down to the parent.
+    std::vector<Shape*> ancestors();
+    std::vector<const Shape*> ancestors() const;
+    /// Every shape below this one, in pre-order.
+    std::vector<Shape*> descendants();
+    std::vector<const Shape*> descendants() const;
+    /// The shapes without children in this subtree (this shape if it has none).
+    std::vector<Shape*> leaves();
+    std::vector<const Shape*> leaves() const;
+    /// The other children of this shape's parent.
+    std::vector<Shape*> siblings();
+    std::vector<const Shape*> siblings() const;
+    bool is_root() const { return tree_parent_ == nullptr; }
+    bool is_leaf() const { return children.empty(); }
+    /// Number of steps from the root down to this shape.
+    std::size_t depth() const;
+    /// Number of steps on the longest path from this shape down to a leaf.
+    std::size_t height() const;
+    /// Number of shapes in the subtree starting at this one (anytree's `size`).
+    std::size_t tree_size() const;
+    /// Location in world coordinates: the locations along the path from the root, combined.
+    Location global_location() const;
 
     const TopoDS_Shape& wrapped() const { return obj_; }
     bool is_null() const { return obj_.IsNull(); }
@@ -210,13 +363,16 @@ protected:
     TopoDS_Shape obj_;
     TopoDS_Shape parent_;
 
+    /// A copy of this shape with new geometry (build123d deep-copies the shape and replaces
+    /// its `wrapped`): label, color, children and joints come along.
     template <class T>
     T derive(const TopoDS_Shape& shape) const {
         T result(shape);
         Shape& base = result;
         base.label = label;
         base.color = color;
-        base.children = children;
+        base.children.assign_raw(children.items_);
+        base.joints = joints;
         base.parent_ = parent_;
         return result;
     }
@@ -243,9 +399,27 @@ protected:
     friend class ShapeList;
     friend class Compound;
     friend class Vertex;
+    friend class ShapeChildren;
+    friend class JointMap;
+
+private:
+    // The shape whose `children` hold this one. Copies start as roots; ShapeChildren sets it.
+    Shape* tree_parent_ = nullptr;
+    /// Point the children and joints at this object (after construction, copy or move).
+    void bind();
+    /// build123d's Compound._post_attach_children: the geometry becomes a compound of the children.
+    void rebuild_from_children();
 };
 
 std::ostream& operator<<(std::ostream& os, const Shape& s);
+
+template <class... Args>
+Shape& ShapeChildren::emplace_back(Args&&... args) {
+    const bool had_children = !items_.empty();
+    items_.emplace_back(std::forward<Args>(args)...);
+    changed(had_children);
+    return items_.back();
+}
 
 // ---------------------------------------------------------------------------
 // 0D

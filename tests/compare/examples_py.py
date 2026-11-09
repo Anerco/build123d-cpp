@@ -612,6 +612,107 @@ def build123d_logo():
     return {"build123d_logo": cmpd}
 
 
+def build123d_customizable_logo():
+    logo_text = Text("123d", font_size=10, align=Align.MIN)
+    font_height = logo_text.vertices().sort_by(Axis.Y)[-1].Y
+    build_text = Text("build", font_size=5, align=Align.CENTER)
+    build_bb = build_text.bounding_box()
+    build_width = build_bb.max.X - build_bb.min.X
+    cust_text = Text("customizable", font_size=2.9, align=Align.CENTER, font_style=FontStyle.BOLD)
+    cust_bb = cust_text.bounding_box()
+    l1 = Line((font_height * 0.3, 0), (font_height * 0.3, font_height))
+    one = l1 + TangentArc(l1 @ 1, (0, font_height * 0.7), tangent=(l1 % 1) * -1)
+    two = Pos(font_height * 0.35, 0) * Text("2", font_size=10, align=Align.MIN)
+    three_d = Text("3d", font_size=10, align=Align.MIN)
+    three_d = Pos(font_height * 1.1, 0) * extrude(three_d, amount=font_height * 0.3)
+    logo_width = three_d.vertices().sort_by(Axis.X)[-1].X
+    t1 = TangentArc((0, 0), (1, 0.75), tangent=(1, 0))
+    arrow_left = t1 + mirror(t1, Plane.XZ)
+    ext_line_length = font_height * 0.5
+    dim_line_length = (logo_width - build_width - 2 * font_height * 0.05) / 2
+    l1 = Line((0, -font_height * 0.1), (0, -ext_line_length - font_height * 0.1))
+    l2 = Line(
+        (logo_width, -font_height * 0.1),
+        (logo_width, -ext_line_length - font_height * 0.1),
+    )
+    extension_lines = Curve() + (l1 + l2)
+    extension_lines += Pos(*(l1 @ 0.5)) * arrow_left
+    extension_lines += (Pos(*(l2 @ 0.5)) * Rot(Z=180)) * arrow_left
+    extension_lines += Line(l1 @ 0.5, l1 @ 0.5 + Vector(dim_line_length, 0))
+    extension_lines += Line(l2 @ 0.5, l2 @ 0.5 - Vector(dim_line_length, 0))
+    p1 = Pos((l1 @ 0.5 + l2 @ 0.5) / 2 - Vector((build_bb.max.X + build_bb.min.X) / 2, 0))
+    build = p1 * build_text
+    p2 = Pos((l1 @ 1 + l2 @ 1) / 2 - Vector(cust_bb.max.X + cust_bb.min.X, 1.4))
+    build += p2 * cust_text
+    cmpd = Compound([three_d, two, one, build, extension_lines])
+    return {"build123d_customizable_logo": cmpd}
+
+
+def joints():
+    class JointBox(Part):
+        def __init__(self, length, width, height, radius=0.0, taper=0.0):
+            obj = extrude(Rectangle(length, width), amount=height, taper=taper)
+            if radius != 0.0:
+                obj = fillet(obj.edges(), radius=radius)
+            obj -= Rot(0, 90, 0) * Cylinder(width / 4, length)
+            super().__init__(obj.wrapped)
+
+    loc = Location(Vector(1, 1, 1), (1, 1, 1), 30)
+    base = loc * JointBox(10, 10, 10, taper=3)
+    base_top_edges = base.edges().filter_by(loc.x_axis).group_by(loc.z_axis)[-1]
+    fixed_arm = JointBox(1, 1, 5, 0.2)
+    RigidJoint("side", base, Plane(base.faces().sort_by(loc.x_axis).last).location)
+    RigidJoint("top", fixed_arm, (-Plane(fixed_arm.faces().sort_by().last)).location)
+    base.joints["side"].connect_to(fixed_arm.joints["top"])
+    hinge_arm = JointBox(2, 1, 10, taper=1)
+    swing_arm_hinge_edge = hinge_arm.edges().group_by(SortBy.LENGTH)[-1].sort_by(Axis.X)[-2:].sort_by(Axis.Y)[0]
+    swing_arm_hinge_axis = Axis(swing_arm_hinge_edge)
+    base_corner_edge = base.edges().sort_by(Axis((0, 0, 0), (1, 1, 0)))[-1]
+    base_hinge_axis = Axis(base_corner_edge)
+    RevoluteJoint("hinge", base, axis=base_hinge_axis, angular_range=(0, 180))
+    RigidJoint("corner", hinge_arm, swing_arm_hinge_axis.location)
+    base.joints["hinge"].connect_to(hinge_arm.joints["corner"], angle=90)
+    slider_arm = JointBox(4, 1, 2, 0.2)
+    LinearJoint(
+        "slide",
+        base,
+        axis=Axis(Edge.make_mid_way(*base_top_edges, 0.67)),
+        linear_range=(0, base_top_edges[0].length),
+    )
+    RigidJoint("slide", slider_arm, Location(Vector(0, 0, 0)))
+    base.joints["slide"].connect_to(slider_arm.joints["slide"], position=8)
+    hole_axis = Axis(
+        base.faces().sort_by(Axis.Y)[0].center(),
+        -base.faces().sort_by(Axis.Y)[0].normal_at(),
+    )
+    screw_arm = JointBox(1, 1, 10, 0.49)
+    j5 = CylindricalJoint("hole", base, hole_axis, linear_range=(-10, 10))
+    j6 = RigidJoint("screw", screw_arm, screw_arm.faces().sort_by(Axis.Z)[-1].location)
+    j5.connect_to(j6, position=-1, angle=90)
+    j7 = LinearJoint(
+        "slot",
+        base,
+        axis=Axis(Edge.make_mid_way(*base_top_edges, 0.33)),
+        linear_range=(0, base_top_edges[0].length),
+    )
+    pin_arm = JointBox(2, 1, 2)
+    j8 = RevoluteJoint("pin", pin_arm, axis=Axis.Z, angular_range=(0, 360))
+    j7.connect_to(j8, position=6, angle=60)
+    j9 = BallJoint("socket", base, Plane(base.faces().sort_by(Axis.X)[0]).location)
+    ball = JointBox(2, 2, 2, 0.99)
+    j10 = RigidJoint("ball", ball, Location(Vector(0, 0, 1)))
+    j9.connect_to(j10, angles=(10, 20, 30))
+    return {
+        "joints_base": base,
+        "joints_fixed_arm": fixed_arm,
+        "joints_hinge_arm": hinge_arm,
+        "joints_slider_arm": slider_arm,
+        "joints_screw_arm": screw_arm,
+        "joints_pin_arm": pin_arm,
+        "joints_ball": ball,
+    }
+
+
 # executable name in build/examples -> example
 EXAMPLES = {
     "tea_cup": tea_cup,
@@ -636,6 +737,8 @@ EXAMPLES = {
     "custom_sketch_objects": custom_sketch_objects,
     "projection": projection,
     "build123d_logo": build123d_logo,
+    "build123d_customizable_logo": build123d_customizable_logo,
+    "joints": joints,
 }
 
 
