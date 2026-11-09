@@ -22,6 +22,7 @@
 #include <gp_Quaternion.hxx>
 #include <Quantity_Color.hxx>
 
+#include "build123d/warnings.hpp"
 #include "internal.hpp"
 
 namespace build123d {
@@ -80,6 +81,11 @@ Vector Vector::normalized() const {
     const double len = length();
     if (len <= gp::Resolution()) throw std::invalid_argument("Cannot normalize a null Vector");
     return {X / len, Y / len, Z / len};
+}
+
+double Vector::reciprocal(double s) {
+    if (s == 0.0) throw std::invalid_argument("float division by zero");
+    return 1.0 / s;
 }
 
 gp_Dir Vector::to_dir() const {
@@ -443,6 +449,10 @@ Rotation::Rotation(double X, double Y, double Z, Intrinsic ordering)
 Rotation::Rotation(double X, double Y, double Z, Extrinsic ordering)
     : Location(Vector(0, 0, 0), Vector(X, Y, Z), ordering) {}
 
+Rotation::Rotation(const Vector& rotation, Intrinsic ordering) : Location(Vector(0, 0, 0), rotation, ordering) {}
+
+Rotation::Rotation(const Vector& rotation, Extrinsic ordering) : Location(Vector(0, 0, 0), rotation, ordering) {}
+
 Rotation::Rotation(const Axis& axis, double angle) {
     if (angle != 0.0) trsf_.SetRotation(axis.wrapped(), angle * DEG2RAD);
 }
@@ -472,6 +482,7 @@ const Plane Plane::isometric{
 void Plane::init(const gp_Ax3& ax3_in) {
     gp_Ax3 ax3 = ax3_in;
     if (!ax3.Direct()) {
+        warn("Trying to set a left-handed plane");
         ax3 = gp_Ax3(gp_Ax2(ax3.Location(), ax3.Direction(), ax3.XDirection()));
     }
     ax3_ = ax3;
@@ -537,7 +548,7 @@ Plane Plane::from_x_y(const Vector& o, const Vector& x, const Vector& y) {
 Plane Plane::from_points(const Vector& p0, const Vector& p1, const Vector& p2) {
     const Vector x = p1 - p0;
     const Vector z = x.cross(p2 - p0);
-    return Plane(p0, x.normalized(), z.normalized());
+    return Plane(p0, x, z);
 }
 
 Plane Plane::offset(double amount) const { return Plane(origin + z_dir * amount, x_dir, z_dir); }
@@ -560,10 +571,14 @@ Plane Plane::rotated(const Vector& rotation, Extrinsic ordering) const {
 
 Plane Plane::moved(const Location& loc) const { return Plane(location() * loc); }
 
+Plane Plane::moved(const Plane& plane) const { return moved(plane.location()); }
+
 Plane& Plane::move(const Location& loc) {
     *this = moved(loc);
     return *this;
 }
+
+Plane& Plane::move(const Plane& plane) { return move(plane.location()); }
 
 Plane Plane::shift_origin(const Vector& locator) const {
     if (!contains(locator)) {
@@ -585,6 +600,14 @@ void Plane::set_x_dir(const Vector& direction) {
     ax2.SetXDirection(direction.to_dir());
     init(gp_Ax3(ax2));
 }
+
+void Plane::set_y_dir(const Vector& direction) {
+    gp_Ax2 ax2 = to_gp_ax2();
+    ax2.SetYDirection(direction.to_dir());
+    init(gp_Ax3(ax2));
+}
+
+Vector Plane::get_topods_face_normal(const TopoDS_Face& face) { return detail::face_normal_at_origin_projection(face); }
 
 gp_Pln Plane::wrapped() const { return gp_Pln(to_gp_ax3()); }
 
@@ -619,11 +642,12 @@ Vector Plane::to_local_coords(const Vector& v) const { return v.transform(forwar
 Vector Plane::from_local_coords(const Vector& v) const { return v.transform(reverse_transform()); }
 
 BoundBox Plane::to_local_coords(const BoundBox& box) const {
-    Bnd_Box b;
-    b.Update(to_local_coords(box.min).X, to_local_coords(box.min).Y, to_local_coords(box.min).Z);
-    const Vector m = to_local_coords(box.max);
-    b.Update(m.X, m.Y, m.Z);
-    return BoundBox(b);
+    // as build123d: Bnd_Box(min, max) of the moved corners, unsorted
+    return BoundBox(Bnd_Box(to_local_coords(box.min).to_pnt(), to_local_coords(box.max).to_pnt()));
+}
+
+BoundBox Plane::from_local_coords(const BoundBox& box) const {
+    return BoundBox(Bnd_Box(from_local_coords(box.min).to_pnt(), from_local_coords(box.max).to_pnt()));
 }
 
 Location Plane::location_between(const Plane& other) const {
@@ -711,6 +735,34 @@ std::vector<Location> operator*(const Location& loc, const std::vector<Location>
     return out;
 }
 
+std::vector<Location> operator*(const Plane& plane, const std::vector<Plane>& planes) {
+    std::vector<Location> out;
+    out.reserve(planes.size());
+    for (const auto& p : planes) out.push_back(Location(plane) * p.location());
+    return out;
+}
+
+std::vector<Plane> operator*(const Location& loc, const std::vector<Plane>& planes) {
+    std::vector<Plane> out;
+    out.reserve(planes.size());
+    for (const auto& p : planes) out.push_back(p.moved(loc));
+    return out;
+}
+
+std::vector<Plane> operator*(const std::vector<Location>& locs, const Plane& plane) {
+    std::vector<Plane> out;
+    out.reserve(locs.size());
+    for (const auto& l : locs) out.push_back(plane.moved(l));
+    return out;
+}
+
+std::vector<Plane> operator*(const std::vector<Plane>& planes, const Plane& plane) {
+    std::vector<Plane> out;
+    out.reserve(planes.size());
+    for (const auto& p : planes) out.push_back(plane.moved(p));
+    return out;
+}
+
 // ---------------------------------------------------------------------------
 // BoundBox
 // ---------------------------------------------------------------------------
@@ -780,21 +832,73 @@ bool BoundBox::covered_by(const BoundBox& other, double tolerance) const {
     return other.covers(*this, tolerance);
 }
 
-bool BoundBox::contains(const BoundBox& other, double tolerance) const {
-    if (!covers(other, tolerance)) return false;
-    const double smin[3] = {min.X, min.Y, min.Z}, smax[3] = {max.X, max.Y, max.Z};
+namespace {
+
+/// BoundBox._interior_axes: the (self_min, self_max, other_min, other_max) of each axis
+/// relevant to an interior comparison; std::nullopt when a degenerate axis of both boxes
+/// is at different coordinates.
+std::optional<std::vector<std::array<double, 4>>> interior_axes(const BoundBox& self, const BoundBox& other,
+                                                                 double tolerance) {
+    const double smin[3] = {self.min.X, self.min.Y, self.min.Z}, smax[3] = {self.max.X, self.max.Y, self.max.Z};
     const double omin[3] = {other.min.X, other.min.Y, other.min.Z};
     const double omax[3] = {other.max.X, other.max.Y, other.max.Z};
+    std::vector<std::array<double, 4>> axes;
     for (int i = 0; i < 3; ++i) {
-        const bool sd = smax[i] - smin[i] <= tolerance;
-        const bool od = omax[i] - omin[i] <= tolerance;
-        if (sd && od) {
-            if (std::abs((smin[i] + smax[i]) / 2 - (omin[i] + omax[i]) / 2) > tolerance) return false;
-            continue;
+        const bool self_degenerate = smax[i] - smin[i] <= tolerance;
+        const bool other_degenerate = omax[i] - omin[i] <= tolerance;
+        if (self_degenerate && other_degenerate) {
+            const double self_center = (smin[i] + smax[i]) / 2;
+            const double other_center = (omin[i] + omax[i]) / 2;
+            if (std::abs(self_center - other_center) > tolerance) return std::nullopt;
+        } else {
+            axes.push_back({smin[i], smax[i], omin[i], omax[i]});
         }
-        if (!(std::max(smin[i], omin[i]) < std::min(smax[i], omax[i]) - tolerance)) return false;
+    }
+    return axes;
+}
+
+}  // namespace
+
+bool BoundBox::has_interior_overlap(const BoundBox& other, double tolerance) const {
+    if (void_ || other.void_) return false;
+    const auto axes = interior_axes(*this, other, tolerance);
+    if (!axes) return false;
+    for (const auto& [self_min, self_max, other_min, other_max] : *axes) {
+        if (!(std::max(self_min, other_min) < std::min(self_max, other_max) - tolerance)) return false;
     }
     return true;
+}
+
+bool BoundBox::contains(const BoundBox& other, double tolerance) const {
+    return covers(other, tolerance) && has_interior_overlap(other, tolerance);
+}
+
+bool BoundBox::contains_properly(const BoundBox& other, double tolerance) const {
+    if (void_ || other.void_) return false;
+    const auto axes = interior_axes(*this, other, tolerance);
+    if (!axes || axes->empty()) return false;
+    for (const auto& [self_min, self_max, other_min, other_max] : *axes) {
+        if (!(self_min + tolerance < other_min && other_max < self_max - tolerance)) return false;
+    }
+    return true;
+}
+
+bool BoundBox::touches(const BoundBox& other, double tolerance) const {
+    return intersects(other, tolerance) && !has_interior_overlap(other, tolerance);
+}
+
+bool BoundBox::overlaps(const BoundBox& other, double tolerance) const {
+    return has_interior_overlap(other, tolerance) && !contains(other, tolerance) && !other.contains(*this, tolerance);
+}
+
+std::optional<BoundBox> BoundBox::find_outside_box_2d(const BoundBox& bb1, const BoundBox& bb2) {
+    if (bb1.min.X < bb2.min.X && bb1.max.X > bb2.max.X && bb1.min.Y < bb2.min.Y && bb1.max.Y > bb2.max.Y) {
+        return bb1;
+    }
+    if (bb2.min.X < bb1.min.X && bb2.max.X > bb1.max.X && bb2.min.Y < bb1.min.Y && bb2.max.Y > bb1.max.Y) {
+        return bb2;
+    }
+    return std::nullopt;
 }
 
 bool BoundBox::within(const BoundBox& other, double tolerance) const {
@@ -819,7 +923,9 @@ Vector BoundBox::to_align_offset(const Align2& align) const {
 }
 
 std::string BoundBox::to_string() const {
-    return "BoundBox(min=" + min.to_string() + ", max=" + max.to_string() + ")";
+    using detail::py_repr;
+    return "bbox: " + py_repr(min.X) + " <= x <= " + py_repr(max.X) + ", " + py_repr(min.Y) + " <= y <= " +
+           py_repr(max.Y) + ", " + py_repr(min.Z) + " <= z <= " + py_repr(max.Z);
 }
 
 std::ostream& operator<<(std::ostream& os, const BoundBox& b) { return os << b.to_string(); }
@@ -889,7 +995,7 @@ const std::unordered_map<std::string, std::uint32_t>& css_colors() {
         {"orchid", 0xda70d6}, {"palegoldenrod", 0xeee8aa}, {"palegreen", 0x98fb98},
         {"paleturquoise", 0xafeeee}, {"palevioletred", 0xdb7093}, {"papayawhip", 0xffefd5},
         {"peachpuff", 0xffdab9}, {"peru", 0xcd853f}, {"pink", 0xffc0cb}, {"plum", 0xdda0dd},
-        {"powderblue", 0xb0e0e6}, {"purple", 0x800080}, {"rebeccapurple", 0x663399},
+        {"powderblue", 0xb0e0e6}, {"purple", 0x800080},
         {"red", 0xff0000}, {"rosybrown", 0xbc8f8f}, {"royalblue", 0x4169e1},
         {"saddlebrown", 0x8b4513}, {"salmon", 0xfa8072}, {"sandybrown", 0xf4a460},
         {"seagreen", 0x2e8b57}, {"seashell", 0xfff5ee}, {"sienna", 0xa0522d},
@@ -910,34 +1016,181 @@ int hex_digit(char c) {
     throw std::invalid_argument(std::string("Invalid hex digit '") + c + "'");
 }
 
+/// webcolors' rgb_to_name for CSS3: the name of a color code, preferring "cyan",
+/// "magenta" and the "gray" spellings among the aliases, as webcolors does.
+std::optional<std::string> css_name_of(std::uint32_t code) {
+    static const std::unordered_map<std::uint32_t, std::string> names = [] {
+        std::unordered_map<std::uint32_t, std::string> out;
+        const auto preferred = [](const std::string& a, const std::string& b) {
+            if (a == "cyan" || a == "magenta") return a;
+            if (b == "cyan" || b == "magenta") return b;
+            return a.find("grey") == std::string::npos ? a : b;
+        };
+        for (const auto& [name, value] : css_colors()) {
+            const auto it = out.find(value);
+            out[value] = it == out.end() ? name : preferred(it->second, name);
+        }
+        return out;
+    }();
+    const auto it = names.find(code);
+    if (it == names.end()) return std::nullopt;
+    return it->second;
+}
+
+/// Python's str.strip(): leading and trailing whitespace removed.
+std::string strip(const std::string& text) {
+    const char* space = " \t\n\r\f\v";
+    const auto first = text.find_first_not_of(space);
+    if (first == std::string::npos) return "";
+    return text.substr(first, text.find_last_not_of(space) - first + 1);
+}
+
+/// colorsys.hls_to_rgb.
+std::array<double, 3> hls_to_rgb(double h, double l, double s) {
+    constexpr double one_third = 1.0 / 3.0, one_sixth = 1.0 / 6.0, two_third = 2.0 / 3.0;
+    if (s == 0.0) return {l, l, l};
+    const double m2 = l <= 0.5 ? l * (1.0 + s) : l + s - (l * s);
+    const double m1 = 2.0 * l - m2;
+    const auto v = [&](double hue) {
+        hue = detail::py_float_mod(hue, 1.0);
+        if (hue < one_sixth) return m1 + (m2 - m1) * hue * 6.0;
+        if (hue < 0.5) return m2;
+        if (hue < two_third) return m1 + (m2 - m1) * (two_third - hue) * 6.0;
+        return m1;
+    };
+    return {v(h + one_third), v(h), v(h - one_third)};
+}
+
+/// colorsys.rgb_to_hls (the hue).
+double rgb_to_hue(double r, double g, double b) {
+    const double maxc = std::max({r, g, b}), minc = std::min({r, g, b});
+    if (minc == maxc) return 0.0;
+    const double rangec = maxc - minc;
+    const double rc = (maxc - r) / rangec, gc = (maxc - g) / rangec, bc = (maxc - b) / rangec;
+    double h;
+    if (r == maxc) {
+        h = bc - gc;
+    } else if (g == maxc) {
+        h = 2.0 + rc - bc;
+    } else {
+        h = 4.0 + gc - rc;
+    }
+    return detail::py_float_mod(h / 6.0, 1.0);
+}
+
+/// Quantity_Color's range check (build123d builds one in Color.__init__).
+void check_color(double r, double g, double b) {
+    detail::occt("Color", [&] { return Quantity_Color(r, g, b, Quantity_TOC_sRGB); });
+}
+
 }  // namespace
 
-Color::Color(const std::string& name_in, double a) : alpha(a) {
-    std::string name;
-    for (char c : name_in) {
-        if (!std::isspace(static_cast<unsigned char>(c))) name.push_back(c);
+Color::Color(double r, double g, double b, double a) : red(r), green(g), blue(b), alpha(a) { check_color(r, g, b); }
+
+Color::Color(double r) : red(r) { check_color(red, green, blue); }
+
+Color::Color(double r, double g) : red(r), green(g) { check_color(red, green, blue); }
+
+Color::Color(const Quantity_ColorRGBA& color) {
+    color.GetRGB().Values(red, green, blue, Quantity_TOC_sRGB);
+    alpha = color.Alpha();
+}
+
+Color Color::from_code(long long color_code, int alpha_code) {
+    // Color._rgb_from_int: divmod by 256**2 and 256 (floor division)
+    const auto floor_div = [](long long a, long long b) {
+        long long q = a / b;
+        if ((a % b != 0) && ((a < 0) != (b < 0))) --q;
+        return q;
+    };
+    const long long red_code = floor_div(color_code, 256 * 256);
+    const long long remainder = color_code - red_code * 256 * 256;
+    const long long green_code = floor_div(remainder, 256);
+    const long long blue_code = remainder - green_code * 256;
+    // alpha 1 stands for opaque (build123d special-cases the default 1.0)
+    const double a = alpha_code == 1 ? 1.0 : alpha_code / 255.0;
+    return Color(red_code / 255.0, green_code / 255.0, blue_code / 255.0, a);
+}
+
+std::vector<Color> Color::categorical_set(int color_count, double starting_hue, double alpha) {
+    return categorical_set(color_count, starting_hue, std::vector<double>(std::max(color_count, 0), alpha));
+}
+
+std::vector<Color> Color::categorical_set(int color_count, double starting_hue, const std::vector<double>& alphas) {
+    if (!(0.0 <= starting_hue && starting_hue <= 1.0)) {
+        throw std::invalid_argument("Starting hue must be within range 0.0–1.0");
     }
-    if (!name.empty() && name[0] == '#') {
-        std::string h = name.substr(1);
-        if (h.size() == 3 || h.size() == 4) {
-            std::string e;
-            for (char c : h) e += std::string(2, c);
-            h = e;
-        }
-        if (h.size() != 6 && h.size() != 8) {
+    if (static_cast<long long>(alphas.size()) != color_count) {
+        throw std::invalid_argument("Number of alpha values must match color_count");
+    }
+    if (color_count < 0) throw std::invalid_argument("Number of samples must be non-negative");
+    // np.linspace(starting_hue, starting_hue + 1.0, color_count, endpoint=False)
+    const double delta = (starting_hue + 1.0) - starting_hue;
+    const double step = delta / color_count;
+    std::vector<Color> colors;
+    for (int i = 0; i < color_count; ++i) {
+        const double hue = i * step + starting_hue;
+        const auto [r, g, b] = hls_to_rgb(detail::py_float_mod(hue, 1.0), 0.55, 0.9);
+        colors.emplace_back(r, g, b, alphas[static_cast<std::size_t>(i)]);
+    }
+    return colors;
+}
+
+std::vector<Color> Color::categorical_set(int color_count, int starting_color, double alpha) {
+    return categorical_set(color_count, starting_color, std::vector<double>(std::max(color_count, 0), alpha));
+}
+
+std::vector<Color> Color::categorical_set(int color_count, int starting_color, const std::vector<double>& alphas) {
+    if (starting_color < 0) throw std::invalid_argument("Starting color integer must be non-negative");
+    const auto rgb = Color(starting_color).to_tuple();
+    return categorical_set(color_count, rgb_to_hue(rgb[0], rgb[1], rgb[2]), alphas);
+}
+
+Color::Color(const std::string& name_in, double a) : alpha(a) {
+    std::string name = strip(name_in);
+    if (name.find('#') != std::string::npos) {
+        // the alpha of a hex color goes through two hex digits, as build123d
+        char hex_alpha[32];
+        const long long alpha_code = static_cast<long long>(alpha * 255);  // int() truncates
+        std::snprintf(hex_alpha, sizeof(hex_alpha), alpha_code < 0 ? "-%llx" : "%llx",
+                      static_cast<unsigned long long>(std::llabs(alpha_code)));
+        std::string hex_a = hex_alpha;
+        if (name.size() == 5) {
+            hex_a = std::string(2, name[4]);
+            name = name.substr(0, 4);
+        } else if (name.size() == 9) {
+            hex_a = name.substr(7, 2);
+            name = name.substr(0, 7);
+        } else if (name.size() != 4 && name.size() != 7) {
             throw std::invalid_argument('"' + name + "\" is not a valid hexadecimal color value.");
         }
-        auto byte = [&](std::size_t i) { return hex_digit(h[i]) * 16 + hex_digit(h[i + 1]); };
+        int alpha_value = 0;
+        try {
+            std::size_t used = 0;
+            alpha_value = std::stoi(hex_a, &used, 16);
+            if (used != hex_a.size()) throw std::invalid_argument(hex_a);
+        } catch (const std::exception&) {
+            throw std::invalid_argument("Invald alpha hex string: " + hex_a);
+        }
+        alpha = alpha_value / 255.0;
+        // webcolors.hex_to_rgb: "#rgb" or "#rrggbb"
+        const bool valid = name[0] == '#' && std::all_of(name.begin() + 1, name.end(), [](char c) {
+                               return std::isxdigit(static_cast<unsigned char>(c)) != 0;
+                           });
+        if (!valid) throw std::invalid_argument('"' + name + "\" is not a valid hexadecimal color value.");
+        std::string h = name.substr(1);
+        if (h.size() == 3) h = {h[0], h[0], h[1], h[1], h[2], h[2]};
+        const auto byte = [&](std::size_t i) { return hex_digit(h[i]) * 16 + hex_digit(h[i + 1]); };
         red = byte(0) / 255.0;
         green = byte(2) / 255.0;
         blue = byte(4) / 255.0;
-        if (h.size() == 8) alpha = byte(6) / 255.0;
+        check_color(red, green, blue);
         return;
     }
     std::string lower;
     for (char c : name) lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
     const auto& table = css_colors();
-    auto it = table.find(lower);
+    const auto it = table.find(lower);
     if (it != table.end()) {
         const std::uint32_t v = it->second;
         red = ((v >> 16) & 0xff) / 255.0;
@@ -945,16 +1198,17 @@ Color::Color(const std::string& name_in, double a) : alpha(a) {
         blue = (v & 0xff) / 255.0;
         return;
     }
-    Quantity_NameOfColor occ_name;
-    if (Quantity_Color::ColorFromName(name.c_str(), occ_name)) {
-        double r, g, b;
-        Quantity_Color(occ_name).Values(r, g, b, Quantity_TOC_sRGB);
-        red = r;
-        green = g;
-        blue = b;
+    // OCCT/X11 names: build123d takes Red()/Green()/Blue() of the OCCT color, which are its
+    // linear RGB values, as the sRGB values of the new color
+    Quantity_Color occ_color;
+    if (Quantity_Color::ColorFromName(name.c_str(), occ_color)) {
+        red = occ_color.Red();
+        green = occ_color.Green();
+        blue = occ_color.Blue();
+        check_color(red, green, blue);
         return;
     }
-    throw std::invalid_argument("Unknown color name '" + name_in + "'");
+    throw std::invalid_argument("'" + name + "' is not defined as a named color in CSS3 or OCCT/X11");
 }
 
 std::size_t Color::hash() const { return hash_values(4, std::array<double, 4>{red, green, blue, alpha}); }
@@ -968,8 +1222,43 @@ Quantity_ColorRGBA Color::wrapped() const {
                               static_cast<float>(alpha));
 }
 
-std::string Color::to_string() const {
-    return "Color(" + fmt(red) + ", " + fmt(green) + ", " + fmt(blue) + ", " + fmt(alpha) + ")";
+std::array<double, 4> Color::to_tuple() const {
+    const Quantity_ColorRGBA color = wrapped();
+    double r, g, b;
+    color.GetRGB().Values(r, g, b, Quantity_TOC_sRGB);
+    return {py_round(r, 7), py_round(g, 7), py_round(b, 7), py_round(color.Alpha(), 7)};
+}
+
+namespace {
+
+std::string tuple_repr(const std::array<double, 4>& values) {
+    std::string out = "(";
+    for (std::size_t i = 0; i < values.size(); ++i) out += (i ? ", " : "") + detail::py_repr(values[i]);
+    return out + ")";
+}
+
+}  // namespace
+
+std::string Color::to_string() const { return "Color" + tuple_repr(to_tuple()); }
+
+std::string Color::str() const {
+    const Quantity_ColorRGBA color = wrapped();
+    double r, g, b;
+    color.GetRGB().Values(r, g, b, Quantity_TOC_sRGB);
+    const auto code = [](double c) { return static_cast<std::uint32_t>(std::nearbyint(c * 255)); };
+    const auto css = (r >= 0 && g >= 0 && b >= 0 && code(r) < 256 && code(g) < 256 && code(b) < 256)
+                         ? css_name_of((code(r) << 16) | (code(g) << 8) | code(b))
+                         : std::nullopt;
+    std::string name, qualifier;
+    if (css) {
+        name = *css;
+        qualifier = "is";
+    } else {
+        name = Quantity_Color::StringName(color.GetRGB().Name());
+        qualifier = "near";
+    }
+    for (char& c : name) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    return "Color: " + tuple_repr(to_tuple()) + " " + qualifier + " '" + name + "'";
 }
 
 std::ostream& operator<<(std::ostream& os, const Color& c) { return os << c.to_string(); }

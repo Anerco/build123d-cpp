@@ -67,28 +67,7 @@ std::vector<Shape> compound_elements(const Shape& compound) {
 
 /// ShapeList.expand: compounds dissolved to their children, wires to edges, shells to
 /// faces, nulls removed.
-ShapeList<Shape> expand(const ShapeList<Shape>& shapes) {
-    ShapeList<Shape> expanded;
-    for (const auto& shape : shapes) {
-        if (shape.is_null()) continue;
-        switch (type_of(shape)) {
-            case TopAbs_COMPOUND: {
-                ShapeList<Shape> kids;
-                for (TopoDS_Iterator it(shape.wrapped()); it.More(); it.Next()) kids.emplace_back(it.Value());
-                for (auto& s : expand(kids)) expanded.push_back(std::move(s));
-                break;
-            }
-            case TopAbs_SHELL:
-                for (const auto& f : shape.faces()) expanded.push_back(f);
-                break;
-            case TopAbs_WIRE:
-                for (const auto& e : Wire(shape.wrapped()).edges()) expanded.push_back(e);
-                break;
-            default: expanded.push_back(shape);
-        }
-    }
-    return expanded;
-}
+ShapeList<Shape> expand(const ShapeList<Shape>& shapes) { return expand_shapes(shapes); }
 
 /// ShapeList(set(shapes)): duplicates (is_same) removed. build123d's set order is
 /// arbitrary; the first occurrence order is kept here.

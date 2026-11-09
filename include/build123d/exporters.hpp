@@ -109,9 +109,9 @@ public:
 
 /// The fill and line colors of ExportSVG and its layers: INHERIT_COLOR (the default: Face
 /// colors fill faces and Edge/Wire colors draw lines, falling back to no fill and black
-/// lines), std::nullopt (none, Python's None) or a color. A Color with components above 1
-/// (Python's deprecated 0-255 tuples) and a ColorIndex (deprecated) are converted with a
-/// warning, as in Python.
+/// lines), std::nullopt (none, Python's None), a color, or an (r, g, b[, a]) tuple. A tuple
+/// with a component above 1 (Python's deprecated 0-255 tuples) and a ColorIndex (deprecated)
+/// are converted with a warning, as in Python.
 class SvgColor {
 public:
     SvgColor() = default;
@@ -120,6 +120,8 @@ public:
     SvgColor(const std::string& name) : SvgColor(Color(name)) {}  // NOLINT
     SvgColor(const char* name) : SvgColor(Color(name)) {}  // NOLINT
     SvgColor(ColorIndex index) : inherit_(false), index_(index) {}  // NOLINT
+    SvgColor(const std::array<double, 3>& rgb) : inherit_(false), tuple_({rgb[0], rgb[1], rgb[2], 1.0}) {}  // NOLINT
+    SvgColor(const std::array<double, 4>& rgba) : inherit_(false), tuple_(rgba), tuple_alpha_(true) {}  // NOLINT
 
     bool inherit() const { return inherit_; }
     /// The color (none for std::nullopt), after converting deprecated inputs.
@@ -129,6 +131,8 @@ private:
     bool inherit_ = true;
     std::optional<Color> color_;
     std::optional<ColorIndex> index_;
+    std::optional<std::array<double, 4>> tuple_;
+    bool tuple_alpha_ = false;
 };
 
 /// Use shape colors (the default of ExportSVG's color arguments).

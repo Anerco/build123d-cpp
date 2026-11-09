@@ -44,21 +44,10 @@ namespace {
 // The part of constrained_lines.py that the wire fillet uses (_make_2tan_rad_arcs)
 // ---------------------------------------------------------------------------
 
-/// Python's float modulo (the result has the sign of the divisor).
-double py_mod(double a, double b) {
-    double m = std::fmod(a, b);
-    if (m != 0.0) {
-        if ((b < 0) != (m < 0)) m += b;
-    } else {
-        m = std::copysign(0.0, b);
-    }
-    return m;
-}
-
 /// Map parameter u into [first, first + period).
 double norm_on_period(double u, double first, double period) {
     if (std::abs(u - first) < TOLERANCE) return first;
-    return py_mod(u - first, period) + first;
+    return py_float_mod(u - first, period) + first;
 }
 
 /// Forward (positive) delta from u1 to u2 on a periodic domain anchored at first.
@@ -385,16 +374,6 @@ Wire fillet_wire_corner(const Wire& wire, const Vertex& vertex, double radius, b
                                 std::to_string(radius));
 }
 
-/// Wire.order_chamfer_edges: the reference edge first.
-std::pair<Edge, Edge> order_chamfer_edges(const std::optional<Edge>& reference_edge, const Edge& e1, const Edge& e2) {
-    if (reference_edge) {
-        if (e1.is_same(*reference_edge)) return {e1, e2};
-        if (e2.is_same(*reference_edge)) return {e2, e1};
-        throw std::invalid_argument("reference edge not in edges");
-    }
-    return {e1, e2};
-}
-
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -458,7 +437,7 @@ Wire Wire::chamfer_2d(double distance, double distance2, const std::vector<Verte
             if (v.is_null()) continue;
             const OccShapeList& edge_list = vertex_edge_map.FindFromKey(v.wrapped());
             const auto [edge1, edge2] =
-                order_chamfer_edges(reference_edge, Edge(edge_list.First()), Edge(edge_list.Last()));
+                Wire::order_chamfer_edges(reference_edge, {Edge(edge_list.First()), Edge(edge_list.Last())});
             chamfer_builder.AddChamfer(TopoDS::Edge(edge1.wrapped()), TopoDS::Edge(edge2.wrapped()), distance,
                                        distance2);
         }
@@ -524,7 +503,7 @@ Face Face::chamfer_2d(double distance, double distance2, const std::vector<Verte
         for (const auto& v : vertices) {
             const OccShapeList& edge_list = vertex_edge_map.FindFromKey(v.wrapped());
             const auto [edge1, edge2] =
-                order_chamfer_edges(reference_edge, Edge(edge_list.First()), Edge(edge_list.Last()));
+                Wire::order_chamfer_edges(reference_edge, {Edge(edge_list.First()), Edge(edge_list.Last())});
             chamfer_builder.AddChamfer(TopoDS::Edge(edge1.wrapped()), TopoDS::Edge(edge2.wrapped()), distance,
                                        distance2);
         }

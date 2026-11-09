@@ -151,15 +151,18 @@ std::optional<Color> SvgColor::resolve() const {
             case ColorIndex::LIGHT_GRAY: return Color(192 / 255.0, 192 / 255.0, 192 / 255.0);
         }
     }
-    if (!color_) return std::nullopt;
-    const Color& c = *color_;
-    if (c.red > 1 || c.green > 1 || c.blue > 1 || c.alpha > 1) {
+    if (tuple_) {
+        const auto& t = *tuple_;
+        const bool legacy = t[0] > 1 || t[1] > 1 || t[2] > 1 || (tuple_alpha_ && t[3] > 1);
+        if (!legacy) return Color(t[0], t[1], t[2], tuple_alpha_ ? t[3] : 1.0);
         warn("ExportSVG 0-255 RGB tuples are deprecated; use normalized ColorLike tuples, a hexadecimal "
              "integer, or a color name instead.");
-        const double normalized_alpha = c.alpha > 1 ? c.alpha / 255 : c.alpha;
-        return Color(c.red / 255, c.green / 255, c.blue / 255, normalized_alpha);
+        const double alpha = tuple_alpha_ ? t[3] : 255.0;
+        const double normalized_alpha = alpha > 1 ? alpha / 255 : alpha;
+        return Color(t[0] / 255, t[1] / 255, t[2] / 255, normalized_alpha);
     }
-    return c;
+    if (!color_) return std::nullopt;
+    return *color_;
 }
 
 // ---------------------------------------------------------------------------

@@ -130,3 +130,79 @@ TEST(core_split_unpacks) {
     CHECK(box.split(Plane::XY.offset(-5), Keep::BOTTOM).empty());  // build123d's None
     CHECK_THROWS(box.split(Plane::XY, Keep::INSIDE), std::invalid_argument);
 }
+
+// group_by keys: numbers (and bools) are rounded doubles, other keys keep their type
+static_assert(std::is_same_v<decltype(ShapeList<Solid>().group_by([](const Solid& s) { return s.label; })),
+                             GroupBy<Solid, std::string>>);
+static_assert(std::is_same_v<decltype(ShapeList<Edge>().group_by([](const Edge& e) { return e.is_closed(); })),
+                             GroupBy<Edge, double>>);
+static_assert(std::is_same_v<decltype(ShapeList<Edge>().group_by(by_convexity)), GroupBy<Edge, Convexity>>);
+static_assert(std::is_same_v<decltype(ShapeList<Edge>().group_by(Axis::Z)), GroupBy<Edge>>);
+
+TEST(core_shapelist_semantics) {
+    const Part box = Box(1, 2, 3);
+    const auto faces = box.faces();
+    // == compares as sets (is_same), like build123d
+    CHECK(faces == faces.slice(std::nullopt, std::nullopt, -1));
+    CHECK(faces == faces + faces);
+    CHECK(faces != faces.slice(1));
+    // - and & keep each shape once
+    CHECK((faces + faces - faces.slice(0, 2)).size() == 4);
+    CHECK(((faces + faces) & faces.slice(0, 2)).size() == 2);
+    // expand drops null shapes
+    ShapeList<Shape> with_null{Shape(), Vertex(1, 2, 3), Compound(std::vector<Shape>{Wire::make_rect(1, 1)})};
+    CHECK(with_null.expand().size() == 5);
+    CHECK_THROWS(faces.slice(0, 2, 0), std::invalid_argument);
+    // a GroupBy of enum keys looks groups up by the enum
+    const Part pocket = Box(10, 10, 10) - Pos(0, 0, 3) * Box(4, 4, 4);
+    const auto groups = pocket.edges().group_by(by_convexity);
+    CHECK(groups.group(Convexity::CONCAVE).size() == pocket.edges().filter_by(Convexity::CONCAVE).size());
+    CHECK_THROWS(groups.group(Convexity::SADDLE), std::out_of_range);
+}
+
+// ---- geometry operators with lists of planes
+static_assert(std::is_same_v<decltype(Pos(1, 0, 0) * std::vector<Plane>{}), std::vector<Plane>>);
+static_assert(std::is_same_v<decltype(std::vector<Location>{} * Plane::XY), std::vector<Plane>>);
+static_assert(std::is_same_v<decltype(std::vector<Plane>{} * Plane::XY), std::vector<Plane>>);
+static_assert(std::is_same_v<decltype(Plane::XY * std::vector<Plane>{}), std::vector<Location>>);
+
+TEST(core_geometry_helpers) {
+    // Color(0) is black (build123d's Color(0) is white: it tests the color code for truth)
+    CHECK(Color(0).to_tuple() == (std::array<double, 4>{0, 0, 0, 1}));
+    CHECK(Color().to_tuple() == (std::array<double, 4>{1, 1, 1, 1}));
+    CHECK_THROWS(Color(1.5, 0, 0), std::runtime_error);
+    CHECK_THROWS(Vector(1, 2, 3) / 0.0, std::invalid_argument);
+    // BoundBox predicates on void boxes are false
+    CHECK(!BoundBox().contains_properly(Box(1, 1, 1).bounding_box()));
+    CHECK(!BoundBox().touches(Box(1, 1, 1).bounding_box()));
+    // a left-handed gp_Ax3 is made right-handed with a warning
+    std::vector<std::string> messages;
+    const auto previous = set_warning_handler([&](const std::string& m) { messages.push_back(m); });
+    gp_Ax3 left(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1), gp_Dir(1, 0, 0));
+    left.YReverse();
+    const Plane fixed(left);
+    set_warning_handler(previous);
+    CHECK(messages.size() == 1 && messages[0] == "Trying to set a left-handed plane");
+    CHECK(fixed.z_dir == Vector(0, 0, 1) && fixed.y_dir == Vector(0, 1, 0));
+}
+
+TEST(core_topology_members) {
+    // split_by_perimeter unpacks like build123d's (inside, outside) tuple
+    const Face square = Face::make_rect(10, 10);
+    const auto [inside, outside] = square.split_by_perimeter(Wire(Edge::make_circle(2)), Keep::BOTH);
+    CHECK(inside.size() == 1 && outside.size() == 1);
+    CHECK_NEAR(inside[0].area(), PI * 4, 1e-6);
+    CHECK_THROWS(square.split_by_perimeter(Wire(Edge::make_circle(2)), Keep::TOP), std::invalid_argument);
+    // positions takes build123d's keyword arguments as an option struct
+    CHECK(Edge::make_line({0, 0}, {10, 0}).positions({.distances = std::vector<double>{0, 1}}).size() == 2);
+    // copy_attributes_to keeps what the target already has
+    Shape source = Box(1, 1, 1);
+    source.label = "a";
+    source.color = Color("red");
+    Shape target = Box(1, 1, 1);
+    target.color = Color("blue");
+    source.copy_attributes_to(target);
+    CHECK(target.label == "a" && target.color == Color("blue"));
+    // the triad is a Curve of the axes, arrows and labels
+    CHECK(Compound::make_triad(1).edges().size() > 9);
+}

@@ -71,13 +71,19 @@ ShapeList<Shape> Compound::elements() const {
 Shape Compound::unwrap(bool fully) const {
     if (size() == 1) {
         TopoDS_Iterator it(obj_);
-        const TopoDS_Shape single = it.Value();
-        Shape result(single.ShapeType() == TopAbs_COMPOUND ? detail::unwrap(single, fully) : single);
-        if (!fully && single.ShapeType() != TopAbs_COMPOUND) result = Shape(obj_);
-        result.label = label;
-        result.color = color;
-        return result;
+        Shape single_element(it.Value());
+        detail::copy_attributes_to(*this, single_element);
+        // If the single element is another Compound, unwrap it recursively
+        if (it.Value().ShapeType() == TopAbs_COMPOUND) {
+            Shape unwrapped = detail::rewrap<Compound>(single_element).unwrap(fully);
+            if (!fully) unwrapped = Shape(unwrapped.wrapped());  // build123d's type(self)(...)
+            detail::copy_attributes_to(*this, unwrapped);
+            return unwrapped;
+        }
+        if (fully) return single_element;
+        return *this;
     }
+    // If there are no elements or more than one element, return self
     return *this;
 }
 

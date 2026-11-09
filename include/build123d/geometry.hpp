@@ -26,6 +26,7 @@
 #include <gp_XYZ.hxx>
 #include <Quantity_ColorRGBA.hxx>
 #include <TopLoc_Location.hxx>
+#include <TopoDS_Face.hxx>
 #include <TopoDS_Shape.hxx>
 
 #include "build123d/enums.hpp"
@@ -119,12 +120,14 @@ public:
     Vector operator+(const Vector& o) const { return {X + o.X, Y + o.Y, Z + o.Z}; }
     Vector operator-(const Vector& o) const { return {X - o.X, Y - o.Y, Z - o.Z}; }
     Vector operator*(double s) const { return {X * s, Y * s, Z * s}; }
-    Vector operator/(double s) const { return {X / s, Y / s, Z / s}; }
+    /// build123d's division: multiplication by 1 / s (std::invalid_argument for s == 0,
+    /// Python's ZeroDivisionError).
+    Vector operator/(double s) const { return *this * reciprocal(s); }
     Vector operator-() const { return {-X, -Y, -Z}; }
     Vector& operator+=(const Vector& o) { X += o.X; Y += o.Y; Z += o.Z; return *this; }
     Vector& operator-=(const Vector& o) { X -= o.X; Y -= o.Y; Z -= o.Z; return *this; }
     Vector& operator*=(double s) { X *= s; Y *= s; Z *= s; return *this; }
-    Vector& operator/=(double s) { X /= s; Y /= s; Z /= s; return *this; }
+    Vector& operator/=(double s) { return *this = *this / s; }
     friend Vector operator*(double s, const Vector& v) { return v * s; }
 
     /// Equality after rounding to 5 decimal places, like build123d.
@@ -134,6 +137,9 @@ public:
     std::size_t hash() const;
 
     std::string to_string() const;
+
+private:
+    static double reciprocal(double s);
 };
 
 std::ostream& operator<<(std::ostream& os, const Vector& v);
@@ -271,6 +277,10 @@ public:
     explicit Rotation(double X);
     Rotation(double X, double Y, double Z = 0.0, Intrinsic ordering = Intrinsic::XYZ);
     Rotation(double X, double Y, double Z, Extrinsic ordering);
+    /// Rotation(rotation: RotationLike, ordering): Euler angles in a Vector.
+    explicit Rotation(const Vector& rotation, Intrinsic ordering = Intrinsic::XYZ);
+    Rotation(const Vector& rotation, Extrinsic ordering);
+    /// Rotation about an axis (through its position) by `angle` degrees.
     Rotation(const Axis& axis, double angle);
 };
 using Rot = Rotation;
@@ -336,10 +346,18 @@ public:
     Plane rotated(const Vector& rotation, Extrinsic ordering) const;
     /// Relocate by a location expressed in this plane's local coordinates.
     Plane moved(const Location& loc) const;
+    /// moved(plane.location()), as build123d's moved(Plane).
+    Plane moved(const Plane& plane) const;
     Plane& move(const Location& loc);
+    Plane& move(const Plane& plane);
     Plane shift_origin(const Vector& locator) const;
     Plane shift_origin(const Axis& locator) const;
     void set_x_dir(const Vector& direction);
+    /// build123d's y_dir setter: keeps z_dir, sets the y direction (x follows).
+    void set_y_dir(const Vector& direction);
+    /// The normal at the projection of the global origin onto the face's surface
+    /// (build123d's Plane.get_topods_face_normal).
+    static Vector get_topods_face_normal(const TopoDS_Face& face);
 
     /// Location mapping plane-local coordinates to global.
     Location location() const { return Location(*this); }
@@ -352,7 +370,10 @@ public:
     gp_Trsf reverse_transform() const;
     Vector to_local_coords(const Vector& v) const;
     Vector from_local_coords(const Vector& v) const;
+    /// The box's min and max corners repositioned (as build123d: Bnd_Box(min, max), so a
+    /// rotation may give a box whose min exceeds its max on an axis).
     BoundBox to_local_coords(const BoundBox& box) const;
+    BoundBox from_local_coords(const BoundBox& box) const;
     /// Reposition a shape into this plane's local coordinates (defined in topology.hpp).
     template <class S>
     S to_local_coords(const S& shape) const;
@@ -400,6 +421,14 @@ Location operator*(const Plane& plane, const Plane& other);
 Plane operator*(const Location& loc, const Plane& plane);
 std::vector<Location> operator*(const Plane& plane, const std::vector<Location>& locs);
 std::vector<Location> operator*(const Location& loc, const std::vector<Location>& locs);
+/// Plane * [Plane, ...] -> the locations Location(plane) * p.location().
+std::vector<Location> operator*(const Plane& plane, const std::vector<Plane>& planes);
+/// Location * [Plane, ...] -> each plane moved by the location.
+std::vector<Plane> operator*(const Location& loc, const std::vector<Plane>& planes);
+/// [Location, ...] * Plane and [Plane, ...] * Plane -> the plane moved by each (build123d's
+/// apply_location_like).
+std::vector<Plane> operator*(const std::vector<Location>& locs, const Plane& plane);
+std::vector<Plane> operator*(const std::vector<Plane>& planes, const Plane& plane);
 
 // ---- build123d's & between geometry objects (the same as intersect)
 inline std::optional<Vector> operator&(const Vector& a, const Vector& b) { return a.intersect(b); }
@@ -442,6 +471,8 @@ public:
 
     BoundBox() = default;
     explicit BoundBox(const Bnd_Box& box);
+    /// The bounding box of a shape (build123d's BoundBox(shape, tolerance, optimal)).
+    explicit BoundBox(const Shape& shape, std::optional<double> tolerance = std::nullopt, bool optimal = true);
     /// Bounding box of a TopoDS_Shape; `optimal` gives an exact (slower) box.
     static BoundBox from_topo_ds(const TopoDS_Shape& shape,
                                  std::optional<double> tolerance = std::nullopt,
@@ -461,6 +492,16 @@ public:
     bool within(const BoundBox& other, double tolerance = TOLERANCE) const;
     bool intersects(const BoundBox& other, double tolerance = TOLERANCE) const;
     bool disjoint(const BoundBox& other, double tolerance = TOLERANCE) const;
+    /// Is `other` contained without touching this box's boundary?
+    bool contains_properly(const BoundBox& other, double tolerance = TOLERANCE) const;
+    /// Do the boxes meet without sharing interior?
+    bool touches(const BoundBox& other, double tolerance = TOLERANCE) const;
+    /// Do the boxes share interior without either containing the other?
+    bool overlaps(const BoundBox& other, double tolerance = TOLERANCE) const;
+    /// Deprecated in build123d: use within().
+    bool is_inside(const BoundBox& other, double tolerance = TOLERANCE) const { return within(other, tolerance); }
+    /// Deprecated in build123d (use contains()): the box enclosing the other in X and Y, if any.
+    static std::optional<BoundBox> find_outside_box_2d(const BoundBox& bb1, const BoundBox& bb2);
 
     /// Offset needed to give the box the requested alignment.
     Vector to_align_offset(const Align3& align) const;
@@ -472,6 +513,8 @@ public:
 private:
     Bnd_Box box_;
     bool void_ = true;
+
+    bool has_interior_overlap(const BoundBox& other, double tolerance) const;
 };
 
 std::ostream& operator<<(std::ostream& os, const BoundBox& b);
@@ -560,31 +603,60 @@ std::ostream& operator<<(std::ostream& os, const OrientedBoundBox& b);
 // Color
 // ---------------------------------------------------------------------------
 
-/// RGBA color in the range [0, 1].
+/// RGBA color in the range [0, 1] (sRGB). The default is white, as build123d's Color().
 class Color {
 public:
     double red = 1.0;
     double green = 1.0;
-    double blue = 0.0;
+    double blue = 1.0;
     double alpha = 1.0;
 
     Color() = default;
-    Color(double r, double g, double b, double a = 1.0) : red(r), green(g), blue(b), alpha(a) {}
-    /// A CSS/OCCT color name ("red", "SteelBlue", ...) or hex "#RRGGBB[AA]".
+    /// From sRGB values and alpha; std::runtime_error (OCCT's "Color out") for an RGB value
+    /// outside [0, 1], as build123d.
+    Color(double r, double g, double b, double a = 1.0);
+    /// build123d's Color(red) and Color(red, green): the missing components default to 1.
+    explicit Color(double r);
+    explicit Color(double r, double g);
+    /// A CSS3 or OCCT/X11 color name ("red", "SteelBlue", ...) or a hex string "#RGB[A]" /
+    /// "#RRGGBB[AA]"; as build123d, the alpha of a hex string is quantized to 1/255.
     explicit Color(const std::string& name, double alpha = 1.0);
     explicit Color(const char* name, double alpha = 1.0) : Color(std::string(name), alpha) {}
-    /// 0xRRGGBB
+    /// build123d's Color(color_code, alpha): 0xRRGGBB with an alpha of 0..0xFF (1 also
+    /// means opaque, as build123d special-cases it).
+    template <class I, std::enable_if_t<std::is_integral_v<I> && !std::is_same_v<I, bool>, int> = 0>
+    explicit Color(I color_code, int alpha = 0xFF) : Color(from_code(static_cast<long long>(color_code), alpha)) {}
+    /// The color of an OCCT Quantity_ColorRGBA.
+    explicit Color(const Quantity_ColorRGBA& color);
+    /// 0xRRGGBB with an alpha fraction.
     static Color from_hex(std::uint32_t rgb, double alpha = 1.0);
 
+    /// build123d's Color.categorical_set: `color_count` evenly spaced hues (HLS lightness
+    /// 0.55, saturation 0.9) starting at a hue in [0, 1] or at the hue of an integer color
+    /// literal (0xRRGGBB), with one alpha or one per color.
+    static std::vector<Color> categorical_set(int color_count, double starting_hue = 0.0, double alpha = 1.0);
+    static std::vector<Color> categorical_set(int color_count, double starting_hue, const std::vector<double>& alphas);
+    static std::vector<Color> categorical_set(int color_count, int starting_color, double alpha = 1.0);
+    static std::vector<Color> categorical_set(int color_count, int starting_color, const std::vector<double>& alphas);
+
     Quantity_ColorRGBA wrapped() const;
-    std::array<double, 4> to_tuple() const { return {red, green, blue, alpha}; }
+    /// build123d's tuple(color): the sRGB values and alpha read back from the OCCT color
+    /// (stored as float), rounded to 7 digits.
+    std::array<double, 4> to_tuple() const;
+    /// build123d's repr: "Color(1.0, 0.0, 0.0, 1.0)".
     std::string to_string() const;
+    /// build123d's str: "Color: (1.0, 0.0, 0.0, 1.0) is 'RED'" (a CSS3 name) or
+    /// "... near 'DARKORANGE'" (the nearest OCCT name).
+    std::string str() const;
     /// Component-wise equality (build123d compares Colors by identity; C++ Colors are values).
     bool operator==(const Color& o) const {
         return red == o.red && green == o.green && blue == o.blue && alpha == o.alpha;
     }
     bool operator!=(const Color& o) const { return !(*this == o); }
     std::size_t hash() const;
+
+private:
+    static Color from_code(long long color_code, int alpha);
 };
 
 std::ostream& operator<<(std::ostream& os, const Color& c);

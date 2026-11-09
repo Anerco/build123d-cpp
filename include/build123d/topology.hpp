@@ -14,6 +14,7 @@
 #include <string>
 #include <tuple>
 #include <type_traits>
+#include <unordered_set>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -50,7 +51,7 @@ class SplitResult;
 /// An operand of Shape::intersect: a shape or a geometry object (Vector and Location
 /// act as a Vertex, Axis as an infinite Edge, Plane as an infinite Face).
 using IntersectArg = std::variant<Shape, Vector, Location, Axis, Plane>;
-template <class T>
+template <class T, class K = double>
 class GroupBy;
 class TangencyTarget;
 struct ConstrainedArcOptions;
@@ -400,6 +401,8 @@ public:
     void set_history(std::shared_ptr<ShapeHistory> history) { history_ = std::move(history); }
 
     double distance(const Shape& other) const;
+    /// The minimum distance to each of the other shapes (build123d's distances()).
+    std::vector<double> distances(const std::vector<Shape>& others) const;
     double distance_to(const Shape& other) const;
     double distance_to(const Vector& point) const;
     std::tuple<double, Vector, Vector> distance_to_with_closest_points(const Shape& other) const;
@@ -461,6 +464,16 @@ public:
     /// otherwise. (The addresses printed are those of the C++ objects.)
     std::string show_topology(ShapeType limit_class = ShapeType::VERTEX,
                               std::optional<bool> show_center = std::nullopt) const;
+    /// build123d's copy_attributes_to: give `target` this shape's label, color, material and
+    /// topo_path where it has none of its own; `exceptions` names attributes not to copy, by
+    /// their C++ or build123d names ("label", "color"/"_color", "material"/"_material",
+    /// "topo_path", "joints").
+    void copy_attributes_to(Shape& target, const std::vector<std::string>& exceptions = {}) const;
+    /// The distinct TopoDS sub-shapes of a type (build123d's entities()).
+    std::vector<TopoDS_Shape> entities(ShapeType topo_type) const;
+    /// build123d's Shape.as_shape: a Vector or Location becomes a Vertex, an Axis an
+    /// (infinite) Edge, a Plane an (infinite) Face; a Shape is returned unchanged.
+    static Shape as_shape(const IntersectArg& obj);
     std::string to_string() const;
     /// build123d's __hash__: the OCCT shape (TShape and location); see std::hash<Shape>.
     std::size_t hash() const;
@@ -608,6 +621,14 @@ public:
 // ---------------------------------------------------------------------------
 
 /// Methods shared by Edge and Wire.
+/// The keyword arguments of Mixin1D::positions (build123d's positions(distances=None,
+/// position_mode=PARAMETER, deflection=None)): `edge.positions({.deflection = 0.01})`.
+struct PositionsOptions {
+    std::optional<std::vector<double>> distances;
+    PositionMode position_mode = PositionMode::PARAMETER;
+    std::optional<double> deflection;
+};
+
 class Mixin1D : public Shape {
 public:
     static constexpr int kDim = 1;
@@ -624,6 +645,13 @@ public:
     Vector position_at(double position, PositionMode mode = PositionMode::PARAMETER) const;
     std::vector<Vector> positions(const std::vector<double>& distances,
                                   PositionMode mode = PositionMode::PARAMETER) const;
+    /// Positions at `distances`, or points within `deflection` of the curve
+    /// (GCPnts_UniformDeflection / QuasiUniformDeflection).
+    std::vector<Vector> positions(const PositionsOptions& options) const;
+    /// build123d's curvature_comb: lines along the left normal sized by the signed curvature,
+    /// for a curve on Plane.XY (`count` samples; the largest tooth is `max_tooth_size`,
+    /// default a tenth of the curve's size).
+    ShapeList<Edge> curvature_comb(int count = 100, std::optional<double> max_tooth_size = std::nullopt) const;
     Vector tangent_at(double position = 0.5, PositionMode mode = PositionMode::PARAMETER) const;
     /// Tangent at the point on the curve closest to `point`.
     Vector tangent_at(const Vector& point) const;
@@ -753,6 +781,8 @@ public:
     /// Keep the section between normalized positions `start` and `end`.
     Edge trim(double start, double end) const;
     Edge trim(const Vector& start, const Vector& end) const;
+    Edge trim(double start, const Vector& end) const;
+    Edge trim(const Vector& start, double end) const;
     Edge trim_to_length(double start, double length) const;
     /// The shortest part of this edge from its start to where it meets `other` (a Shape, Axis,
     /// Location, Plane or point), or nothing when they don't meet.
@@ -764,6 +794,13 @@ public:
     /// An infinite line trimmed to `half_length` on each side of its center; other edges are
     /// returned unchanged.
     Edge trim_infinite(double half_length) const;
+    Edge trim_to_length(const Vector& start, double length) const;
+    /// `count` locations from `start` to `stop` (normalized parameters); `positions_only`
+    /// zeroes their orientation.
+    std::vector<Location> distribute_locations(int count, double start = 0.0, double stop = 1.0,
+                                               bool positions_only = false) const;
+    /// The normalized parameters where the tangent angle (on Plane.XY) equals `angle` degrees.
+    std::vector<double> find_tangent(double angle) const;
     /// OCCT curve parameter at a normalized arc-length position.
     double param_at(double position) const;
     Wire close() const;
@@ -780,6 +817,8 @@ public:
     /// one of them must be given. The edges of the projected wires.
     ShapeList<Edge> project_to_shape(const Shape& target_object, std::optional<Vector> direction = std::nullopt,
                                      std::optional<Vector> center = std::nullopt) const;
+    /// The points where this (planar) edge crosses itself.
+    std::vector<Vector> find_intersection_points(double tolerance = TOLERANCE) const;
 
     BUILD123D_TYPED_OPS(Edge)
 };
@@ -819,12 +858,24 @@ public:
     Wire close() const;
     Wire fix_degenerate_edges(double precision) const;
     Wire stitch(const Wire& other) const;
+    /// The part between normalized positions (or points on the wire) `start` and `end`.
     Wire trim(double start, double end) const;
     /// Project onto a shape along `direction` (parallel) or from `center` (conical); exactly
     /// one of them must be given. The wires keep this wire's orientation and are sorted by
     /// distance (from this wire, or from the center).
     ShapeList<Wire> project_to_shape(const Shape& target_object, std::optional<Vector> direction = std::nullopt,
                                      std::optional<Vector> center = std::nullopt) const;
+    Wire trim(const Vector& start, const Vector& end) const;
+    Wire trim(double start, const Vector& end) const;
+    Wire trim(const Vector& start, double end) const;
+    /// Geometric equality: the ordered edges pairwise geom_equal.
+    bool geom_equal(const Wire& other, double tol = 1e-6, int num_interpolation_points = 5) const;
+    /// The BRepAdaptor_CompCurve parameter at a normalized position.
+    double param_at(double position) const;
+    /// The two edges of a chamfer with `reference_edge` first (std::invalid_argument if it is
+    /// neither of them).
+    static std::pair<Edge, Edge> order_chamfer_edges(const std::optional<Edge>& reference_edge,
+                                                     const std::pair<Edge, Edge>& edges);
 
     BUILD123D_TYPED_OPS(Wire)
 };
@@ -885,6 +936,8 @@ struct ConstrainedLineOptions {
 // 2D
 // ---------------------------------------------------------------------------
 
+class PerimeterSplit;
+
 /// Methods shared by Face and Shell.
 class Mixin2D : public Shape {
 public:
@@ -896,6 +949,10 @@ public:
         const Vector& viewport_origin, const Vector& viewport_up = Vector(0, 0, 1),
         std::optional<Vector> look_at = std::nullopt,
         std::optional<double> focus = std::nullopt) const;
+    /// Divide the faces by a closed perimeter (build123d's split_by_perimeter): the kept
+    /// side(s), each a Face, a Shell or several Faces (nothing for None); Keep::BOTH gives
+    /// `auto [inside, outside] = face.split_by_perimeter(perimeter, Keep::BOTH)`.
+    PerimeterSplit split_by_perimeter(const Mixin1D& perimeter, Keep keep = Keep::INSIDE) const;
 };
 
 class Face : public Mixin2D {
@@ -966,6 +1023,41 @@ public:
                     std::optional<Edge> edge = std::nullopt) const;
     Face make_holes(const std::vector<Wire>& interior_wires) const;
     Face without_holes() const;
+    /// A copy moved along the normal by `amount` (build123d's Mixin2D.offset).
+    Face offset(double amount) const;
+    /// The axes of symmetry through the center of a planar face (in no particular order).
+    std::vector<Axis> axes_of_symmetry() const;
+    /// Major and minor radius of a torus.
+    std::optional<std::pair<double, double>> radii() const;
+    /// The seam edges of the face.
+    ShapeList<Edge> seams() const;
+    /// The semi angle (degrees) of a cone.
+    std::optional<double> semi_angle() const;
+    /// The face's boundary in its (u, v) parameter space, as a face on Plane.XY.
+    Face uv_face() const;
+    /// Group faces into contiguous (sewn) sets.
+    static std::vector<ShapeList<Face>> sew_faces(const std::vector<Face>& faces);
+    /// A (possibly non-planar) patch bounded by edges (with a support face and continuity,
+    /// or alone) and refined by points (BRepOffsetAPI_MakeFilling).
+    static Face make_surface_patch(
+        const std::vector<std::tuple<Edge, Face, ContinuityLevel>>& edge_face_constraints = {},
+        const std::vector<Edge>& edge_constraints = {}, const std::vector<Vector>& point_constraints = {});
+    /// A Gordon surface through a network of profile and guide curves (build123d's
+    /// make_gordon_surface): each a point or an Edge, only the first or last may be a point;
+    /// every profile must cross every guide within `tolerance`.
+    static Face make_gordon_surface(const std::vector<std::variant<Vector, Edge>>& profiles,
+                                    const std::vector<std::variant<Vector, Edge>>& guides, double tolerance = 3e-4);
+    static Face make_gordon_surface(const std::vector<Edge>& profiles, const std::vector<Edge>& guides,
+                                    double tolerance = 3e-4);
+    /// Wrap a planar (XY) Edge, Wire or Face onto this surface starting at `surface_loc`.
+    Edge wrap(const Edge& planar_shape, const Location& surface_loc, double tolerance = 0.001,
+              double extension_factor = 0.1) const;
+    Wire wrap(const Wire& planar_shape, const Location& surface_loc, double tolerance = 0.001,
+              double extension_factor = 0.1) const;
+    Face wrap(const Face& planar_shape, const Location& surface_loc, double tolerance = 0.001,
+              double extension_factor = 0.1) const;
+    /// Wrap planar faces onto this surface along `path`, spaced by their X positions.
+    ShapeList<Face> wrap_faces(const std::vector<Face>& faces, const Mixin1D& path, double start = 0.0) const;
     /// Project onto a target along `direction`. Results are sorted along the direction;
     /// each is a Face, or a Shell where the projection spans several target faces.
     ShapeList<Shape> project_to_shape(const Shape& target, const Vector& direction) const;
@@ -993,11 +1085,17 @@ public:
 
     /// Enclosed volume of a closed shell, else 0.
     double volume() const;
+    /// The location on the face closest to `surface_point`.
+    Location location_at(const Vector& surface_point, std::optional<Vector> x_dir = std::nullopt) const;
 
     Shell operator-() const;
 
     BUILD123D_TYPED_OPS(Shell)
 };
+
+/// build123d's sort_wires_by_build_order: the wires grouped into faces, each group the
+/// outer wire followed by its holes (the first wire is the outer one of the set).
+std::vector<std::vector<Wire>> sort_wires_by_build_order(const std::vector<Wire>& wire_list);
 
 // ---------------------------------------------------------------------------
 // 3D
@@ -1027,6 +1125,10 @@ protected:
                                 std::shared_ptr<ShapeHistory>* history = nullptr) const;
     TopoDS_Shape offset_3d_topods(const std::vector<Face>& openings, double thickness,
                                   double tolerance, Kind kind) const;
+    TopoDS_Shape dprism_topods(const std::optional<Face>& basis, const std::vector<Face>& faces,
+                               std::optional<double> depth, double taper, const std::optional<Face>& up_to_face,
+                               bool thru_all, bool additive) const;
+    TopoDS_Shape hollow_topods(const std::vector<Face>& faces, double thickness, double tolerance, Kind kind) const;
 };
 
 #define BUILD123D_3D_OPS(T)                                                                    \
@@ -1049,6 +1151,29 @@ public:                                                                         
     T offset_3d(const std::vector<Face>& openings, double thickness, double tolerance = 1e-4,  \
                 Kind kind = Kind::ARC) const {                                                 \
         return T(offset_3d_topods(openings, thickness, tolerance, kind));                     \
+    }                                                                                          \
+    /** Prismatic feature (BRepFeat_MakeDPrism), additive or subtractive, of face profiles. */ \
+    T dprism(const std::optional<Face>& basis, const std::vector<Face>& bounds,               \
+             std::optional<double> depth = std::nullopt, double taper = 0.0,                  \
+             const std::optional<Face>& up_to_face = std::nullopt, bool thru_all = true,      \
+             bool additive = true) const {                                                    \
+        return T(dprism_topods(basis, bounds, depth, taper, up_to_face, thru_all, additive)); \
+    }                                                                                          \
+    /** dprism of wire profiles (outer wires followed by their holes). */                     \
+    T dprism(const std::optional<Face>& basis, const std::vector<Wire>& bounds,               \
+             std::optional<double> depth = std::nullopt, double taper = 0.0,                  \
+             const std::optional<Face>& up_to_face = std::nullopt, bool thru_all = true,      \
+             bool additive = true) const {                                                    \
+        std::vector<Face> faces;                                                               \
+        for (const auto& profile : sort_wires_by_build_order(bounds)) {                        \
+            faces.emplace_back(profile[0], std::vector<Wire>(profile.begin() + 1, profile.end())); \
+        }                                                                                      \
+        return T(dprism_topods(basis, faces, depth, taper, up_to_face, thru_all, additive));  \
+    }                                                                                          \
+    /** The outer shelled solid: `faces` removed (may be empty), positive thickness outward. */ \
+    T hollow(const std::vector<Face>& faces, double thickness, double tolerance = 1e-4,       \
+             Kind kind = Kind::ARC) const {                                                   \
+        return T(hollow_topods(faces, thickness, tolerance, kind));                           \
     }
 
 class Solid : public Mixin3D {
@@ -1084,11 +1209,23 @@ public:
                                Until until = Until::NEXT);
     static Solid extrude_linear_with_rotation(const Face& section, const Vector& center,
                                               const Vector& normal, double angle);
+    /// A wire section with optional holes.
+    static Solid extrude_linear_with_rotation(const Wire& section, const Vector& center,
+                                              const Vector& normal, double angle,
+                                              const std::vector<Wire>& inner_wires = {});
     static Solid revolve(const Face& section, double angle, const Axis& axis);
+    static Solid revolve(const Wire& section, double angle, const Axis& axis,
+                         const std::vector<Wire>& inner_wires = {});
     /// Sweep a face (or closed wire) along a path. `binormal` fixes the profile
     /// orientation (a fixed direction or an auxiliary wire).
     static Solid sweep(const Shape& section, const Shape& path, bool make_solid = true,
                        bool is_frenet = false, std::optional<Vector> binormal_dir = std::nullopt,
+                       const std::optional<Wire>& binormal_wire = std::nullopt,
+                       Transition transition = Transition::TRANSFORMED);
+    /// Sweep a wire section with holes (`inner_wires`), build123d's parameter order.
+    static Solid sweep(const Wire& section, const Shape& path, const std::vector<Wire>& inner_wires,
+                       bool make_solid = true, bool is_frenet = false,
+                       std::optional<Vector> binormal_dir = std::nullopt,
                        const std::optional<Wire>& binormal_wire = std::nullopt,
                        Transition transition = Transition::TRANSFORMED);
     static Solid sweep_multi(const std::vector<Shape>& profiles, const Shape& path,
@@ -1150,6 +1287,14 @@ public:
     /// Remove unnecessary compound wrappers.
     Shape unwrap(bool fully = true) const;
     double volume() const;
+    /// Do any two of the assembly's shapes (pre-order, without this one unless
+    /// `include_parent`) share more than `tolerance` volume? (yes, the pair, the volume)
+    std::tuple<bool, std::pair<std::optional<Shape>, std::optional<Shape>>, double> do_children_intersect(
+        bool include_parent = false, double tolerance = 1e-5) const;
+    /// Extrude a Shell into a Compound.
+    static Compound extrude(const Shell& obj, const Vector& direction);
+    /// The coordinate system triad: X, Y and Z axes with arrows and single-line labels.
+    static Curve make_triad(double axes_scale);
 
     /// Text as faces. See Text in objects.hpp for the full set of options. A single-line
     /// font gives wires, outlined into faces `single_line_width` wide when it is above 0.
@@ -1282,9 +1427,41 @@ Shape algebra(AlgebraOp op, const Shape& a, const std::vector<const Shape*>& b, 
 Shape algebra_and(const Shape& a, const std::vector<IntersectArg>& others, SelfKind kind);
 
 std::vector<TopoDS_Shape> list_entities(const TopoDS_Shape& shape, int topabs_type);
-double sort_key_axis(const Shape& s, const Axis& axis);
-double sort_key(const Shape& s, SortBy sort_by);
+/// The location that sort_by/group_by(Axis) measure in: axis.location().inverse().
+Location axis_sort_location(const Axis& axis);
+/// (axis_as_location * Location(s.center())).position().Z, as build123d.
+double sort_key_axis(const Shape& s, const Location& axis_as_location);
+/// The SortBy property of a shape; std::nullopt where build123d's is None (the length of
+/// a non-planar face, the radius of a face that is not a cylinder or sphere). Throws for
+/// shapes without the property and for edges that are not circles (RADIUS).
+std::optional<double> sort_key_value(const Shape& s, SortBy sort_by);
+/// sort_key_value as a sort key: a None value throws when keys are `compared` (Python
+/// can't order None), else counts as 0.
+double sort_key(const Shape& s, SortBy sort_by, bool compared = true);
+/// build123d's hasattr(obj, "radius"): Edges, Wires (their radius is evaluated, so a
+/// non-circular one throws as in build123d) and Faces.
+bool has_radius(const Shape& s);
+/// Plane(axis).to_local_coords(s).center().Z, as build123d's filter_by_position.
+double local_center_z(const Shape& s, const Plane& plane);
 double sort_key_path(const Shape& s, const Mixin1D& path);
+
+/// Sets of shapes with build123d's hash and equality (TShape and location: is_same).
+struct ShapePtrHash {
+    std::size_t operator()(const Shape* s) const { return s->hash(); }
+};
+struct ShapePtrSame {
+    bool operator()(const Shape* a, const Shape* b) const { return a->is_same(*b); }
+};
+using ShapePtrSet = std::unordered_set<const Shape*, ShapePtrHash, ShapePtrSame>;
+template <class L>
+ShapePtrSet shape_set(const L& shapes) {
+    ShapePtrSet set;
+    for (const auto& s : shapes) set.insert(&s);
+    return set;
+}
+/// ShapeList::expand for any list of shapes.
+ShapeList<Shape> expand_shapes(const std::vector<Shape>& shapes);
+
 bool axis_parallel_predicate(const Shape& s, const Axis& axis, double tolerance);
 bool plane_parallel_predicate(const Shape& s, const Plane& plane, double tolerance);
 double round_digits(double value, int digits);
@@ -1309,22 +1486,46 @@ using algebra_t = typename detail::algebra_for<std::decay_t<T>::kDim>::type;
 struct ConvexityKey {};
 inline constexpr ConvexityKey by_convexity{};
 
-/// Result of ShapeList::group_by: sorted groups, indexable (negative indices allowed).
-template <class T>
+namespace detail {
+/// The key type of a group_by key function returning R: numbers (and bools) become
+/// doubles rounded to tol_digits, as build123d rounds them; other keys (strings, enums)
+/// are kept as they are.
+template <class R>
+using group_key_t = std::conditional_t<std::is_arithmetic_v<std::decay_t<R>>, double, std::decay_t<R>>;
+
+template <class K>
+std::string group_key_name(const K& key) {
+    if constexpr (std::is_arithmetic_v<K>) {
+        return std::to_string(key);
+    } else if constexpr (std::is_convertible_v<K, std::string>) {
+        return "'" + std::string(key) + "'";
+    } else if constexpr (std::is_enum_v<K>) {
+        return std::to_string(static_cast<long long>(key));
+    } else {
+        return "(key)";
+    }
+}
+}  // namespace detail
+
+/// Result of ShapeList::group_by: the groups sorted by key, indexable (negative indices
+/// allowed). K is the key type: double for numeric keys, else what the key function returns.
+template <class T, class K>
 class GroupBy : public std::vector<ShapeList<T>> {
 public:
     using Base = std::vector<ShapeList<T>>;
-    std::vector<double> keys;
-    std::function<double(const T&)> key_f;
+    using key_type = K;
+    /// The key of each group, in group order.
+    std::vector<K> keys;
+    std::function<K(const T&)> key_f;
 
     ShapeList<T>& operator[](std::ptrdiff_t i) { return Base::at(norm(i)); }
     const ShapeList<T>& operator[](std::ptrdiff_t i) const { return Base::at(norm(i)); }
-    /// The group with the given key.
-    const ShapeList<T>& group(double key) const {
+    /// The group with the given key; std::out_of_range (Python's KeyError) if there is none.
+    const ShapeList<T>& group(const K& key) const {
         for (std::size_t i = 0; i < keys.size(); ++i) {
             if (keys[i] == key) return Base::at(i);
         }
-        throw std::out_of_range("GroupBy: no group with key " + std::to_string(key));
+        throw std::out_of_range("GroupBy: no group with key " + detail::group_key_name(key));
     }
     /// The group containing a shape like the given one.
     const ShapeList<T>& group_for(const T& shape) const { return group(key_f(shape)); }
@@ -1353,35 +1554,55 @@ public:
     const T& operator[](std::ptrdiff_t i) const { return Base::at(norm(i)); }
     const T& first() const { return (*this)[0]; }
     const T& last() const { return (*this)[-1]; }
-    /// Python slicing list[start:stop].
-    ShapeList slice(std::ptrdiff_t start,
-                    std::optional<std::ptrdiff_t> stop = std::nullopt) const {
+    /// Python slicing list[start:stop:step]; std::nullopt stands for an omitted bound, so
+    /// slice(std::nullopt, std::nullopt, -1) is list[::-1]. std::invalid_argument for step 0.
+    ShapeList slice(std::optional<std::ptrdiff_t> start, std::optional<std::ptrdiff_t> stop = std::nullopt,
+                    std::ptrdiff_t step = 1) const {
+        if (step == 0) throw std::invalid_argument("slice step cannot be zero");
         const auto n = static_cast<std::ptrdiff_t>(this->size());
-        auto clamp = [n](std::ptrdiff_t i) {
-            if (i < 0) i += n;
-            return std::min(std::max<std::ptrdiff_t>(i, 0), n);
+        // CPython's PySlice_AdjustIndices
+        const std::ptrdiff_t lower = step < 0 ? -1 : 0;
+        const std::ptrdiff_t upper = step < 0 ? n - 1 : n;
+        const auto bound = [&](std::optional<std::ptrdiff_t> value, std::ptrdiff_t omitted) {
+            if (!value) return omitted;
+            std::ptrdiff_t i = *value;
+            if (i < 0) {
+                i += n;
+                if (i < lower) i = lower;
+            } else if (i > upper) {
+                i = upper;
+            }
+            return i;
         };
-        const std::ptrdiff_t b = clamp(start);
-        const std::ptrdiff_t e = stop ? clamp(*stop) : n;
+        const std::ptrdiff_t b = bound(start, step < 0 ? upper : lower);
+        const std::ptrdiff_t e = bound(stop, step < 0 ? lower : upper);
         ShapeList out;
-        for (std::ptrdiff_t i = b; i < e; ++i) out.push_back(Base::at(static_cast<std::size_t>(i)));
+        for (std::ptrdiff_t i = b; step > 0 ? i < e : i > e; i += step) {
+            out.push_back(Base::at(static_cast<std::size_t>(i)));
+        }
         return out;
     }
 
     // ---- sorting
     ShapeList sort_by(const Axis& axis = Axis::Z, bool reverse = false) const {
-        return sorted([&](const T& s) { return detail::sort_key_axis(s, axis); }, reverse);
+        const Location axis_as_location = detail::axis_sort_location(axis);
+        return sorted([&](const T& s) { return detail::sort_key_axis(s, axis_as_location); }, reverse);
     }
+    /// Sort by a property; build123d sorts only the shapes that have a radius for RADIUS.
     ShapeList sort_by(SortBy sort_by, bool reverse = false) const {
-        return sorted([&](const T& s) { return detail::sort_key(s, sort_by); }, reverse);
+        const ShapeList candidates =
+            sort_by == SortBy::RADIUS ? filtered([](const T& s) { return detail::has_radius(s); }, false) : *this;
+        const bool compared = candidates.size() > 1;
+        return candidates.sorted([&](const T& s) { return detail::sort_key(s, sort_by, compared); }, reverse);
     }
     /// Sort by the parameter of the closest point on a path (Edge or Wire).
     ShapeList sort_by(const Mixin1D& path, bool reverse = false) const {
         return sorted([&](const T& s) { return detail::sort_key_path(s, path); }, reverse);
     }
+    /// Sort by a key function returning anything ordered with < (numbers, strings, ...).
     template <class F, std::enable_if_t<std::is_invocable_v<F, const T&>, int> = 0>
     ShapeList sort_by(F key, bool reverse = false) const {
-        return sorted([&](const T& s) { return static_cast<double>(key(s)); }, reverse);
+        return sorted([&](const T& s) { return key(s); }, reverse);
     }
     ShapeList sort_by_distance(const Shape& other, bool reverse = false) const {
         return sorted([&](const T& s) { return detail::shape_distance(s, other); }, reverse);
@@ -1393,8 +1614,9 @@ public:
     // ---- grouping
     GroupBy<T> group_by(const Axis& axis = Axis::Z, bool reverse = false,
                         int tol_digits = 6) const {
-        return grouped([axis](const T& s) { return detail::sort_key_axis(s, axis); }, reverse,
-                       tol_digits);
+        const Location axis_as_location = detail::axis_sort_location(axis);
+        return grouped([axis_as_location](const T& s) { return detail::sort_key_axis(s, axis_as_location); },
+                       reverse, tol_digits);
     }
     GroupBy<T> group_by(SortBy sort_by, bool reverse = false, int tol_digits = 6) const {
         return grouped([sort_by](const T& s) { return detail::sort_key(s, sort_by); }, reverse,
@@ -1405,15 +1627,17 @@ public:
         return grouped([p](const T& s) { return detail::sort_key_path(s, p); }, reverse,
                        tol_digits);
     }
-    template <class F, std::enable_if_t<std::is_invocable_v<F, const T&>, int> = 0>
-    GroupBy<T> group_by(F key, bool reverse = false, int tol_digits = 6) const {
-        return grouped([key](const T& s) { return static_cast<double>(key(s)); }, reverse,
-                       tol_digits);
+    /// Group by a key function: numeric (and bool) keys are rounded to tol_digits and become
+    /// double keys; other keys (strings, enums, ...) are grouped as they are, ordered with <.
+    template <class F, std::enable_if_t<std::is_invocable_v<F, const T&>, int> = 0,
+              class K = detail::group_key_t<std::invoke_result_t<F, const T&>>>
+    GroupBy<T, K> group_by(F key, bool reverse = false, int tol_digits = 6) const {
+        return grouped<K>([key](const T& s) -> K { return static_cast<K>(key(s)); }, reverse, tol_digits);
     }
     /// build123d's group_by(Convexity): groups of equal convexity in the enum's order
-    /// (the group keys are static_cast<double>(Convexity)).
-    GroupBy<T> group_by(ConvexityKey, bool reverse = false, int tol_digits = 6) const {
-        return grouped([](const T& s) { return static_cast<double>(s.convexity()); }, reverse, tol_digits);
+    /// (the group keys are Convexity values).
+    GroupBy<T, Convexity> group_by(ConvexityKey, bool reverse = false, int tol_digits = 6) const {
+        return grouped<Convexity>([](const T& s) { return s.convexity(); }, reverse, tol_digits);
     }
 
     // ---- filtering
@@ -1443,9 +1667,10 @@ public:
     /// Objects whose centers lie between minimum and maximum along the axis, sorted by it.
     ShapeList filter_by_position(const Axis& axis, double minimum, double maximum,
                                  std::pair<bool, bool> inclusive = {true, true}) const {
+        const Plane axis_plane(axis);
         ShapeList out;
         for (const T& s : *this) {
-            const double z = detail::sort_key_axis(s, axis);
+            const double z = detail::local_center_z(s, axis_plane);
             const bool lo = inclusive.first ? (minimum <= z) : (minimum < z);
             const bool hi = inclusive.second ? (z <= maximum) : (z < maximum);
             if (lo && hi) out.push_back(s);
@@ -1469,6 +1694,11 @@ public:
     Face face() const;
     Shell shell() const;
     Solid solid() const;
+    /// The one compound among compounds(); std::invalid_argument for none or several.
+    Compound compound() const;
+    /// Compounds dissolved into their elements (recursively), wires into their edges and
+    /// shells into their faces, null shapes dropped.
+    ShapeList<Shape> expand() const;
     /// Average of the centers.
     Vector center() const {
         if (this->empty()) return Vector(0, 0, 0);
@@ -1477,10 +1707,17 @@ public:
         return total / static_cast<double>(this->size());
     }
 
-    // ---- set-like operators
+    // ---- list and set operators
+    /// Concatenation (duplicates kept), as Python's list +.
     ShapeList operator+(const ShapeList& other) const {
         ShapeList out(*this);
         out.insert(out.end(), other.begin(), other.end());
+        return out;
+    }
+    /// A new list with the shape appended.
+    ShapeList operator+(const T& item) const {
+        ShapeList out(*this);
+        out.push_back(item);
         return out;
     }
     ShapeList& operator+=(const ShapeList& other) {
@@ -1491,22 +1728,39 @@ public:
         this->push_back(item);
         return *this;
     }
-    /// Elements not present (is_same) in `other`.
+    /// The shapes not in `other` (build123d's set difference: each shape once, is_same;
+    /// in this list's order, where Python's set order is arbitrary).
     ShapeList operator-(const ShapeList& other) const {
+        const detail::ShapePtrSet exclude = detail::shape_set(other);
+        detail::ShapePtrSet seen;
         ShapeList out;
         for (const T& s : *this) {
-            if (!contains_shape(other, s) && !contains_shape(out, s)) out.push_back(s);
+            if (exclude.count(&s) == 0 && seen.insert(&s).second) out.push_back(s);
         }
         return out;
     }
-    /// Elements present (is_same) in both lists.
+    /// The shapes in both lists (build123d's set intersection, in this list's order).
     ShapeList operator&(const ShapeList& other) const {
+        const detail::ShapePtrSet keep = detail::shape_set(other);
+        detail::ShapePtrSet seen;
         ShapeList out;
         for (const T& s : *this) {
-            if (contains_shape(other, s) && !contains_shape(out, s)) out.push_back(s);
+            if (keep.count(&s) != 0 && seen.insert(&s).second) out.push_back(s);
         }
         return out;
     }
+    /// build123d compares ShapeLists as sets: the same shapes (is_same), in any order and
+    /// any number of times.
+    bool operator==(const ShapeList& other) const {
+        const detail::ShapePtrSet mine = detail::shape_set(*this);
+        const detail::ShapePtrSet theirs = detail::shape_set(other);
+        if (mine.size() != theirs.size()) return false;
+        for (const Shape* s : mine) {
+            if (theirs.count(s) == 0) return false;
+        }
+        return true;
+    }
+    bool operator!=(const ShapeList& other) const { return !(*this == other); }
     bool contains(const T& shape) const { return contains_shape(*this, shape); }
 
 private:
@@ -1519,14 +1773,15 @@ private:
         }
         return static_cast<std::size_t>(i);
     }
-    template <class K>
-    ShapeList sorted(K key, bool reverse) const {
-        std::vector<std::pair<double, std::size_t>> keyed;
+    template <class F>
+    ShapeList sorted(F key, bool reverse) const {
+        using R = std::decay_t<std::invoke_result_t<F, const T&>>;
+        std::vector<std::pair<R, std::size_t>> keyed;
         keyed.reserve(this->size());
         for (std::size_t i = 0; i < this->size(); ++i) keyed.emplace_back(key(Base::at(i)), i);
         if (reverse) {
             std::stable_sort(keyed.begin(), keyed.end(),
-                             [](const auto& a, const auto& b) { return a.first > b.first; });
+                             [](const auto& a, const auto& b) { return b.first < a.first; });
         } else {
             std::stable_sort(keyed.begin(), keyed.end(),
                              [](const auto& a, const auto& b) { return a.first < b.first; });
@@ -1536,25 +1791,29 @@ private:
         for (const auto& k : keyed) out.push_back(Base::at(k.second));
         return out;
     }
-    template <class K>
-    GroupBy<T> grouped(K key, bool reverse, int tol_digits) const {
-        GroupBy<T> groups;
-        groups.key_f = [key, tol_digits](const T& s) {
-            return detail::round_digits(key(s), tol_digits);
+    template <class K = double, class F>
+    GroupBy<T, K> grouped(F key, bool reverse, int tol_digits) const {
+        GroupBy<T, K> groups;
+        groups.key_f = [key, tol_digits](const T& s) -> K {
+            if constexpr (std::is_same_v<K, double>) {
+                return detail::round_digits(key(s), tol_digits);
+            } else {
+                return key(s);
+            }
         };
-        std::vector<std::pair<double, std::size_t>> keyed;
+        std::vector<std::pair<K, std::size_t>> keyed;
         for (std::size_t i = 0; i < this->size(); ++i) {
             keyed.emplace_back(groups.key_f(Base::at(i)), i);
         }
         if (reverse) {
             std::stable_sort(keyed.begin(), keyed.end(),
-                             [](const auto& a, const auto& b) { return a.first > b.first; });
+                             [](const auto& a, const auto& b) { return b.first < a.first; });
         } else {
             std::stable_sort(keyed.begin(), keyed.end(),
                              [](const auto& a, const auto& b) { return a.first < b.first; });
         }
         for (const auto& k : keyed) {
-            if (groups.keys.empty() || groups.keys.back() != k.first) {
+            if (groups.keys.empty() || !(groups.keys.back() == k.first)) {
                 groups.keys.push_back(k.first);
                 groups.emplace_back();
             }
@@ -1600,6 +1859,26 @@ public:
     ShapeList<Shape> bottom;
 };
 
+/// The result of split_by_perimeter: the kept side(s) (inside then outside for Keep::BOTH)
+/// with each side apart, `auto [inside, outside] = face.split_by_perimeter(p, Keep::BOTH);`.
+class PerimeterSplit : public ShapeList<Shape> {
+public:
+    using ShapeList<Shape>::ShapeList;
+    PerimeterSplit() = default;
+    ShapeList<Shape> inside;
+    ShapeList<Shape> outside;
+};
+
+template <std::size_t I>
+const ShapeList<Shape>& get(const PerimeterSplit& r) {
+    static_assert(I < 2, "PerimeterSplit unpacks into (inside, outside)");
+    if constexpr (I == 0) {
+        return r.inside;
+    } else {
+        return r.outside;
+    }
+}
+
 template <std::size_t I>
 const ShapeList<Shape>& get(const SplitResult& r) {
     static_assert(I < 2, "SplitResult unpacks into (top, bottom)");
@@ -1634,6 +1913,8 @@ template <class T>
 ShapeList<T> operator|(const ShapeList<T>& l, const Plane& plane) { return l.filter_by(plane); }
 template <class T>
 ShapeList<T> operator|(const ShapeList<T>& l, GeomType g) { return l.filter_by(g); }
+template <class T>
+ShapeList<T> operator|(const ShapeList<T>& l, Convexity c) { return l.filter_by(c); }
 
 template <class T>
 Vertex ShapeList<T>::vertex() const {
@@ -1670,6 +1951,16 @@ Solid ShapeList<T>::solid() const {
     auto v = solids();
     if (v.size() != 1) detail::throw_count("solid", v.size());
     return v[0];
+}
+template <class T>
+Compound ShapeList<T>::compound() const {
+    auto v = compounds();
+    if (v.size() != 1) detail::throw_count("compound", v.size());
+    return v[0];
+}
+template <class T>
+ShapeList<Shape> ShapeList<T>::expand() const {
+    return detail::expand_shapes(std::vector<Shape>(this->begin(), this->end()));
 }
 
 // ---------------------------------------------------------------------------
@@ -1949,6 +2240,12 @@ ShapeList<typename T::topo_type> operator*(const Plane& plane, const std::vector
 
 template <>
 struct std::tuple_size<build123d::SplitResult> : std::integral_constant<std::size_t, 2> {};
+template <std::size_t I>
+struct std::tuple_element<I, build123d::PerimeterSplit> {
+    using type = const build123d::ShapeList<build123d::Shape>;
+};
+template <>
+struct std::tuple_size<build123d::PerimeterSplit> : std::integral_constant<std::size_t, 2> {};
 template <std::size_t I>
 struct std::tuple_element<I, build123d::SplitResult> {
     using type = const build123d::ShapeList<build123d::Shape>;

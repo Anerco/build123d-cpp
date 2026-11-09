@@ -541,8 +541,8 @@ COMPARE_CASES {
     compare::add_value("io_svg_colors", [] {
         std::vector<V> out;
         for (const SvgColor& c : std::vector<SvgColor>{Color("red"), Color(0.2, 0.4, 0.6, 0.123456), "#0080FF",
-                                                       Color(255, 128, 0), ColorIndex::GRAY, ColorIndex::BLACK,
-                                                       std::nullopt, INHERIT_COLOR}) {
+                                                       std::array<double, 3>{255, 128, 0}, ColorIndex::GRAY,
+                                                       ColorIndex::BLACK, std::nullopt, INHERIT_COLOR}) {
             ExportSVG e({.fill_color = c, .line_color = c});
             Sketch s = Rectangle(1, 1);
             s.color = Color(1, 1, 1);

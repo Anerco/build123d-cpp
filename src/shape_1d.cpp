@@ -1056,29 +1056,6 @@ bool Edge::geom_equal(const Edge& other, double tol, int num_interpolation_point
     }
 }
 
-std::vector<Vector> Edge::find_intersection_points(const Edge& other, double tolerance) const {
-    require_not_null("Can't find intersections of empty edge");
-    std::vector<Vector> out;
-    occt("find_intersection_points", [&] {
-        BRepExtrema_DistShapeShape calc(obj_, other.wrapped());
-        if (calc.IsDone() && calc.Value() <= tolerance) {
-            for (int i = 1; i <= calc.NbSolution(); ++i) {
-                const Vector p(calc.PointOnShape1(i));
-                if (std::none_of(out.begin(), out.end(), [&](const Vector& q) { return q == p; })) out.push_back(p);
-            }
-        }
-        return 0;
-    });
-    return out;
-}
-
-std::vector<Vector> Edge::find_intersection_points(const Axis& axis, double tolerance) const {
-    const BoundBox bb = bounding_box().add(axis.position);
-    const double d = bb.diagonal();
-    return find_intersection_points(
-        Edge::make_line(axis.position - axis.direction * d, axis.position + axis.direction * d), tolerance);
-}
-
 // ---------------------------------------------------------------------------
 // Wire
 // ---------------------------------------------------------------------------
@@ -1300,23 +1277,5 @@ Wire Wire::stitch(const Wire& other) const {
     }));
 }
 
-Wire Wire::trim(double start, double end) const {
-    if (start >= end) throw std::invalid_argument("start must be less than end");
-    const auto es = edges();
-    const double total = length();
-    std::vector<Edge> kept;
-    double acc = 0.0;
-    for (const auto& e : es) {
-        const double len = e.length();
-        const double e0 = acc / total, e1 = (acc + len) / total;
-        acc += len;
-        if (e1 <= start + 1e-12 || e0 >= end - 1e-12) continue;
-        const double s = std::max(0.0, (start - e0) / (e1 - e0));
-        const double t = std::min(1.0, (end - e0) / (e1 - e0));
-        kept.push_back((s <= 1e-12 && t >= 1 - 1e-12) ? e : e.trim(s, t));
-    }
-    if (kept.empty()) throw std::invalid_argument("Wire trim produced no edges");
-    return Wire(kept);
-}
 
 }  // namespace build123d

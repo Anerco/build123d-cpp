@@ -158,6 +158,10 @@ gp_Trsf euler_trsf(const Vector& angles_deg, gp_EulerSequence sequence);
 /// Check two vectors for equality like build123d (rounded to 5 digits).
 bool rounded_equal(double a, double b, int digits = 5);
 double py_round(double value, int digits);
+/// Python's repr() of a float: the shortest round-tripping digits, e.g. 1.0, 0.0001, 1e-05.
+std::string py_repr(double value);
+/// Python's float % (the result has the sign of the divisor).
+double py_float_mod(double a, double b);
 
 /// Convert a Shape (Edge/Wire/Curve or other 1D) to a wire from its edges.
 Wire as_wire(const Shape& shape);
@@ -170,7 +174,10 @@ std::vector<Face> as_faces(const Shape& shape);
 /// topo_path to `to` where `to` has none set (joints: see the marked spot in the
 /// definition). `exceptions` names attributes not to copy ("label", "color",
 /// "material", "topo_path", "joints").
-void copy_attributes_to(const Shape& from, Shape& to, std::initializer_list<const char*> exceptions = {});
+void copy_attributes_to(const Shape& from, Shape& to, const std::vector<std::string>& exceptions);
+inline void copy_attributes_to(const Shape& from, Shape& to, std::initializer_list<const char*> exceptions = {}) {
+    copy_attributes_to(from, to, std::vector<std::string>(exceptions.begin(), exceptions.end()));
+}
 
 /// A TopoDS boolean and the record of what it did (build123d's Shape._bool_op without
 /// the result typing). `shape` is null for a COMMON with an empty side (build123d

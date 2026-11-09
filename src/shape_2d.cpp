@@ -127,7 +127,7 @@ Face Face::make_surface_from_curves(const Wire& curve1, const Wire& curve2) {
     const TopoDS_Shell shell = occt("make_surface_from_curves", [&] {
         return BRepFill::Shell(TopoDS::Wire(curve1.wrapped()), TopoDS::Wire(curve2.wrapped()));
     });
-    const auto faces = entities(shell, TopAbs_FACE);
+    const auto faces = detail::entities(shell, TopAbs_FACE);
     if (faces.size() != 1) throw std::invalid_argument("The ruled surface between the wires has multiple faces; use Shell");
     return Face(faces[0]);
 }

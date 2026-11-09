@@ -6,11 +6,14 @@
 #include <Geom_Curve.hxx>
 #include <BRepTools.hxx>
 #include <BRepTools_WireExplorer.hxx>
+#include <BRep_CurveRepresentation.hxx>
+#include <BRep_TEdge.hxx>
 #include <BRep_Tool.hxx>
 #include <GeomAbs_CurveType.hxx>
 #include <GeomLib_IsPlanarSurface.hxx>
 #include <ShapeAnalysis_Curve.hxx>
 #include <TopoDS.hxx>
+#include <TopoDS_Iterator.hxx>
 
 #include "build123d/warnings.hpp"
 #include "internal.hpp"
@@ -329,34 +332,84 @@ Vector shape_center(const Shape& s) { return s.center(); }
 double shape_distance(const Shape& s, const Shape& other) { return s.distance_to(other); }
 double shape_distance(const Shape& s, const Vector& point) { return s.distance_to(point); }
 
-double sort_key_axis(const Shape& s, const Axis& axis) {
-    return (s.center() - axis.position).dot(axis.direction);
+Location axis_sort_location(const Axis& axis) { return axis.location().inverse(); }
+
+double sort_key_axis(const Shape& s, const Location& axis_as_location) {
+    return (axis_as_location * Location(s.center())).position().Z;
 }
 
-double sort_key(const Shape& s, SortBy sort_by) {
+std::optional<double> sort_key_value(const Shape& s, SortBy sort_by) {
     if (s.is_null()) throw std::invalid_argument("Can't sort an empty shape");
     const auto type = s.wrapped().ShapeType();
+    const bool one_d = type == TopAbs_EDGE || type == TopAbs_WIRE;
     switch (sort_by) {
         case SortBy::LENGTH:
-            if (type == TopAbs_FACE) {
-                auto l = Face(s.wrapped()).length();
-                if (!l) throw std::invalid_argument("length is only defined for planar faces");
-                return *l;
-            }
-            return linear_length(s.wrapped());
+            if (type == TopAbs_FACE) return Face(s.wrapped()).length();
+            if (one_d) return Mixin1D(s.wrapped()).length();
+            throw std::invalid_argument("a " + build123d::to_string(s.shape_type()) + " has no length");
         case SortBy::RADIUS:
-            if (type == TopAbs_FACE) {
-                auto r = Face(s.wrapped()).radius();
-                if (!r) throw std::invalid_argument("Face has no radius");
-                return *r;
-            }
-            if (type == TopAbs_EDGE || type == TopAbs_WIRE) return Mixin1D(s.wrapped()).radius();
-            throw std::invalid_argument("Shape has no radius");
+            if (type == TopAbs_FACE) return Face(s.wrapped()).radius();
+            if (one_d) return Mixin1D(s.wrapped()).radius();
+            throw std::invalid_argument("a " + build123d::to_string(s.shape_type()) + " has no radius");
         case SortBy::AREA: return s.area();
         case SortBy::VOLUME: return s.volume();
         case SortBy::DISTANCE: return s.center().length();
     }
     return 0.0;
+}
+
+double sort_key(const Shape& s, SortBy sort_by, bool compared) {
+    const auto value = sort_key_value(s, sort_by);
+    if (value) return *value;
+    if (compared) {
+        throw std::invalid_argument(std::string("the ") + (sort_by == SortBy::LENGTH ? "length" : "radius") +
+                                    " of this face is undefined (None), so it can't be ordered");
+    }
+    return 0.0;
+}
+
+bool has_radius(const Shape& s) {
+    if (s.is_null()) return false;
+    switch (s.wrapped().ShapeType()) {
+        case TopAbs_EDGE:
+        case TopAbs_WIRE:
+            (void)Mixin1D(s.wrapped()).radius();  // hasattr evaluates the property
+            return true;
+        case TopAbs_FACE: return true;
+        default: return false;
+    }
+}
+
+double local_center_z(const Shape& s, const Plane& plane) {
+    const Shape local(transform(s.wrapped(), plane.forward_transform(), false));
+    return local.center().Z;
+}
+
+ShapeList<Shape> expand_shapes(const std::vector<Shape>& shapes) {
+    ShapeList<Shape> expanded;
+    for (const auto& shape : shapes) {
+        if (shape.is_null()) continue;
+        switch (shape.wrapped().ShapeType()) {
+            case TopAbs_COMPOUND: {
+                std::vector<Shape> elements;
+                for (TopoDS_Iterator it(shape.wrapped()); it.More(); it.Next()) elements.emplace_back(it.Value());
+                for (auto& s : expand_shapes(elements)) expanded.push_back(std::move(s));
+                break;
+            }
+            case TopAbs_SHELL:
+                for (const auto& f : shape.faces()) expanded.push_back(f);
+                break;
+            case TopAbs_WIRE:
+                for (const auto& e : Wire(shape.wrapped()).edges()) {
+                    Edge edge = e;
+                    edge.extracted_from(shape);
+                    expanded.push_back(edge);
+                }
+                break;
+            default: expanded.push_back(shape);
+        }
+    }
+    return expanded;
 }
 
 double sort_key_path(const Shape& s, const Mixin1D& path) {
@@ -414,12 +467,16 @@ bool plane_parallel_predicate(const Shape& s, const Plane& plane, double toleran
         return true;
     }
     if (type == TopAbs_EDGE) {
-        TopLoc_Location loc;
-        double f, l;
-        Handle(Geom_Curve) curve = BRep_Tool::Curve(TopoDS::Edge(s.wrapped()), loc, f, l);
-        if (curve.IsNull()) return false;
-        gp_XYZ normal = plane.z_dir.to_dir().Transformed(loc.Transformation().Inverted()).XYZ();
-        return ShapeAnalysis_Curve::IsPlanar(curve, normal, tolerance);
+        // As build123d: the plane taken into the edge's frame, tested against the first
+        // 3D curve of the edge's TShape (whose own location build123d leaves out)
+        const Plane local_plane = Location(s.wrapped().Location()).inverse() * plane;
+        gp_XYZ plane_xyz = local_plane.z_dir.to_dir().XYZ();
+        const Handle(BRep_TEdge) t_edge = Handle(BRep_TEdge)::DownCast(s.wrapped().TShape());
+        if (t_edge.IsNull()) return false;
+        for (const auto& curve : t_edge->Curves()) {
+            if (curve->IsCurve3D()) return ShapeAnalysis_Curve::IsPlanar(curve->Curve3D(), plane_xyz, tolerance);
+        }
+        return false;
     }
     return false;
 }

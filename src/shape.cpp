@@ -316,7 +316,8 @@ ShapeList<Compound> Shape::compounds() const {
     for (const auto& child : detail::children(obj_)) {
         if (child.ShapeType() == TopAbs_COMPOUND) out.push_back(Compound(child));
     }
-    out.push_back(Compound(obj_));
+    // build123d appends the compound itself, attributes and all
+    out.push_back(rewrap<Compound>(*this));
     return out;
 }
 
