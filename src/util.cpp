@@ -1,5 +1,7 @@
+#include <charconv>
 #include <cmath>
 #include <cstdio>
+#include <string>
 #include <cstdlib>
 #include <memory>
 
@@ -55,7 +57,12 @@ std::string occt_message(const Standard_Failure& e) {
 }
 
 double py_round(double value, int digits) {
-    if (!std::isfinite(value) || std::abs(value) >= 1e15) return value;
+    if (!std::isfinite(value)) return value;
+    if (digits < 0) {
+        const double scale = std::pow(10.0, -digits);
+        return std::nearbyint(value / scale) * scale;
+    }
+    if (std::abs(value) >= 1e15) return value;
     // Python's round() rounds the decimal representation; printing with the requested
     // number of digits and parsing back gives the same result for all practical values.
     char buf[64];
@@ -65,6 +72,49 @@ double py_round(double value, int digits) {
 }
 
 bool rounded_equal(double a, double b, int digits) { return py_round(a, digits) == py_round(b, digits); }
+
+std::string py_repr(double value) {
+    if (std::isnan(value)) return "nan";
+    if (std::isinf(value)) return value > 0 ? "inf" : "-inf";
+    if (value == 0.0) return std::signbit(value) ? "-0.0" : "0.0";
+    // the shortest round-tripping digits, as Python's repr (dtoa mode 0)
+    char buf[64];
+    const auto result = std::to_chars(buf, buf + sizeof(buf), value, std::chars_format::scientific);
+    const std::string sci(buf, result.ptr);
+    const bool negative = sci[0] == '-';
+    const std::size_t e = sci.find('e');
+    std::string digits;
+    for (std::size_t i = negative ? 1 : 0; i < e; ++i) {
+        if (sci[i] != '.') digits += sci[i];
+    }
+    const int decpt = std::stoi(sci.substr(e + 1)) + 1;
+    std::string out = negative ? "-" : "";
+    if (decpt <= -4 || decpt > 16) {
+        out += digits[0];
+        if (digits.size() > 1) out += "." + digits.substr(1);
+        const int exponent = decpt - 1;
+        out += exponent < 0 ? "e-" : "e+";
+        if (std::abs(exponent) < 10) out += "0";
+        out += std::to_string(std::abs(exponent));
+    } else if (decpt <= 0) {
+        out += "0." + std::string(static_cast<std::size_t>(-decpt), '0') + digits;
+    } else if (static_cast<std::size_t>(decpt) >= digits.size()) {
+        out += digits + std::string(static_cast<std::size_t>(decpt) - digits.size(), '0') + ".0";
+    } else {
+        out += digits.substr(0, static_cast<std::size_t>(decpt)) + "." + digits.substr(static_cast<std::size_t>(decpt));
+    }
+    return out;
+}
+
+double py_float_mod(double a, double b) {
+    double m = std::fmod(a, b);
+    if (m != 0.0) {
+        if ((b < 0) != (m < 0)) m += b;
+    } else {
+        m = std::copysign(0.0, b);
+    }
+    return m;
+}
 
 TopoDS_Compound make_compound(const std::vector<TopoDS_Shape>& shapes) {
     TopoDS_Compound comp;

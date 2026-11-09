@@ -4,6 +4,8 @@
 #include <tuple>
 #include <unordered_set>
 
+#include <TopoDS.hxx>
+
 #include "case_registry.hpp"
 
 using namespace build123d;
@@ -772,6 +774,92 @@ COMPARE_CASES {
                         V(ShapeList<Shape>{box, Vertex(1, 1, 1)}.compound().volume()), V(sl.compounds().size()),
                         messages([&] { (void)sl.compound(); }), messages([&] { (void)faces.edge(); }),
                         messages([&] { (void)faces.solid(); }), describe(nested.expand()), measures(faces.slice(0, 2))});
+    });
+
+    // ---- 10: geometry operators and helpers
+    add_value("core_geom_plane_lists", [] {
+        const auto planes = [](const std::vector<Plane>& list) {
+            std::vector<V> out;
+            for (const auto& p : list) out.push_back(plane_v(p));
+            return V::list(out);
+        };
+        const auto locations = [](const std::vector<Location>& list) {
+            std::vector<V> out;
+            for (const auto& l : list) out.push_back(loc_v(l));
+            return V::list(out);
+        };
+        Plane moved = Plane::XY;
+        moved.move(Plane::XZ.offset(2));
+        Plane y_set = Plane::XY.offset(1);
+        y_set.set_y_dir(Vector(1, 1, 0));
+        return V::list({planes(Pos(1, 2, 3) * std::vector<Plane>{Plane::XY, Plane::XZ}),
+                        planes(std::vector<Location>{Pos(1, 0, 0), Rot(0, 0, 90)} * Plane::XZ),
+                        planes(std::vector<Plane>{Plane::XY.offset(1), Plane::YZ} * Plane::XZ),
+                        locations(Plane::XZ * std::vector<Plane>{Plane::XY.offset(1), Plane::YZ}),
+                        locations(Plane::XZ * std::vector<Location>{Pos(1, 2, 3), Rot(10, 0, 0)}),
+                        plane_v(Plane::XY.moved(Plane::YZ.offset(3))), plane_v(moved), plane_v(y_set),
+                        plane_v(Plane::from_points({1, 2, 3}, {2, 2, 3}, {1, 3, 4})),
+                        loc_v(Rot(Vector(10, 20, 30))), loc_v(Rot(Vector(10, 20, 30), Extrinsic::ZYX)),
+                        loc_v(Rot(Axis({1, 0, 0}, {0, 0, 1}), 90)), V(Vector(1, 2, 3) / 3),
+                        V(Plane::get_topods_face_normal(TopoDS::Face(Face::make_rect(1, 1, Plane::XZ.offset(2)).wrapped())))});
+    });
+    add_value("core_geom_bound_box", [] {
+        const auto box = [](Vector lo, Vector hi) { return Solid::make_box(hi.X - lo.X, hi.Y - lo.Y, hi.Z - lo.Z, Plane(lo)).bounding_box(); };
+        const BoundBox a = box({0, 0, 0}, {4, 4, 4});
+        const BoundBox inner = box({1, 1, 1}, {2, 2, 2});
+        const BoundBox flush = box({0, 1, 1}, {2, 2, 2});
+        const BoundBox beside = box({4, 0, 0}, {6, 4, 4});
+        const BoundBox crossing = box({3, 1, 1}, {6, 2, 2});
+        const BoundBox far = box({10, 10, 10}, {11, 11, 11});
+        const BoundBox face = Face::make_rect(2, 2, Plane(Vector(2, 2, 4))).bounding_box();
+        const BoundBox face2 = Face::make_rect(1, 1, Plane(Vector(2, 2, 4))).bounding_box();
+        const BoundBox other_level = Face::make_rect(1, 1, Plane(Vector(2, 2, 5))).bounding_box();
+        std::vector<V> table;
+        for (const BoundBox* o : {&inner, &flush, &beside, &crossing, &far, &face, &a}) {
+            table.push_back(V::list({V(a.covers(*o)), V(a.contains(*o)), V(a.contains_properly(*o)), V(o->within(a)),
+                                     V(a.intersects(*o)), V(a.disjoint(*o)), V(a.touches(*o)), V(a.overlaps(*o))}));
+        }
+        const auto bbox_v = [](const BoundBox& b) { return V::list({V(b.min), V(b.max), V(b.size)}); };
+        const auto outside = BoundBox::find_outside_box_2d(a, inner);
+        const auto none = BoundBox::find_outside_box_2d(a, beside);
+        return V::list({V::list(table), V(face.contains(face2)), V(face.contains_properly(face2)),
+                        V(face.overlaps(face2)), V(face.touches(other_level)), V(face.contains(other_level)),
+                        V(inner.is_inside(a)), outside ? bbox_v(*outside) : V(), none ? bbox_v(*none) : V(),
+                        bbox_v(Plane::XZ.to_local_coords(inner)), bbox_v(Plane::XZ.offset(1).from_local_coords(inner)),
+                        bbox_v(BoundBox(Box(1, 2, 3))), bbox_v(BoundBox(Shape())), V(inner.to_string()),
+                        V(BoundBox(Shape()).diagonal())});
+    });
+    add_value("core_geom_color", [] {
+        const auto t = [](const Color& c) { return V::list_of(c.to_tuple()); };
+        const auto raises = [](auto f) -> V {
+            try {
+                f();
+            } catch (const std::exception&) {
+                return V(true);
+            }
+            return V(false);
+        };
+        std::vector<V> sets;
+        for (const auto& set : {Color::categorical_set(3), Color::categorical_set(4, 0.3, std::vector<double>{0.1, 0.2, 0.3, 0.4}),
+                                Color::categorical_set(2, 0xff8000), Color::categorical_set(5, 0.95, 0.5),
+                                Color::categorical_set(0)}) {
+            std::vector<V> colors;
+            for (const auto& c : set) colors.push_back(t(c));
+            sets.push_back(V::list(colors));
+        }
+        return V::list({t(Color()), t(Color("red")), t(Color(" Red ")), t(Color("goldenrod1")), t(Color("#ff0000", 0.5)),
+                        t(Color("#f008")), t(Color("#FF0000", 0.3)), t(Color("#0f0")), t(Color(0xff0000, 0x80)),
+                        t(Color(0xff0000, 1)), t(Color(0x000001)), t(Color(0.5)), t(Color(0.5, 0.2)),
+                        t(Color(0.1, 0.2, 0.3, 0.3)), t(Color(0.5, 0.5, 0.5, 2.0)), t(Color("SteelBlue", 0.25)),
+                        V(Color(1, 0, 0).to_string()), V(Color(0.1, 0.5, 0.9).str()), V(Color("aqua").str()),
+                        V(Color(0.5, 0.5, 0.5).str()), V(Color("lightgrey").str()), V(Color("goldenrod1").str()),
+                        raises([] { Color("dark red"); }), raises([] { Color("#gg0000"); }),
+                        raises([] { Color("#ff0000zz"); }), raises([] { Color("#ff000"); }),
+                        raises([] { Color("rebeccapurple"); }), raises([] { Color(2.0, 0, 0); }),
+                        raises([] { Color(-0.1, 0, 0); }), raises([] { Color(0x1000000); }), V::list(sets),
+                        raises([] { Color::categorical_set(3, 1.5); }),
+                        raises([] { Color::categorical_set(3, 0.0, std::vector<double>{1.0}); }),
+                        raises([] { Color::categorical_set(3, -1); })});
     });
 
     add_value("core_geom_with_shape", [] {

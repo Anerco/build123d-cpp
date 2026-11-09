@@ -159,3 +159,29 @@ TEST(core_shapelist_semantics) {
     CHECK(groups.group(Convexity::CONCAVE).size() == pocket.edges().filter_by(Convexity::CONCAVE).size());
     CHECK_THROWS(groups.group(Convexity::SADDLE), std::out_of_range);
 }
+
+// ---- geometry operators with lists of planes
+static_assert(std::is_same_v<decltype(Pos(1, 0, 0) * std::vector<Plane>{}), std::vector<Plane>>);
+static_assert(std::is_same_v<decltype(std::vector<Location>{} * Plane::XY), std::vector<Plane>>);
+static_assert(std::is_same_v<decltype(std::vector<Plane>{} * Plane::XY), std::vector<Plane>>);
+static_assert(std::is_same_v<decltype(Plane::XY * std::vector<Plane>{}), std::vector<Location>>);
+
+TEST(core_geometry_helpers) {
+    // Color(0) is black (build123d's Color(0) is white: it tests the color code for truth)
+    CHECK(Color(0).to_tuple() == (std::array<double, 4>{0, 0, 0, 1}));
+    CHECK(Color().to_tuple() == (std::array<double, 4>{1, 1, 1, 1}));
+    CHECK_THROWS(Color(1.5, 0, 0), std::runtime_error);
+    CHECK_THROWS(Vector(1, 2, 3) / 0.0, std::invalid_argument);
+    // BoundBox predicates on void boxes are false
+    CHECK(!BoundBox().contains_properly(Box(1, 1, 1).bounding_box()));
+    CHECK(!BoundBox().touches(Box(1, 1, 1).bounding_box()));
+    // a left-handed gp_Ax3 is made right-handed with a warning
+    std::vector<std::string> messages;
+    const auto previous = set_warning_handler([&](const std::string& m) { messages.push_back(m); });
+    gp_Ax3 left(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1), gp_Dir(1, 0, 0));
+    left.YReverse();
+    const Plane fixed(left);
+    set_warning_handler(previous);
+    CHECK(messages.size() == 1 && messages[0] == "Trying to set a left-handed plane");
+    CHECK(fixed.z_dir == Vector(0, 0, 1) && fixed.y_dir == Vector(0, 1, 0));
+}

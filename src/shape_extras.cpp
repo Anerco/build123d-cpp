@@ -24,6 +24,9 @@ namespace build123d {
 
 using namespace detail;
 
+BoundBox::BoundBox(const Shape& shape, std::optional<double> tolerance, bool optimal)
+    : BoundBox(from_topo_ds(shape.wrapped(), tolerance, optimal)) {}
+
 std::size_t Shape::hash() const {
     if (obj_.IsNull()) return 0;
 #if OCC_VERSION_HEX >= 0x070800

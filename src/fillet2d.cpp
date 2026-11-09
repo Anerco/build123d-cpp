@@ -44,21 +44,10 @@ namespace {
 // The part of constrained_lines.py that the wire fillet uses (_make_2tan_rad_arcs)
 // ---------------------------------------------------------------------------
 
-/// Python's float modulo (the result has the sign of the divisor).
-double py_mod(double a, double b) {
-    double m = std::fmod(a, b);
-    if (m != 0.0) {
-        if ((b < 0) != (m < 0)) m += b;
-    } else {
-        m = std::copysign(0.0, b);
-    }
-    return m;
-}
-
 /// Map parameter u into [first, first + period).
 double norm_on_period(double u, double first, double period) {
     if (std::abs(u - first) < TOLERANCE) return first;
-    return py_mod(u - first, period) + first;
+    return py_float_mod(u - first, period) + first;
 }
 
 /// Forward (positive) delta from u1 to u2 on a periodic domain anchored at first.

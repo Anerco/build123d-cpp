@@ -650,6 +650,80 @@ def shapelist_ops():
               describe(nested.expand()), measures(faces[0:2])])
 
 
+def geom_plane_lists():
+    def planes(lst):
+        return [geom(p) for p in lst]
+
+    def locations(lst):
+        return [geom(loc) for loc in lst]
+
+    moved = Plane.XY
+    moved.move(Plane.XZ.offset(2))
+    y_set = Plane.XY.offset(1)
+    y_set.y_dir = (1, 1, 0)
+    from build123d.geometry import Plane as GPlane
+    return V([planes(Pos(1, 2, 3) * [Plane.XY, Plane.XZ]), planes([Pos(1, 0, 0), Rot(0, 0, 90)] * Plane.XZ),
+              planes([Plane.XY.offset(1), Plane.YZ] * Plane.XZ), locations(Plane.XZ * [Plane.XY.offset(1), Plane.YZ]),
+              locations(Plane.XZ * [Pos(1, 2, 3), Rot(10, 0, 0)]), geom(Plane.XY.moved(Plane.YZ.offset(3))), geom(moved),
+              geom(y_set), geom(Plane([(1, 2, 3), (2, 2, 3), (1, 3, 4)])), geom(Rot((10, 20, 30))),
+              geom(Rot((10, 20, 30), Extrinsic.ZYX)), geom(Rot(Axis((1, 0, 0), (0, 0, 1)), 90)), Vector(1, 2, 3) / 3,
+              GPlane.get_topods_face_normal(Face.make_rect(1, 1, Plane.XZ.offset(2)).wrapped)])
+
+
+def geom_bound_box():
+    def box(lo, hi):
+        return Solid.make_box(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2], Plane(lo)).bounding_box()
+
+    a = box((0, 0, 0), (4, 4, 4))
+    inner = box((1, 1, 1), (2, 2, 2))
+    flush = box((0, 1, 1), (2, 2, 2))
+    beside = box((4, 0, 0), (6, 4, 4))
+    crossing = box((3, 1, 1), (6, 2, 2))
+    far = box((10, 10, 10), (11, 11, 11))
+    face = Face.make_rect(2, 2, Plane((2, 2, 4))).bounding_box()
+    face2 = Face.make_rect(1, 1, Plane((2, 2, 4))).bounding_box()
+    other_level = Face.make_rect(1, 1, Plane((2, 2, 5))).bounding_box()
+    table = [[a.covers(o), a.contains(o), a.contains_properly(o), o.within(a), a.intersects(o), a.disjoint(o),
+              a.touches(o), a.overlaps(o)] for o in (inner, flush, beside, crossing, far, face, a)]
+
+    def bbox_v(b):
+        return [b.min, b.max, b.size]
+
+    outside = BoundBox.find_outside_box_2d(a, inner)
+    none = BoundBox.find_outside_box_2d(a, beside)
+    return V([table, face.contains(face2), face.contains_properly(face2), face.overlaps(face2),
+              face.touches(other_level), face.contains(other_level), inner.is_inside(a),
+              bbox_v(outside) if outside else None, bbox_v(none) if none else None,
+              bbox_v(Plane.XZ.to_local_coords(inner)), bbox_v(Plane.XZ.offset(1).from_local_coords(inner)),
+              bbox_v(BoundBox(Box(1, 2, 3))), bbox_v(BoundBox(Shape())), repr(inner), BoundBox(Shape()).diagonal])
+
+
+def geom_color():
+    def t(c):
+        return list(tuple(c))
+
+    def raises(f):
+        try:
+            f()
+        except Exception:  # noqa: BLE001
+            return True
+        return False
+
+    sets = [[t(c) for c in s] for s in (Color.categorical_set(3), Color.categorical_set(4, 0.3, [0.1, 0.2, 0.3, 0.4]),
+                                        Color.categorical_set(2, 0xFF8000), Color.categorical_set(5, 0.95, 0.5),
+                                        Color.categorical_set(0))]
+    return V([t(Color()), t(Color("red")), t(Color(" Red ")), t(Color("goldenrod1")), t(Color("#ff0000", 0.5)),
+              t(Color("#f008")), t(Color("#FF0000", 0.3)), t(Color("#0f0")), t(Color(0xFF0000, 0x80)),
+              t(Color(0xFF0000, 1)), t(Color(0x000001)), t(Color(0.5)), t(Color(0.5, 0.2)), t(Color(0.1, 0.2, 0.3, 0.3)),
+              t(Color(0.5, 0.5, 0.5, 2.0)), t(Color("SteelBlue", 0.25)), repr(Color(1, 0, 0)), str(Color(0.1, 0.5, 0.9)),
+              str(Color("aqua")), str(Color(0.5, 0.5, 0.5)), str(Color("lightgrey")), str(Color("goldenrod1")),
+              raises(lambda: Color("dark red")), raises(lambda: Color("#gg0000")), raises(lambda: Color("#ff0000zz")),
+              raises(lambda: Color("#ff000")), raises(lambda: Color("rebeccapurple")), raises(lambda: Color(2.0, 0, 0)),
+              raises(lambda: Color(-0.1, 0, 0)), raises(lambda: Color(0x1000000)), sets,
+              raises(lambda: Color.categorical_set(3, 1.5)), raises(lambda: Color.categorical_set(3, 0.0, [1.0])),
+              raises(lambda: Color.categorical_set(3, -1))])
+
+
 CASES = {
     # 1a
     "core_and_list_part": lambda: Box(4, 4, 4) & [Pos(1, 0, 0) * Box(4, 4, 4), Sphere(2.5)],
@@ -742,4 +816,8 @@ CASES = {
     "core_shapelist_group": shapelist_group,
     "core_shapelist_filter": shapelist_filter,
     "core_shapelist_ops": shapelist_ops,
+    # 10: geometry
+    "core_geom_plane_lists": geom_plane_lists,
+    "core_geom_bound_box": geom_bound_box,
+    "core_geom_color": geom_color,
 }
