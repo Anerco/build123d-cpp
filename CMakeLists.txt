@@ -46,6 +46,16 @@ target_include_directories(build123d
   PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(build123d PUBLIC ${BUILD123D_OCCT_LIBS})
+
+# libcurl uploads to PCBWay (export_to_pcbway); without it that function throws.
+find_package(CURL QUIET)
+if(CURL_FOUND)
+  target_link_libraries(build123d PRIVATE CURL::libcurl)
+  target_compile_definitions(build123d PRIVATE BUILD123D_HAVE_CURL)
+else()
+  message(WARNING "libcurl not found: export_to_pcbway will throw std::runtime_error")
+endif()
+
 if(MSVC)
   target_compile_options(build123d PRIVATE /W3 /bigobj /permissive-)
   target_compile_definitions(build123d PUBLIC _USE_MATH_DEFINES NOMINMAX)
