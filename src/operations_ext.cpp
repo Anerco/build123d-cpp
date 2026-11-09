@@ -228,18 +228,19 @@ Part brake_formed(double thickness, const std::optional<double>& width, const st
     const ShapeList<Edge> line_edges =
         line.shape_type() == ShapeType::WIRE ? Wire(line.wrapped()).edges() : line.edges();
     const ShapeList<Edge> sweep_paths = line_edges.sort_by(line);
-    std::vector<TopoDS_Shape> sections;
+    std::vector<Shape> sections;
     for (std::size_t i = 0; i + 1 < station_faces.size(); ++i) {
         sections.push_back(
-            Solid::sweep_multi(std::vector<Shape>{station_faces[i], station_faces[i + 1]}, sweep_paths[i]).wrapped());
+            Solid::sweep_multi(std::vector<Shape>{station_faces[i], station_faces[i + 1]}, sweep_paths[i]));
     }
     if (sections.empty()) throw std::out_of_range("list index out of range");
-    TopoDS_Shape new_solid = sections[0];
-    if (sections.size() > 1) {
-        new_solid = bool_op(BoolOp::FUSE, {sections[0]}, std::vector<TopoDS_Shape>(sections.begin() + 1, sections.end()));
-    }
-    if (clean) new_solid = clean_shape(new_solid);
-    return Part(make_compound({new_solid}));
+    // Part.fuse(*sections) and clean() record their history, as in build123d
+    Shape new_solid = sections[0];
+    if (sections.size() > 1) new_solid = sections[0].fuse(std::vector<Shape>(sections.begin() + 1, sections.end()));
+    if (clean) new_solid = new_solid.clean();
+    Part result(make_compound({new_solid.wrapped()}));
+    result.set_history(ShapeHistory::of(new_solid));
+    return result;
 }
 
 }  // namespace
