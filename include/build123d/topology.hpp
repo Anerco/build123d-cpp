@@ -660,6 +660,13 @@ public:
     Mixin1D project(const Face& face, const Vector& direction) const;
     /// All the projections onto the face (closest = false), or just the closest one.
     ShapeList<Mixin1D> project(const Face& face, const Vector& direction, bool closest) const;
+    /// Hidden-line projection onto a viewport: the (visible, hidden) edges, in viewport
+    /// coordinates. `look_at` defaults to the center of the shape; a `focus` gives a
+    /// perspective projection.
+    std::pair<ShapeList<Edge>, ShapeList<Edge>> project_to_viewport(
+        const Vector& viewport_origin, const Vector& viewport_up = Vector(0, 0, 1),
+        std::optional<Vector> look_at = std::nullopt,
+        std::optional<double> focus = std::nullopt) const;
 };
 
 /// Tangent at a position, build123d's `%` operator.
@@ -881,6 +888,12 @@ class Mixin2D : public Shape {
 public:
     static constexpr int kDim = 2;
     using Shape::Shape;
+
+    /// Hidden-line projection onto a viewport (see Mixin1D::project_to_viewport).
+    std::pair<ShapeList<Edge>, ShapeList<Edge>> project_to_viewport(
+        const Vector& viewport_origin, const Vector& viewport_up = Vector(0, 0, 1),
+        std::optional<Vector> look_at = std::nullopt,
+        std::optional<double> focus = std::nullopt) const;
 };
 
 class Face : public Mixin2D {
@@ -997,6 +1010,11 @@ public:
     /// Largest working fillet radius for the edges (binary search).
     double max_fillet(const std::vector<Edge>& edge_list, double tolerance = 0.1,
                       int max_iterations = 10) const;
+    /// Hidden-line projection onto a viewport (see Mixin1D::project_to_viewport).
+    std::pair<ShapeList<Edge>, ShapeList<Edge>> project_to_viewport(
+        const Vector& viewport_origin, const Vector& viewport_up = Vector(0, 0, 1),
+        std::optional<Vector> look_at = std::nullopt,
+        std::optional<double> focus = std::nullopt) const;
 
 protected:
     TopoDS_Shape fillet_topods(double radius, const std::vector<Edge>& edge_list,
