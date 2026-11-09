@@ -198,12 +198,12 @@ double Shape::volume() const {
         case TopAbs_SHELL: return shell_volume(obj_);
         case TopAbs_COMPOUND:
         case TopAbs_COMPSOLID: {
+            // Compound.volume: the solids and shells of get_type (this compound's children
+            // and those of its direct sub-compounds)
+            const Compound compound(obj_);
             double total = 0.0;
-            for (const auto& s : top_level(obj_)) {
-                if (s.ShapeType() == TopAbs_SOLID) total += properties(s, 3).Mass();
-                if (s.ShapeType() == TopAbs_SHELL) total += shell_volume(s);
-                if (s.ShapeType() == TopAbs_COMPSOLID) total += properties(s, 3).Mass();
-            }
+            for (const auto& s : compound.get_type<Solid>()) total += properties(s.wrapped(), 3).Mass();
+            for (const auto& s : compound.get_type<Shell>()) total += shell_volume(s.wrapped());
             return total;
         }
         default: return 0.0;

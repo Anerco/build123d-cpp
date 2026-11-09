@@ -387,6 +387,55 @@ COMPARE_CASES {
         return V::list({V(polar(2, 30)), V(wires.size()), describe(wires), V(d.size())});
     });
 
+    // ---- 6: mass, material, inertia
+    add_value("core_mass_inertia", [] {
+        const Part box = Pos(1, 2, 3) * Box(2, 4, 6);
+        const auto m = box.matrix_of_inertia();
+        std::vector<V> rows;
+        for (const auto& r : m) rows.push_back(V::list({r[0], r[1], r[2]}));
+        std::vector<V> moments;
+        for (const auto& [axis, moment] : Cylinder(2, 5).principal_properties()) moments.emplace_back(moment);
+        const auto sm = box.static_moments();
+        return V::list({V::list(rows), V::list(moments), V::list({sm[0], sm[1], sm[2]}),
+                        V(box.radius_of_gyration(Axis::X)), V(Sphere(2).radius_of_gyration(Axis::Z)),
+                        V(Edge::make_line({0, 0}, {3, 4}).compute_volume()), V(Face::make_rect(2, 3).compute_volume()),
+                        V(Vertex(1, 2, 3).compute_volume()), V(box.compute_volume())});
+    });
+    add_value("core_mass_material", [] {
+        Part box = Box(10, 10, 10);
+        box.material = "aluminum";
+        Part cyl = Cylinder(5, 10);
+        cyl.material = resolve_material("Mild Steel");
+        Shape assy_child = Pos(20, 0, 0) * Box(1, 1, 1);
+        Compound assy = Compound::make_assembly({box, assy_child});
+        assy.material = "copper";
+        Shell shell = Box(2, 2, 2).shells()[0];
+        shell.material = "abs";
+        Part none = Box(1, 1, 1);
+        bool missing = false;
+        try {
+            (void)none.mass();
+        } catch (const std::invalid_argument&) {
+            missing = true;
+        }
+        return V::list({V(box.mass()), V(box.mass(Unit::KG)), V(box.mass(Unit::LB, Unit::MM)), V(box.mass(Unit::G, Unit::CM)),
+                        V(box.compute_mass(Unit::KG, Unit::IN)), V(cyl.mass()), V(assy.mass()), V(shell.mass()),
+                        V(Rectangle(2, 2).mass()), V(Edge::make_line({0, 0}, {1, 0}).mass()), V(missing),
+                        V(box.material->material.density), V(box.material->name()), V(material_names().size())});
+    });
+    add_value("core_combined_center", [] {
+        const std::vector<Shape> objects{Box(2, 2, 2), Pos(10, 0, 0) * Sphere(1), Pos(0, 5, 0) * Cylinder(1, 4)};
+        bool geometry_error = false;
+        try {
+            (void)Shape::combined_center(objects, CenterOf::GEOMETRY);
+        } catch (const std::invalid_argument&) {
+            geometry_error = true;
+        }
+        return V::list({V(Shape::combined_center(objects)), V(Shape::combined_center(objects, CenterOf::BOUNDING_BOX)),
+                        V(geometry_error),
+                        V(Shape::combined_center(std::vector<Edge>{Edge::make_line({0, 0}, {2, 0}), Edge::make_line({0, 1}, {0, 5})}))});
+    });
+
     add_value("core_geom_with_shape", [] {
         const Part b = Box(2, 2, 2);
         return V::list({describe(Vector(0, 0, 0) & b), describe(Axis::Z & b), describe(Plane::XY & b),

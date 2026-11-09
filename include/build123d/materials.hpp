@@ -37,6 +37,9 @@ struct FinishedMaterial {
     FinishedMaterial() = default;
     explicit FinishedMaterial(RangeMaterial m, std::optional<Color> c = std::nullopt)
         : material(std::move(m)), color(std::move(c)) {}
+    /// A catalog material by name, like build123d's `shape.material = "aluminum"`.
+    FinishedMaterial(const std::string& name);  // NOLINT(google-explicit-constructor)
+    FinishedMaterial(const char* name) : FinishedMaterial(std::string(name)) {}  // NOLINT
     /// The material's catalog name.
     const std::string& name() const { return material.name; }
 };

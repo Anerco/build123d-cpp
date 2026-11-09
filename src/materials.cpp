@@ -198,6 +198,8 @@ FinishedMaterial resolve_material(const std::string& name) {
     return FinishedMaterial(it->second);
 }
 
+FinishedMaterial::FinishedMaterial(const std::string& name) : FinishedMaterial(resolve_material(name)) {}
+
 std::vector<std::string> material_names() {
     std::vector<std::string> names;
     for (const auto& entry : catalog()) names.push_back(entry.first);

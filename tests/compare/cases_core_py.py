@@ -1,6 +1,7 @@
 """Python twins of cases_core.cpp."""
 
 from build123d import *  # noqa: F403
+from build123d.topology import Shape
 
 from values import V
 
@@ -318,6 +319,50 @@ def utils_case():
     return V([Vector(polar(2, 30)), len(wires), describe(wires), len(d)])
 
 
+def mass_inertia():
+    box = Pos(1, 2, 3) * Box(2, 4, 6)
+    rows = box.matrix_of_inertia
+    moments = [m for _, m in Cylinder(2, 5).principal_properties]
+    sm = box.static_moments
+    return V([rows, moments, list(sm), box.radius_of_gyration(Axis.X), Sphere(2).radius_of_gyration(Axis.Z),
+              Edge.make_line((0, 0), (3, 4)).compute_volume(), Face.make_rect(2, 3).compute_volume(),
+              Vertex(1, 2, 3).compute_volume(), box.compute_volume()])
+
+
+def mass_material():
+    box = Box(10, 10, 10)
+    box.material = "aluminum"
+    cyl = Cylinder(5, 10)
+    cyl.material = "Mild Steel"
+    assy_child = Pos(20, 0, 0) * Box(1, 1, 1)
+    assy = Compound(children=[box, assy_child])
+    assy.material = "copper"
+    shell = Box(2, 2, 2).shells()[0]
+    shell.material = "abs"
+    none = Box(1, 1, 1)
+    try:
+        none.mass()
+        missing = False
+    except ValueError:
+        missing = True
+    import bd_materials
+    return V([box.mass(), box.mass(Unit.KG), box.mass(Unit.LB, Unit.MM), box.mass(Unit.G, Unit.CM),
+              box.compute_mass(Unit.KG, Unit.IN), cyl.mass(), assy.mass(), shell.mass(), Rectangle(2, 2).mass(),
+              Edge.make_line((0, 0), (1, 0)).mass(), missing, box.material.material.density, box.material.name,
+              len(bd_materials.material_names())])
+
+
+def combined_center():
+    objects = [Box(2, 2, 2), Pos(10, 0, 0) * Sphere(1), Pos(0, 5, 0) * Cylinder(1, 4)]
+    try:
+        Shape.combined_center(objects, CenterOf.GEOMETRY)
+        geometry_error = False
+    except ValueError:
+        geometry_error = True
+    return V([Shape.combined_center(objects), Shape.combined_center(objects, CenterOf.BOUNDING_BOX), geometry_error,
+              Shape.combined_center([Edge.make_line((0, 0), (2, 0)), Edge.make_line((0, 1), (0, 5))])])
+
+
 CASES = {
     # 1a
     "core_and_list_part": lambda: Box(4, 4, 4) & [Pos(1, 0, 0) * Box(4, 4, 4), Sphere(2.5)],
@@ -384,4 +429,8 @@ CASES = {
     "core_topo_explore": topo_explore,
     "core_topo_distance": topo_distance,
     "core_utils": utils_case,
+    # 6: mass
+    "core_mass_inertia": mass_inertia,
+    "core_mass_material": mass_material,
+    "core_combined_center": combined_center,
 }

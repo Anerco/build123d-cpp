@@ -154,6 +154,30 @@ public:
 
     double area() const;
     double volume() const;
+    /// build123d's compute_volume: the GProp mass for the shape type (length for edges and
+    /// wires, area for faces and shells, volume otherwise; 0 for a vertex).
+    double compute_volume() const;
+    /// Mass from `material`'s density (std::invalid_argument if there is none): volume()
+    /// times the density converted to `mass_unit` per `length_unit`³.
+    double compute_mass(Unit mass_unit = Unit::G, Unit length_unit = Unit::MM) const;
+    /// The mass as build123d's per-class `mass`: 0 for vertices, edges, wires and faces;
+    /// compute_mass for shells and solids; for a compound the sum over its assembly
+    /// children (each with its own material, else the compound's) or its solids and shells.
+    double mass(Unit mass_unit = Unit::G, Unit length_unit = Unit::MM) const;
+    /// Inertia tensor about the center of mass (VolumeProperties), rows Ixx..Izz.
+    std::array<std::array<double, 3>, 3> matrix_of_inertia() const;
+    /// The principal axes of inertia with their moments.
+    std::vector<std::pair<Vector, double>> principal_properties() const;
+    /// First moments of mass (Mx, My, Mz).
+    std::array<double, 3> static_moments() const;
+    double radius_of_gyration(const Axis& axis) const;
+    /// Center of several objects: weighted by compute_volume (CenterOf::MASS) or the mean of
+    /// the bounding box centers (BOUNDING_BOX); GEOMETRY throws.
+    static Vector combined_center(const std::vector<Shape>& objects, CenterOf center_of = CenterOf::MASS);
+    template <class S, std::enable_if_t<std::is_base_of_v<Shape, S> && !std::is_same_v<S, Shape>, int> = 0>
+    static Vector combined_center(const std::vector<S>& objects, CenterOf center_of = CenterOf::MASS) {
+        return combined_center(std::vector<Shape>(objects.begin(), objects.end()), center_of);
+    }
     /// Center using the default method for the shape type
     /// (GEOMETRY for 1D/2D, MASS for 3D and compounds).
     Vector center() const;
@@ -783,7 +807,8 @@ public:
     std::size_t size() const;
     /// Direct children.
     ShapeList<Shape> elements() const;
-    /// Direct children of the given topological type.
+    /// Children of the given topological type, of this compound and of its direct
+    /// sub-compounds (build123d's get_type).
     template <class T>
     ShapeList<T> get_type() const;
     /// Remove unnecessary compound wrappers.
@@ -1300,9 +1325,12 @@ template <class T>
 ShapeList<T> Compound::get_type() const {
     static_assert(T::kTopAbs != TopAbs_SHAPE, "get_type needs a topological type");
     ShapeList<T> out;
-    for (const Shape& child : elements()) {
-        if (!child.is_null() && child.wrapped().ShapeType() == T::kTopAbs) {
-            out.push_back(T(child.wrapped()));
+    // as build123d: the children of each of compounds() (the direct sub-compounds, then this)
+    for (const Compound& comp : compounds()) {
+        for (const Shape& child : comp.elements()) {
+            if (!child.is_null() && child.wrapped().ShapeType() == T::kTopAbs) {
+                out.push_back(T(child.wrapped()));
+            }
         }
     }
     return out;
