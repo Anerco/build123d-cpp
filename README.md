@@ -224,6 +224,8 @@ The algebra keeps track of dimensions at compile time:
   `Edge`.
 - `Part`, `Sketch` and `Curve` don't convert into each other.
 - `fillet`/`chamfer` of vertices return a `Compound`, which converts to `Sketch` or `Curve`.
+- `Edge::close` and `offset_2d` always return a `Wire`; Python returns an `Edge` when the result
+  is a single edge. `Mixin1D::project` returns a `Mixin1D` (an edge or a wire).
 
 Python code that changes a variable's type needs a different declaration in C++:
 
