@@ -514,11 +514,20 @@ private:
 
     static std::optional<Quantity_ColorRGBA> get_label_color(const TDF_Label& label) {
         Quantity_ColorRGBA col;
+#if OCC_VERSION_HEX >= 0x070700
         if (XCAFDoc_ColorTool::GetColor(label, XCAFDoc_ColorCurv, col) ||
             XCAFDoc_ColorTool::GetColor(label, XCAFDoc_ColorGen, col) ||
             XCAFDoc_ColorTool::GetColor(label, XCAFDoc_ColorSurf, col)) {
             return col;
         }
+#else
+        // GetColor(label, type, color) became static in OCCT 7.7
+        const Handle(XCAFDoc_ColorTool) tool = XCAFDoc_DocumentTool::ColorTool(label);
+        if (tool->GetColor(label, XCAFDoc_ColorCurv, col) || tool->GetColor(label, XCAFDoc_ColorGen, col) ||
+            tool->GetColor(label, XCAFDoc_ColorSurf, col)) {
+            return col;
+        }
+#endif
         return std::nullopt;
     }
 };

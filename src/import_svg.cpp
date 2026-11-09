@@ -33,6 +33,7 @@
 #include <Geom_TrimmedCurve.hxx>
 #include <ShapeExtend_WireData.hxx>
 #include <ShapeFix_Face.hxx>
+#include <Standard_Version.hxx>
 #include <Standard_Failure.hxx>
 #include <StdFail_NotDone.hxx>
 #include <TColgp_Array1OfPnt.hxx>
@@ -478,7 +479,11 @@ ShapeList<Shape> import_svg_text(const std::string& text, const ImportSvgOptions
                 for (const auto& w : wires) faces_or_wires.push_back(w);
             }
             for (const TopoDS_Shape& face_or_wire : faces_or_wires) {
+#if OCC_VERSION_HEX >= 0x070700
                 TopoDS_Shape mirrored = BRepBuilderAPI_Transform(face_or_wire, transform, false, false).Shape();
+#else
+                TopoDS_Shape mirrored = BRepBuilderAPI_Transform(face_or_wire, transform, false).Shape();
+#endif
                 if (options.flip_y) mirrored.Reverse();
                 Shape shape(mirrored);
                 if (offset.X != 0 || offset.Y != 0) shape = shape.translate(offset);
