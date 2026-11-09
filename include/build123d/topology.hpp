@@ -97,6 +97,14 @@ public:                                                                         
     T transform_shape(const gp_Trsf& trsf) const {                                             \
         return derive<T>(transform_topods(trsf, false));                                      \
     }                                                                                          \
+    /** Transform without changing the geometry type (rigid part of the matrix). */            \
+    T transform_shape(const Matrix& t_matrix) const {                                          \
+        return derive<T>(transform_topods(t_matrix.wrapped().Trsf(), false));                 \
+    }                                                                                          \
+    /** Affine transform (may convert lines and circles to splines; handles skew/stretch). */ \
+    T transform_geometry(const Matrix& t_matrix) const {                                       \
+        return derive<T>(gtransform_topods(t_matrix));                                         \
+    }                                                                                          \
     /** Remove internal edges/faces (ShapeUpgrade_UnifySameDomain); the history records it. */ \
     T clean() const {                                                                          \
         std::shared_ptr<ShapeHistory> clean_history;                                           \
@@ -183,6 +191,8 @@ public:
     Vector center() const;
     Vector center(CenterOf center_of) const;
     BoundBox bounding_box(std::optional<double> tolerance = std::nullopt, bool optimal = true) const;
+    /// The oriented bounding box (an empty one for an empty shape).
+    OrientedBoundBox oriented_bounding_box() const;
     Location location() const;
     void set_location(const Location& loc);
     Vector position() const;
@@ -314,6 +324,7 @@ protected:
     TopoDS_Shape mirror_topods(const Plane& plane) const;
     TopoDS_Shape transformed_topods(const Vector& rotate, const Vector& offset) const;
     TopoDS_Shape transform_topods(const gp_Trsf& trsf, bool copy) const;
+    TopoDS_Shape gtransform_topods(const Matrix& t_matrix) const;
     /// The cleaned shape; `history` (if given) receives this shape's record merged with
     /// the clean's.
     TopoDS_Shape clean_topods(std::shared_ptr<ShapeHistory>* history = nullptr) const;
@@ -764,6 +775,8 @@ public:
     static Solid thicken(const Shape& surface, double depth,
                          std::optional<Vector> normal_override = std::nullopt);
     static Solid from_bounding_box(const BoundBox& bbox);
+    /// A box of the oriented bounding box's size, placed at its location.
+    static Solid from_bounding_box(const OrientedBoundBox& bbox);
 
     double volume() const;
     /// Draft angle (degrees) applied to planar, cylindrical or conical faces; throws

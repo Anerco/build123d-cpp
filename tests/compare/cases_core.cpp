@@ -436,6 +436,57 @@ COMPARE_CASES {
                         V(Shape::combined_center(std::vector<Edge>{Edge::make_line({0, 0}, {2, 0}), Edge::make_line({0, 1}, {0, 5})}))});
     });
 
+    // ---- 7: Matrix and OrientedBoundBox
+    add_value("core_matrix", [] {
+        Matrix m({{1, 0, 0, 1}, {0, 1, 0, 2}, {0, 0, 1, 3}});
+        m.rotate(Axis::Z, 90);
+        const Matrix inv = m.inverse();
+        const Matrix prod = m.multiply(inv);
+        std::vector<V> values;
+        for (int r = 0; r < 4; ++r) {
+            for (int c = 0; c < 4; ++c) values.emplace_back(m(r, c));
+        }
+        bool bad_size = false, bad_row = false;
+        try {
+            Matrix({{1, 0, 0}, {0, 1, 0}, {0, 0, 1}});
+        } catch (const std::invalid_argument&) {
+            bad_size = true;
+        }
+        try {
+            Matrix({{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 1, 0}, {0, 0, 1, 1}});
+        } catch (const std::invalid_argument&) {
+            bad_row = true;
+        }
+        return V::list({V::list(values), V::list_of(m.transposed_list()), V(m.multiply(Vector(1, 0, 0))),
+                        V(prod(0, 0)), V(prod(0, 3)), V(Vector(1, 2, 3).transform(m)),
+                        V(Vector(1, 2, 3).transform(m, true)), V(bad_size), V(bad_row),
+                        V(Vector(1.23456, -2.5, 3.5).round(2)), V(Vector(1.5, 2.5, -0.5).round())});
+    });
+    add("core_transform_geometry", [] {
+        const Matrix skew({{1, 0.5, 0, 0}, {0, 1, 0, 0}, {0, 0, 2, 1}});
+        return Box(2, 2, 2).transform_geometry(skew);
+    });
+    add("core_transform_shape_matrix", [] {
+        Matrix m;
+        m.rotate(Axis::X, 30);
+        return Cylinder(1, 3).transform_shape(m);
+    });
+    add_value("core_oriented_bound_box", [] {
+        const Part part = Rot(10, 20, 30) * Box(2, 4, 6);
+        const OrientedBoundBox obb = part.oriented_bounding_box();
+        std::vector<double> sizes{obb.size().X, obb.size().Y, obb.size().Z};
+        std::sort(sizes.begin(), sizes.end());
+        const OrientedBoundBox face_obb = Face::make_rect(2, 3).oriented_bounding_box();
+        const OrientedBoundBox line_obb = Edge::make_line({0, 0, 0}, {3, 4, 0}).oriented_bounding_box();
+        const OrientedBoundBox small = (Rot(10, 20, 30) * Box(1, 1, 1)).oriented_bounding_box();
+        const Solid box = Solid::from_bounding_box(obb);
+        return V::list({V::list_of(sizes), V(obb.diagonal()), V(obb.center()), V(obb.corners().size()),
+                        V(face_obb.corners().size()), V(line_obb.corners().size()), V(line_obb.size().length()),
+                        V(obb.is_completely_inside(small)), V(small.is_completely_inside(obb)),
+                        V(obb.is_outside(Vector(0, 0, 0))), V(obb.is_outside(Vector(10, 10, 10))),
+                        V(box.volume()), V(box.center())});
+    });
+
     add_value("core_geom_with_shape", [] {
         const Part b = Box(2, 2, 2);
         return V::list({describe(Vector(0, 0, 0) & b), describe(Axis::Z & b), describe(Plane::XY & b),

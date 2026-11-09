@@ -363,6 +363,51 @@ def combined_center():
               Shape.combined_center([Edge.make_line((0, 0), (2, 0)), Edge.make_line((0, 1), (0, 5))])])
 
 
+def matrix_case():
+    m = Matrix([[1, 0, 0, 1], [0, 1, 0, 2], [0, 0, 1, 3]])
+    m.rotate(Axis.Z, 90)
+    inv = m.inverse()
+    prod = m.multiply(inv)
+    values = [m[r, c] for r in range(4) for c in range(4)]
+    try:
+        Matrix([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+        bad_size = False
+    except (TypeError, ValueError):
+        bad_size = True
+    try:
+        Matrix([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 1, 1]])
+        bad_row = False
+    except (TypeError, ValueError):
+        bad_row = True
+    return V([values, m.transposed_list(), m.multiply(Vector(1, 0, 0)), prod[0, 0], prod[0, 3],
+              Vector(1, 2, 3).transform(m), Vector(1, 2, 3).transform(m, True), bad_size, bad_row,
+              round(Vector(1.23456, -2.5, 3.5), 2), round(Vector(1.5, 2.5, -0.5))])
+
+
+def transform_geometry_case():
+    skew = Matrix([[1, 0.5, 0, 0], [0, 1, 0, 0], [0, 0, 2, 1]])
+    return Box(2, 2, 2).transform_geometry(skew)
+
+
+def transform_shape_matrix():
+    m = Matrix()
+    m.rotate(Axis.X, 30)
+    return Cylinder(1, 3).transform_shape(m)
+
+
+def oriented_bound_box():
+    part = Rot(10, 20, 30) * Box(2, 4, 6)
+    obb = part.oriented_bounding_box()
+    face_obb = Face.make_rect(2, 3).oriented_bounding_box()
+    line_obb = Edge.make_line((0, 0, 0), (3, 4, 0)).oriented_bounding_box()
+    small = (Rot(10, 20, 30) * Box(1, 1, 1)).oriented_bounding_box()
+    box = Solid.from_bounding_box(obb)
+    return V([sorted(obb.size), obb.diagonal, obb.center(), len(obb.corners), len(face_obb.corners),
+              len(line_obb.corners), line_obb.size.length, obb.is_completely_inside(small),
+              small.is_completely_inside(obb), obb.is_outside(Vector(0, 0, 0)), obb.is_outside(Vector(10, 10, 10)),
+              box.volume, box.center()])
+
+
 CASES = {
     # 1a
     "core_and_list_part": lambda: Box(4, 4, 4) & [Pos(1, 0, 0) * Box(4, 4, 4), Sphere(2.5)],
@@ -433,4 +478,9 @@ CASES = {
     "core_mass_inertia": mass_inertia,
     "core_mass_material": mass_material,
     "core_combined_center": combined_center,
+    # 7: Matrix, OrientedBoundBox
+    "core_matrix": matrix_case,
+    "core_transform_geometry": transform_geometry_case,
+    "core_transform_shape_matrix": transform_shape_matrix,
+    "core_oriented_bound_box": oriented_bound_box,
 }

@@ -13,6 +13,8 @@
 #include <vector>
 
 #include <Bnd_Box.hxx>
+#include <Bnd_OBB.hxx>
+#include <gp_GTrsf.hxx>
 #include <gp_Ax1.hxx>
 #include <gp_Ax2.hxx>
 #include <gp_Ax3.hxx>
@@ -40,6 +42,7 @@ class Axis;
 class Plane;
 class Location;
 class BoundBox;
+class Matrix;
 class Shape;
 class Vertex;
 class Edge;
@@ -92,6 +95,10 @@ public:
     double signed_distance_from_plane(const Plane& plane) const;
     /// Apply a transformation as a point (default) or as a direction.
     Vector transform(const gp_Trsf& trsf, bool is_direction = false) const;
+    /// build123d's Vector.transform(Matrix): the matrix's rigid part (gp_GTrsf::Trsf).
+    Vector transform(const Matrix& affine_transform, bool is_direction = false) const;
+    /// Python's round(vector, ndigits): each coordinate rounded half to even.
+    Vector round(int ndigits = 0) const;
 
     /// The other point if it is this point (build123d's Vector.intersect and &);
     /// std::nullopt for Python's None.
@@ -466,6 +473,82 @@ std::ostream& operator<<(std::ostream& os, const BoundBox& b);
 /// Amount to move an object with the given extents to achieve the alignment.
 Vector to_align_offset(const Vector& min_point, const Vector& max_point, const Align3& align,
                        std::optional<Vector> center = std::nullopt);
+
+// ---------------------------------------------------------------------------
+// Matrix
+// ---------------------------------------------------------------------------
+
+/// A 4x4 affine transformation matrix wrapping a gp_GTrsf (build123d's Matrix).
+class Matrix {
+public:
+    /// The identity.
+    Matrix() = default;
+    explicit Matrix(const gp_GTrsf& trsf) : trsf_(trsf) {}
+    explicit Matrix(const gp_Trsf& trsf) : trsf_(trsf) {}
+    /// From 3 (or 4) rows of 4 values; a 4th row must be [0, 0, 0, 1].
+    /// std::invalid_argument otherwise (Python's TypeError/ValueError).
+    explicit Matrix(const std::vector<std::vector<double>>& matrix);
+
+    /// Rotate in place about an axis by `angle` degrees (applied after this transform).
+    void rotate(const Axis& axis, double angle);
+    Matrix inverse() const;
+    /// Matrix * matrix.
+    Matrix multiply(const Matrix& other) const;
+    /// The point transformed by this matrix (Vector::transform).
+    Vector multiply(const Vector& other) const;
+    /// The 16 values column by column (the glTF layout).
+    std::vector<double> transposed_list() const;
+    /// The value at (row, column), 0-indexed (Python's matrix[row, col]); the implied 4th
+    /// row is [0, 0, 0, 1]. std::out_of_range outside 0..3.
+    double operator()(int row, int col) const;
+
+    const gp_GTrsf& wrapped() const { return trsf_; }
+    std::string to_string() const;
+
+private:
+    gp_GTrsf trsf_;
+};
+
+std::ostream& operator<<(std::ostream& os, const Matrix& m);
+
+// ---------------------------------------------------------------------------
+// OrientedBoundBox
+// ---------------------------------------------------------------------------
+
+/// An oriented bounding box (Bnd_OBB) of a shape. Its axes are arbitrary and may differ
+/// between platforms.
+class OrientedBoundBox {
+public:
+    OrientedBoundBox() = default;
+    explicit OrientedBoundBox(const Bnd_OBB& obb) : obb_(obb) {}
+    /// The OBB of a shape (BRepBndLib::AddOBB using triangulation).
+    explicit OrientedBoundBox(const Shape& shape);
+
+    /// The unique corners (2 for a line, 4 for a planar face in polygon order, 8 otherwise).
+    std::vector<Vector> corners() const;
+    /// Length of the body diagonal.
+    double diagonal() const;
+    /// Location of the center with the box's directions.
+    Location location() const;
+    /// The box's coordinate system: center, x_direction and z_direction.
+    Plane plane() const;
+    /// Full extents along the box axes.
+    Vector size() const;
+    Vector x_direction() const;
+    Vector y_direction() const;
+    Vector z_direction() const;
+    Vector center() const;
+    bool is_completely_inside(const OrientedBoundBox& other) const;
+    bool is_outside(const Vector& point) const;
+
+    const Bnd_OBB& wrapped() const { return obb_; }
+    std::string to_string() const;
+
+private:
+    Bnd_OBB obb_;
+};
+
+std::ostream& operator<<(std::ostream& os, const OrientedBoundBox& b);
 
 // ---------------------------------------------------------------------------
 // Color
