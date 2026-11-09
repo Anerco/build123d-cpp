@@ -208,3 +208,23 @@ TEST(objects_full_round_and_brake_formed) {
     CHECK_THROWS(make_brake_formed(0.5, std::vector<double>{1, 2}, outline), std::invalid_argument);
     CHECK_THROWS(make_brake_formed(0.5, 1, Wire()), std::invalid_argument);
 }
+
+// ---------------------------------------------------------------------------
+// pack
+// ---------------------------------------------------------------------------
+
+static_assert(std::is_same_v<decltype(pack(std::vector<Box>{}, 1.0)), ShapeList<Part>>);
+static_assert(std::is_same_v<decltype(pack(std::vector<Shape>{}, 1.0)), ShapeList<Shape>>);
+static_assert(std::is_same_v<decltype(pack(ShapeList<Face>{}, 1.0, true)), ShapeList<Face>>);
+
+TEST(objects_pack) {
+    const auto packed = pack(std::vector<Box>{Box(10, 2, 1), Box(1, 5, 1), Box(1, 5, 1)}, 1);
+    CHECK(packed.size() == 3);
+    CHECK(packed[1].bounding_box().min == Vector(0, 3, -0.5));
+    CHECK(packed[2].bounding_box().min == Vector(2, 3, -0.5));
+    CHECK(pack(std::vector<Part>{Pos(0, 0, 5) * Box(1, 1, 1)}, 0, true)[0].bounding_box().min == Vector(0, 0, 0));
+    CHECK_THROWS(pack(std::vector<Part>{}, 1), std::invalid_argument);
+    CHECK_THROWS(pack(std::vector<Box>{Box(2, 2, 2), Box(2, 2, 2)}, -1.5), std::runtime_error);
+    const auto positions = detail::pack2d({{2, 10}, {3, 2}});
+    CHECK(positions == (std::vector<std::pair<double, double>>{{0, 0}, {2, 0}}));
+}

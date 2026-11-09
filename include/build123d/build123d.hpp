@@ -15,6 +15,7 @@
 #include "build123d/locations.hpp"
 #include "build123d/objects.hpp"
 #include "build123d/operations.hpp"
+#include "build123d/pack.hpp"
 #include "build123d/topology.hpp"
 #include "build123d/warnings.hpp"
 

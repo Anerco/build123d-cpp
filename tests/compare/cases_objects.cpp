@@ -102,6 +102,37 @@ V nelder_mead_values(const std::function<double(const std::vector<double>&)>& f,
     return V::obj({{"x", V::list_of(r.x)}, {"fun", r.fun}, {"nit", r.nit}, {"nfev", r.nfev}, {"status", r.status}});
 }
 
+/// [[min, max], ...] of the shapes' bounding boxes.
+template <class T>
+V bbox_values(const std::vector<T>& shapes) {
+    std::vector<V> out;
+    for (const auto& s : shapes) {
+        const BoundBox bb = s.bounding_box();
+        out.push_back(V::list({bb.min, bb.max}));
+    }
+    return V::list(out);
+}
+
+V pack2d_values(const std::vector<std::pair<double, double>>& sizes) {
+    std::vector<V> out;
+    for (const auto& [x, y] : detail::pack2d(sizes)) out.push_back(V::list({x, y}));
+    return V::list(out);
+}
+
+/// (width, length) pairs drawn with random.seed(123456) as in upstream test_pack.py.
+const std::vector<std::pair<double, double>> random_boxes{
+    {10, 1}, {6, 1},   {3, 2},   {9, 1},   {4, 8},   {16, 6}, {1, 17},  {5, 13},  {12, 2},  {6, 2},
+    {15, 17}, {15, 15}, {17, 6}, {17, 18}, {2, 4},   {3, 4},  {17, 3},  {3, 5},   {11, 19}, {10, 15},
+    {17, 20}, {11, 12}, {9, 8},  {4, 9},   {9, 3},   {4, 7},  {15, 13}, {2, 1},   {16, 4},  {14, 4},
+    {6, 13}, {8, 1},   {20, 17}, {14, 4},  {20, 17}, {8, 17}, {20, 17}, {4, 13},  {9, 19},  {2, 12},
+    {14, 4}, {2, 17},  {8, 2},   {7, 6},   {18, 8},  {12, 12}, {7, 3},  {17, 11}, {18, 17}, {9, 19}};
+const std::vector<std::pair<double, double>> random_slots{
+    {11, 4}, {2, 1},  {7, 6},   {2, 1},   {4, 1},   {3, 1},  {10, 8},  {2, 1},   {5, 4},   {9, 2},
+    {17, 6}, {7, 4},  {2, 1},   {18, 1},  {6, 5},   {14, 9}, {13, 7},  {3, 1},   {7, 5},   {3, 1},
+    {16, 9}, {18, 17}, {16, 12}, {16, 15}, {18, 4}, {7, 6},  {18, 13}, {19, 9},  {3, 1},   {5, 3},
+    {4, 2},  {5, 1},  {18, 2},  {4, 3},   {4, 3},   {6, 2},  {12, 11}, {20, 2},  {11, 4},  {16, 3},
+    {18, 8}, {12, 6}, {13, 12}, {10, 6},  {9, 4},   {5, 1},  {10, 9},  {10, 6},  {4, 3},   {5, 3}};
+
 }  // namespace
 
 COMPARE_CASES {
@@ -813,4 +844,40 @@ COMPARE_CASES {
         const Wire mixed(std::vector<Edge>{Edge::make_line({0, 0}, {4, 0}), Edge::make_tangent_arc({4, 0}, {1, 0}, {6, 2})});
         return make_brake_formed(0.4, {1, 2, 1}, mixed, Side::RIGHT);
     });
+
+    // ---- pack
+    compare::add_value("obj_pack2d_growth", [] { return pack2d_values({{2, 10}, {3, 2}}); });
+    compare::add_value("obj_pack2d_ties", [] {
+        return pack2d_values({{3, 3}, {2, 5}, {5, 2}, {3, 3}, {1, 1}, {4, 4}, {2, 2}, {5, 1}, {1, 5}, {0.5, 7}});
+    });
+    compare::add_value("obj_pack2d_random", [] { return pack2d_values(random_boxes); });
+    compare::add_value("obj_pack_simple", [] {
+        return bbox_values(pack(std::vector<Box>{Box(10, 2, 1), Box(1, 5, 1), Box(1, 5, 1)}, 1));
+    });
+    compare::add_value("obj_pack_random_boxes", [] {
+        std::vector<Part> boxes;
+        for (const auto& [w, l] : random_boxes) boxes.push_back(Box(w, l, 1));
+        return bbox_values(pack(boxes, 1));
+    });
+    compare::add("obj_pack_random_boxes_part", [] {
+        std::vector<Part> boxes;
+        for (const auto& [w, l] : random_boxes) boxes.push_back(Box(w, l, 1));
+        return Part() + pack(boxes, 1);
+    });
+    compare::add_value("obj_pack_random_slots", [] {
+        std::vector<Sketch> slots;
+        for (const auto& [w, h] : random_slots) slots.push_back(SlotOverall(w, h));
+        return bbox_values(pack(slots, 1));
+    });
+    compare::add_value("obj_pack_align_z", [] {
+        const std::vector<Shape> objects{Pos(5, 5, 5) * Box(1, 2, 3), Pos(-3, 0, -2) * Sphere(1), Circle(2),
+                                         Edge::make_line({0, 0}, {3, 4})};
+        return bbox_values(pack(objects, 0.5, true));
+    });
+    compare::add_value("obj_pack_vertices", [] { return bbox_values(pack(std::vector<Vertex>{Vertex(1, 2, 3), Vertex(4, 5, 6)}, 1)); });
+    compare::add_value("obj_pack_empty", [] { return bbox_values(pack(std::vector<Part>{}, 1)); });
+    compare::add_value("obj_pack_overlap", [] {
+        return bbox_values(pack(std::vector<Box>{Box(2, 2, 2), Box(2, 2, 2), Box(3, 1, 1)}, -1.5));
+    });
+    compare::add_value("obj_pack_empty_part", [] { return bbox_values(pack(std::vector<Part>{Part()}, 1)); });
 }

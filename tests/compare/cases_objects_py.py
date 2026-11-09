@@ -6,6 +6,7 @@ from scipy.optimize import minimize, minimize_scalar
 from scipy.spatial import Voronoi
 
 from build123d import *  # noqa: F403
+from build123d.pack_utils import _pack2d
 from build123d.topology.utils import tuplify
 
 from values import V
@@ -358,6 +359,31 @@ def voronoi_values(pts):
     verts = [[float(v[0]), float(v[1])] for v in Voronoi(pts).vertices]
     verts.sort(key=lambda v: (round(v[0], 9), round(v[1], 9)))
     return V(verts)
+
+
+def bbox_values(shapes):
+    return V([[bb.min, bb.max] for bb in (s.bounding_box() for s in shapes)])
+
+
+def pack2d_values(sizes):
+    return V([list(p) for p in _pack2d(sizes, width_fn=lambda s: s[0], length_fn=lambda s: s[1])])
+
+
+# (width, length) pairs drawn with random.seed(123456) as in upstream test_pack.py
+RANDOM_BOXES = [
+    (10, 1), (6, 1), (3, 2), (9, 1), (4, 8), (16, 6), (1, 17), (5, 13), (12, 2), (6, 2),
+    (15, 17), (15, 15), (17, 6), (17, 18), (2, 4), (3, 4), (17, 3), (3, 5), (11, 19), (10, 15),
+    (17, 20), (11, 12), (9, 8), (4, 9), (9, 3), (4, 7), (15, 13), (2, 1), (16, 4), (14, 4),
+    (6, 13), (8, 1), (20, 17), (14, 4), (20, 17), (8, 17), (20, 17), (4, 13), (9, 19), (2, 12),
+    (14, 4), (2, 17), (8, 2), (7, 6), (18, 8), (12, 12), (7, 3), (17, 11), (18, 17), (9, 19),
+]  # fmt: skip
+RANDOM_SLOTS = [
+    (11, 4), (2, 1), (7, 6), (2, 1), (4, 1), (3, 1), (10, 8), (2, 1), (5, 4), (9, 2),
+    (17, 6), (7, 4), (2, 1), (18, 1), (6, 5), (14, 9), (13, 7), (3, 1), (7, 5), (3, 1),
+    (16, 9), (18, 17), (16, 12), (16, 15), (18, 4), (7, 6), (18, 13), (19, 9), (3, 1), (5, 3),
+    (4, 2), (5, 1), (18, 2), (4, 3), (4, 3), (6, 2), (12, 11), (20, 2), (11, 4), (16, 3),
+    (18, 8), (12, 6), (13, 12), (10, 6), (9, 4), (5, 1), (10, 9), (10, 6), (4, 3), (5, 3),
+]  # fmt: skip
 
 
 def obj_full_round_flipped():
@@ -848,4 +874,25 @@ CASES = {
         Wire([Edge.make_line((0, 0), (4, 0)), Edge.make_tangent_arc((4, 0), (1, 0), (6, 2))]),
         side=Side.RIGHT,
     ),
+    # pack
+    "obj_pack2d_growth": lambda: pack2d_values([(2, 10), (3, 2)]),
+    "obj_pack2d_ties": lambda: pack2d_values(
+        [(3, 3), (2, 5), (5, 2), (3, 3), (1, 1), (4, 4), (2, 2), (5, 1), (1, 5), (0.5, 7)]
+    ),
+    "obj_pack2d_random": lambda: pack2d_values(RANDOM_BOXES),
+    "obj_pack_simple": lambda: bbox_values(pack([Box(10, 2, 1), Box(1, 5, 1), Box(1, 5, 1)], padding=1)),
+    "obj_pack_random_boxes": lambda: bbox_values(pack([Box(w, l, 1) for w, l in RANDOM_BOXES], 1)),
+    "obj_pack_random_boxes_part": lambda: Part() + pack([Box(w, l, 1) for w, l in RANDOM_BOXES], 1),
+    "obj_pack_random_slots": lambda: bbox_values(pack([SlotOverall(w, h) for w, h in RANDOM_SLOTS], 1)),
+    "obj_pack_align_z": lambda: bbox_values(
+        pack(
+            [Pos(5, 5, 5) * Box(1, 2, 3), Pos(-3, 0, -2) * Sphere(1), Circle(2), Edge.make_line((0, 0), (3, 4))],
+            0.5,
+            align_z=True,
+        )
+    ),
+    "obj_pack_vertices": lambda: bbox_values(pack([Vertex(1, 2, 3), Vertex(4, 5, 6)], 1)),
+    "obj_pack_empty": lambda: bbox_values(pack([], 1)),
+    "obj_pack_overlap": lambda: bbox_values(pack([Box(2, 2, 2), Box(2, 2, 2), Box(3, 1, 1)], -1.5)),
+    "obj_pack_empty_part": lambda: bbox_values(pack([Part()], 1)),
 }
