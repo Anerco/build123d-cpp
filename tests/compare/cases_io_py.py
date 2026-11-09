@@ -584,3 +584,188 @@ CASES.update(
         "io_svg_empty": svg_empty,
     }
 )
+
+
+# ---- 2D export: DXF (see cases_io.cpp)
+import math  # noqa: E402
+
+import ezdxf  # noqa: E402
+
+
+def dxf_shapes(e, r12):
+    e.add_shape(Edge.make_line((0, 0), (10, 5)), layer="L1")
+    e.add_shape(Edge.make_circle(3))
+    e.add_shape(Edge.make_circle(3, Plane.XY, 10, 100))
+    e.add_shape(Edge.make_circle(3, Plane.XY.reverse(), 10, 100))
+    e.add_shape(Pos(5, 5) * (Rectangle(4, 2) - Circle(0.5)), layer="L2")
+    if r12:
+        return
+    e.add_shape(Edge.make_ellipse(4, 2))
+    e.add_shape(Edge.make_ellipse(4, 2, Plane.XY.reverse(), 20, 200))
+    e.add_shape(Edge.make_ellipse(3, 1, Plane.XY.rotated((0, 0, 30)).moved(Pos(-5, 2)), 0, 90))
+    e.add_shape(Edge.make_spline([(0, 0), (1, 2), (3, 1), (5, 4)]), layer="L2")
+    e.add_shape(Edge.make_spline([(0, 0), (1, 2), (3, 1)], periodic=True), layer="L2")
+    e.add_shape(Edge.make_bezier((0, 0), (1, 3), (4, 0), weights=[1, 2, 1]), layer="L2")
+    e.add_shape(Edge.make_bezier((0, -2), (2, -5), (4, -2)), layer="L2")
+
+
+def dxf_description(path):
+    """What ezdxf reads from a DXF file: header units, tables, view and entities."""
+    doc = ezdxf.readfile(path)
+    auditor = doc.audit()
+    desc = {
+        "version": doc.dxfversion,
+        "audit_errors": len(auditor.errors),
+        "insunits": doc.header.get("$INSUNITS"),
+        "measurement": doc.header.get("$MEASUREMENT"),
+        "layers": [
+            [l.dxf.name, l.dxf.color, l.dxf.linetype, l.dxf.get("lineweight") if doc.dxfversion > "AC1009" else None]
+            for l in doc.layers
+        ],
+        "linetypes": [
+            [lt.dxf.name, lt.dxf.description, [float(v) for v in lt.simplified_line_pattern()]]
+            for lt in doc.linetypes
+        ],
+    }
+    vports = doc.viewports.get("*Active")
+    vp = vports[0]
+    desc["vport"] = [list(vp.dxf.center), vp.dxf.height]
+    entities = []
+    for e in doc.modelspace():
+        t = e.dxftype()
+        item = [t, e.dxf.layer]
+        if t == "LINE":
+            item += [list(e.dxf.start), list(e.dxf.end)]
+        elif t == "CIRCLE":
+            item += [list(e.dxf.center), e.dxf.radius]
+        elif t == "ARC":
+            item += [list(e.dxf.center), e.dxf.radius, e.dxf.start_angle, e.dxf.end_angle]
+        elif t == "ELLIPSE":
+            item += [list(e.dxf.center), list(e.dxf.major_axis), e.dxf.ratio, e.dxf.start_param, e.dxf.end_param]
+        elif t == "SPLINE":
+            item += [e.dxf.degree, e.dxf.flags, list(e.knots), list(e.weights), [list(p) for p in e.control_points]]
+        entities.append(item)
+    desc["entities"] = entities
+    return desc
+
+
+def json_diff(a, b, path="", rel=1e-9, abs_tol=1e-9):
+    if isinstance(a, float) or isinstance(b, float):
+        if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+            return [] if math.isclose(a, b, rel_tol=rel, abs_tol=abs_tol) else [f"{path}: {a!r} != {b!r}"]
+    if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
+        if len(a) != len(b):
+            return [f"{path}: length {len(a)} != {len(b)}"]
+        out = []
+        for i, (x, y) in enumerate(zip(a, b)):
+            out += json_diff(x, y, f"{path}[{i}]", rel, abs_tol)
+        return out
+    if isinstance(a, dict) and isinstance(b, dict):
+        out = []
+        for k in a:
+            out += json_diff(a[k], b.get(k), f"{path}.{k}", rel, abs_tol)
+        return out
+    return [] if a == b else [f"{path}: {a!r} != {b!r}"]
+
+
+def dxf_diff(name, python_path):
+    """Compare the C++ file `name` with Python's file; "same" if ezdxf reads the same."""
+    cpp = dxf_description(cpp_file(name))
+    py = dxf_description(python_path)
+    problems = json_diff(cpp, py)
+    return [name, "same" if not problems else "; ".join(problems[:8])]
+
+
+def dxf_version(v):
+    def case():
+        e = ExportDXF(v, Unit.MM, ColorIndex.BLUE, 0.35, LineType.CENTER)
+        e.add_layer("L1", color=ColorIndex.RED, line_weight=0.5, line_type=LineType.DASHED)
+        e.add_layer("L2")
+        dxf_shapes(e, v == "R12")
+        name = f"version_{v}.dxf"
+        e.write(py_file(name))
+        return V(dxf_diff(name, py_file(name)))
+
+    return case
+
+
+def dxf_units():
+    out = []
+    for u in [Unit.MC, Unit.MM, Unit.CM, Unit.M, Unit.IN, Unit.FT]:
+        e = ExportDXF(ezdxf.DXF2013, u, None, None, LineType.ISO_DASH_DOT)
+        e.add_layer("dots", line_type=LineType.DOT2)
+        e.add_shape(Edge.make_line((0, 0), (1, 1)), layer="dots")
+        name = f"unit_{list(Unit).index(u)}.dxf"
+        e.write(py_file(name))
+        out.append(dxf_diff(name, py_file(name)))
+    return V(out)
+
+
+def dxf_binary():
+    out = []
+    for v in ["R12", "R2004", "R2013"]:
+        e = ExportDXF(v)
+        e.add_layer("L1", color=ColorIndex.GREEN, line_type=LineType.PHANTOM)
+        e.add_layer("L2", line_weight=0.13)
+        dxf_shapes(e, v == "R12")
+        name = f"binary_{v}.dxf"
+        e.write(py_file(name), ascii_format=False)
+        out.append(dxf_diff(name, py_file(name)))
+    return V(out)
+
+
+def dxf_text_hlr():
+    e = ExportDXF(ezdxf.DXF2018, Unit.IN)
+    e.add_layer("hidden", line_type=LineType.HIDDEN)
+    part = Box(10, 8, 4) - Pos(2, 0, 0) * Cylinder(2, 4) + Pos(-3, 0, 2) * Sphere(2)
+    visible, hidden = part.project_to_viewport((20, -30, 25))
+    e.add_shape(visible)
+    e.add_shape(hidden, layer="hidden")
+    e.add_shape(Pos(0, 20) * Text("b3d", 6))
+    e.write(py_file("text_hlr.dxf"))
+    return V(dxf_diff("text_hlr.dxf", py_file("text_hlr.dxf")))
+
+
+def dxf_non_planar():
+    e = ExportDXF()
+    e.add_shape(Box(1, 2, 3))
+    e.write(py_file("non_planar.dxf"))
+    return V(dxf_diff("non_planar.dxf", py_file("non_planar.dxf")))
+
+
+def dxf_bad_unit():
+    ExportDXF(ezdxf.DXF2013, Unit.KG)
+    return V("created")
+
+
+def dxf_r12_ellipse():
+    e = ExportDXF("R12")
+    e.add_shape(Edge.make_ellipse(2, 1))
+    return V("added")
+
+
+def dxf_duplicate_layer():
+    e = ExportDXF()
+    e.add_layer("A")
+    e.add_layer("a")
+    return V("added")
+
+
+def dxf_bad_version():
+    ExportDXF("R14")
+    return V("created")
+
+
+CASES.update({f"io_dxf_version_{v}": dxf_version(v) for v in ["R12", "R2000", "R2004", "R2007", "R2010", "R2013", "R2018"]})
+CASES.update(
+    {
+        "io_dxf_units": dxf_units,
+        "io_dxf_binary": dxf_binary,
+        "io_dxf_text_hlr": dxf_text_hlr,
+        "io_dxf_non_planar": dxf_non_planar,
+        "io_dxf_bad_unit": dxf_bad_unit,
+        "io_dxf_r12_ellipse": dxf_r12_ellipse,
+        "io_dxf_duplicate_layer": dxf_duplicate_layer,
+        "io_dxf_bad_version": dxf_bad_version,
+    }
+)

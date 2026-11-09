@@ -590,3 +590,105 @@ COMPARE_CASES {
         return V(svg_text(e));
     });
 }
+
+// ---- 2D export: DXF. The Python side reads the files written here and its own with ezdxf
+// and reports their differences (cases_io_py.py dxf_diff); "same" means equivalent.
+namespace {
+
+/// The shapes of the DXF cases (cases_io_py.py dxf_shapes).
+void add_dxf_shapes(ExportDXF& e, bool r12) {
+    e.add_shape(Edge::make_line({0, 0}, {10, 5}), "L1");
+    e.add_shape(Edge::make_circle(3));
+    e.add_shape(Edge::make_circle(3, Plane::XY, 10, 100));
+    e.add_shape(Edge::make_circle(3, Plane::XY.reverse(), 10, 100));
+    e.add_shape(Pos(5, 5) * (Rectangle(4, 2) - Circle(0.5)), "L2");
+    if (r12) return;
+    e.add_shape(Edge::make_ellipse(4, 2));
+    e.add_shape(Edge::make_ellipse(4, 2, Plane::XY.reverse(), 20, 200));
+    e.add_shape(Edge::make_ellipse(3, 1, Plane::XY.rotated(Vector(0, 0, 30)).moved(Pos(-5, 2)), 0, 90));
+    e.add_shape(Edge::make_spline({{0, 0}, {1, 2}, {3, 1}, {5, 4}}), "L2");
+    e.add_shape(Edge::make_spline({{0, 0}, {1, 2}, {3, 1}}, {}, true), "L2");
+    e.add_shape(Edge::make_bezier({{0, 0}, {1, 3}, {4, 0}}, {1, 2, 1}), "L2");
+    e.add_shape(Edge::make_bezier({{0, -2}, {2, -5}, {4, -2}}), "L2");
+}
+
+V dxf_written(const std::string& name) { return V::list({name, "same"}); }
+
+}  // namespace
+
+COMPARE_CASES {
+    for (const char* version : {"R12", "R2000", "R2004", "R2007", "R2010", "R2013", "R2018"}) {
+        const std::string v = version;
+        compare::add_value("io_dxf_version_" + v, [v] {
+            ExportDXF e(v, Unit::MM, ColorIndex::BLUE, 0.35, LineType::CENTER);
+            e.add_layer("L1", {.color = ColorIndex::RED, .line_weight = 0.5, .line_type = LineType::DASHED});
+            e.add_layer("L2");
+            add_dxf_shapes(e, v == "R12");
+            e.write(cpp_file("version_" + v + ".dxf"));
+            return dxf_written("version_" + v + ".dxf");
+        });
+    }
+    compare::add_value("io_dxf_units", [] {
+        std::vector<V> out;
+        for (Unit u : {Unit::MC, Unit::MM, Unit::CM, Unit::M, Unit::IN, Unit::FT}) {
+            ExportDXF e(ExportDXF::DXF2013, u, std::nullopt, std::nullopt, LineType::ISO_DASH_DOT);
+            e.add_layer("dots", {.line_type = LineType::DOT2});
+            e.add_shape(Edge::make_line({0, 0}, {1, 1}), "dots");
+            const std::string name = "unit_" + std::to_string(static_cast<int>(u)) + ".dxf";
+            e.write(cpp_file(name));
+            out.push_back(dxf_written(name));
+        }
+        return V::list(out);
+    });
+    compare::add_value("io_dxf_binary", [] {
+        std::vector<V> out;
+        for (const char* v : {"R12", "R2004", "R2013"}) {
+            ExportDXF e(v);
+            e.add_layer("L1", {.color = ColorIndex::GREEN, .line_type = LineType::PHANTOM});
+            e.add_layer("L2", {.line_weight = 0.13});
+            add_dxf_shapes(e, std::string(v) == "R12");
+            const std::string name = std::string("binary_") + v + ".dxf";
+            e.write(cpp_file(name), false);
+            out.push_back(dxf_written(name));
+        }
+        return V::list(out);
+    });
+    compare::add_value("io_dxf_text_hlr", [] {
+        ExportDXF e(ExportDXF::DXF2018, Unit::IN);
+        e.add_layer("hidden", {.line_type = LineType::HIDDEN});
+        const Part part = Box(10, 8, 4) - Pos(2, 0, 0) * Cylinder(2, 4) + Pos(-3, 0, 2) * Sphere(2);
+        const auto [visible, hidden] = part.project_to_viewport(Vector(20, -30, 25));
+        e.add_shape(visible);
+        e.add_shape(hidden, "hidden");
+        e.add_shape(Pos(0, 20) * Text("b3d", 6));
+        std::ostringstream stream;
+        e.write(stream);
+        std::ofstream(cpp_file("text_hlr.dxf"), std::ios::binary) << stream.str();
+        return dxf_written("text_hlr.dxf");
+    });
+    compare::add_value("io_dxf_non_planar", [] {
+        ExportDXF e;
+        e.add_shape(Box(1, 2, 3));
+        e.write(cpp_file("non_planar.dxf"));
+        return dxf_written("non_planar.dxf");
+    });
+    compare::add_value("io_dxf_bad_unit", [] {
+        ExportDXF e(ExportDXF::DXF2013, Unit::KG);
+        return V("created");
+    });
+    compare::add_value("io_dxf_r12_ellipse", [] {
+        ExportDXF e("R12");
+        e.add_shape(Edge::make_ellipse(2, 1));
+        return V("added");
+    });
+    compare::add_value("io_dxf_duplicate_layer", [] {
+        ExportDXF e;
+        e.add_layer("A");
+        e.add_layer("a");
+        return V("added");
+    });
+    compare::add_value("io_dxf_bad_version", [] {
+        ExportDXF e("R14");
+        return V("created");
+    });
+}
