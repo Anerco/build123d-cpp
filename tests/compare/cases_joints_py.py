@@ -210,6 +210,20 @@ def joints_symbols():
     return Compound([hinge.symbol, slide.symbol, hole.symbol])
 
 
+def joints_symbol_rigid():
+    base = block()
+    corner = RigidJoint("r", base, Location((5, 5, 5), (0, 0, 30)))
+    return corner.symbol
+
+
+def joints_symbol_ball():
+    base = block()
+    socket = BallJoint(
+        "b", base, Location((-5, 0, 0)), angular_range=((0, 360), (0, 360), (0, 360)), angle_reference=Plane.XZ
+    )
+    return socket.symbol
+
+
 def tree_navigation():
     root = make_tree()
     sub = root.children[1]
@@ -272,6 +286,8 @@ CASES = {
     "joints_bad_angle_reference": joints_bad_angle_reference,
     "joints_moved_copy": joints_moved_copy,
     "joints_symbols": joints_symbols,
+    "joints_symbol_rigid": joints_symbol_rigid,
+    "joints_symbol_ball": joints_symbol_ball,
     "tree_navigation": tree_navigation,
     "tree_global_location": tree_global_location,
     "tree_children_rebuild": tree_children_rebuild,

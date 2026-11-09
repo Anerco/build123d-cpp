@@ -232,10 +232,32 @@ Compound Joint::symbol() const {
             if (s.kind == JointKind::CYLINDRICAL) edges.push_back(Edge::make_line(Vector(0, 0, 0), Vector(radius, 0, 0)));
             return Compound(edges).moved(location());
         }
-        case JointKind::RIGID:
-        case JointKind::BALL: break;
+        case JointKind::RIGID: {
+            const double size = parent().bounding_box(std::nullopt, false).diagonal() / 12;
+            Curve triad = Compound::make_triad(size);
+            triad.locate(location());
+            return triad;
+        }
+        case JointKind::BALL: {
+            const double radius = parent().bounding_box(std::nullopt, false).diagonal() / 30;
+            const Plane& reference = s.ball_angle_reference;
+            const Edge circle_x = Edge::make_circle(radius, reference);
+            const Edge circle_y = Edge::make_circle(radius, reference.rotated(Vector(90, 0, 0)));
+            const Edge circle_z = Edge::make_circle(radius, reference.rotated(Vector(0, 90, 0)));
+            const auto axis_label = [&](const char* text, const Edge& circle, double position) {
+                Compound label = Compound::make_text(text, radius / 5, "singleline", "", FontStyle::REGULAR,
+                                                     {TextAlign::CENTER, TextAlign::CENTER},
+                                                     Align2(Align::CENTER, Align::CENTER));
+                label.locate(circle.location_at(position) * Rotation(90, 0, 0));
+                return label;
+            };
+            Compound symbol(std::vector<Shape>{circle_x, circle_y, circle_z, axis_label("X", circle_x, 0.125),
+                                               axis_label("Y", circle_y, 0.625), axis_label("Z", circle_z, 0.125)});
+            symbol.move(location());
+            return symbol;
+        }
     }
-    throw std::logic_error("symbol() of this joint type needs Compound::make_triad and single-line text");
+    return Compound();
 }
 
 void Joint::connect_to(const Joint& other, const JointArgs& args) const {

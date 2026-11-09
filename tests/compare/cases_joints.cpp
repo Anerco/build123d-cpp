@@ -184,6 +184,16 @@ COMPARE_CASES {
         CylindricalJoint hole("c", base, Axis(Vector(0, -5, 0), Vector(0, 1, 0)), std::nullopt, {-10, 10});
         return Compound(std::vector<Shape>{hinge.symbol(), slide.symbol(), hole.symbol()});
     });
+    compare::add("joints_symbol_rigid", [] {
+        Part base = block();
+        RigidJoint corner("r", base, Location(Vector(5, 5, 5), Vector(0, 0, 30)));
+        return corner.symbol();
+    });
+    compare::add("joints_symbol_ball", [] {
+        Part base = block();
+        BallJoint socket("b", base, Location(Vector(-5, 0, 0)), {{{0, 360}, {0, 360}, {0, 360}}}, Plane::XZ);
+        return socket.symbol();
+    });
     compare::add_value("tree_navigation", [] {
         const Compound root = make_tree();
         const Shape& sub = root.children[1];
