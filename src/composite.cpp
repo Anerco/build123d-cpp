@@ -96,7 +96,7 @@ Curve::Curve(const Wire& wire) : Compound(wire.wrapped()) {
     color = wire.color;
 }
 
-ShapeList<Wire> Curve::wires() const { return Wire::combine(std::vector<Edge>(edges())); }
+ShapeList<Wire> Curve::wires(Select select) const { return Wire::combine(std::vector<Edge>(edges(select))); }
 double Curve::length() const { return obj_.IsNull() ? 0.0 : linear_length(obj_); }
 Vector Curve::position_at(double position, PositionMode mode) const {
     return Wire(std::vector<Edge>(edges())).position_at(position, mode);

@@ -9,6 +9,7 @@
 #include <ostream>
 #include <string>
 #include <type_traits>
+#include <variant>
 #include <vector>
 
 #include <Bnd_Box.hxx>
@@ -39,9 +40,12 @@ class Axis;
 class Plane;
 class Location;
 class BoundBox;
+class Shape;
 class Vertex;
 class Edge;
 class Face;
+template <class T>
+class ShapeList;
 
 // ---------------------------------------------------------------------------
 // Vector
@@ -88,6 +92,15 @@ public:
     double signed_distance_from_plane(const Plane& plane) const;
     /// Apply a transformation as a point (default) or as a direction.
     Vector transform(const gp_Trsf& trsf, bool is_direction = false) const;
+
+    /// The other point if it is this point (build123d's Vector.intersect and &);
+    /// std::nullopt for Python's None.
+    std::optional<Vector> intersect(const Vector& vector) const;
+    std::optional<Vector> intersect(const Location& location) const;
+    std::optional<Vector> intersect(const Axis& axis) const;
+    std::optional<Vector> intersect(const Plane& plane) const;
+    /// Shape.intersect(this point) (defined with the topology).
+    ShapeList<Shape> intersect(const Shape& shape) const;
 
     gp_Vec wrapped() const { return gp_Vec(X, Y, Z); }
     gp_Vec to_vec() const { return gp_Vec(X, Y, Z); }
@@ -152,11 +165,18 @@ public:
     Axis reverse() const;
     Axis operator-() const { return reverse(); }
 
-    /// Intersection point with another axis (none if skew/parallel; position if coaxial).
-    std::optional<Vector> intersect(const Axis& other) const;
+    /// Intersection with another axis: this Axis if coaxial, the crossing point, or
+    /// std::nullopt (skew or parallel), as build123d's Vector | Axis | None.
+    std::optional<std::variant<Vector, Axis>> intersect(const Axis& other) const;
     /// The point itself if it lies on the axis.
     std::optional<Vector> intersect(const Vector& point) const;
-    std::optional<Vector> intersect(const Plane& plane) const;
+    /// The location if it lies on the axis with its z along it, its position if it only
+    /// lies on the axis, else std::nullopt.
+    std::optional<std::variant<Vector, Location>> intersect(const Location& location) const;
+    /// Plane::intersect(Axis): this Axis if it lies in the plane, else the crossing point.
+    std::optional<std::variant<Vector, Axis>> intersect(const Plane& plane) const;
+    /// Shape.intersect(this axis) (defined with the topology).
+    ShapeList<Shape> intersect(const Shape& shape) const;
 
     bool operator==(const Axis& o) const;
     bool operator!=(const Axis& o) const { return !(*this == o); }
@@ -207,6 +227,17 @@ public:
     Location operator-() const;
     Location mirror(const Plane& mirror_plane) const;
     Vector center() const { return position(); }
+
+    /// build123d's Location.intersect and &: the point if it is at this position.
+    std::optional<Vector> intersect(const Vector& vector) const;
+    /// This location if equal, its position if only the positions match, else nullopt.
+    std::optional<std::variant<Vector, Location>> intersect(const Location& location) const;
+    /// Axis::intersect(this location).
+    std::optional<std::variant<Vector, Location>> intersect(const Axis& axis) const;
+    /// Plane::intersect(this location).
+    std::optional<std::variant<Vector, Location>> intersect(const Plane& plane) const;
+    /// Shape.intersect(this location) (defined with the topology).
+    ShapeList<Shape> intersect(const Shape& shape) const;
 
     TopLoc_Location wrapped() const { return TopLoc_Location(trsf_); }
     const gp_Trsf& transformation() const { return trsf_; }
@@ -319,8 +350,17 @@ public:
 
     bool contains(const Vector& point, double tolerance = TOLERANCE) const;
     bool contains(const Axis& axis, double tolerance = TOLERANCE) const;
-    std::optional<Vector> intersect(const Axis& axis) const;
-    std::optional<Axis> intersect(const Plane& other) const;
+    /// The axis if it lies in the plane, the crossing point, or std::nullopt (parallel).
+    std::optional<std::variant<Vector, Axis>> intersect(const Axis& axis) const;
+    /// This plane if coplanar (same z_dir), the line of intersection, or std::nullopt.
+    std::optional<std::variant<Axis, Plane>> intersect(const Plane& other) const;
+    /// The point if it lies in the plane.
+    std::optional<Vector> intersect(const Vector& point) const;
+    /// The location if it lies in the plane with the plane's z_dir, its position if it
+    /// only lies in the plane, else std::nullopt.
+    std::optional<std::variant<Vector, Location>> intersect(const Location& location) const;
+    /// Shape.intersect(this plane) (defined with the topology).
+    ShapeList<Shape> intersect(const Shape& shape) const;
 
     bool operator==(const Plane& o) const;
     bool operator!=(const Plane& o) const { return !(*this == o); }
@@ -347,6 +387,34 @@ Location operator*(const Plane& plane, const Plane& other);
 Plane operator*(const Location& loc, const Plane& plane);
 std::vector<Location> operator*(const Plane& plane, const std::vector<Location>& locs);
 std::vector<Location> operator*(const Location& loc, const std::vector<Location>& locs);
+
+// ---- build123d's & between geometry objects (the same as intersect)
+inline std::optional<Vector> operator&(const Vector& a, const Vector& b) { return a.intersect(b); }
+inline std::optional<Vector> operator&(const Vector& a, const Location& b) { return a.intersect(b); }
+inline std::optional<Vector> operator&(const Vector& a, const Axis& b) { return a.intersect(b); }
+inline std::optional<Vector> operator&(const Vector& a, const Plane& b) { return a.intersect(b); }
+inline std::optional<std::variant<Vector, Axis>> operator&(const Axis& a, const Axis& b) { return a.intersect(b); }
+inline std::optional<Vector> operator&(const Axis& a, const Vector& b) { return a.intersect(b); }
+inline std::optional<std::variant<Vector, Location>> operator&(const Axis& a, const Location& b) {
+    return a.intersect(b);
+}
+inline std::optional<std::variant<Vector, Axis>> operator&(const Axis& a, const Plane& b) { return a.intersect(b); }
+inline std::optional<Vector> operator&(const Location& a, const Vector& b) { return a.intersect(b); }
+inline std::optional<std::variant<Vector, Location>> operator&(const Location& a, const Location& b) {
+    return a.intersect(b);
+}
+inline std::optional<std::variant<Vector, Location>> operator&(const Location& a, const Axis& b) {
+    return a.intersect(b);
+}
+inline std::optional<std::variant<Vector, Location>> operator&(const Location& a, const Plane& b) {
+    return a.intersect(b);
+}
+inline std::optional<std::variant<Vector, Axis>> operator&(const Plane& a, const Axis& b) { return a.intersect(b); }
+inline std::optional<std::variant<Axis, Plane>> operator&(const Plane& a, const Plane& b) { return a.intersect(b); }
+inline std::optional<Vector> operator&(const Plane& a, const Vector& b) { return a.intersect(b); }
+inline std::optional<std::variant<Vector, Location>> operator&(const Plane& a, const Location& b) {
+    return a.intersect(b);
+}
 
 // ---------------------------------------------------------------------------
 // BoundBox

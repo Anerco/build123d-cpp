@@ -1,6 +1,8 @@
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
+#include <limits>
 #include <cstdio>
 #include <sstream>
 #include <unordered_map>
@@ -182,17 +184,77 @@ double Axis::angle_between(const Axis& other) const {
 
 Axis Axis::reverse() const { return Axis(wrapped().Reversed()); }
 
-std::optional<Vector> Axis::intersect(const Axis& other) const {
-    if (is_coaxial(other)) return position;
+namespace {
+
+/// numpy.linalg.lstsq(A, b, rcond=None) for a 3x3 system: the minimum-norm least-squares
+/// solution, through a (one-sided Jacobi) singular value decomposition with singular
+/// values below eps * 3 * max(singular value) treated as zero.
+std::array<double, 3> lstsq3(const std::array<std::array<double, 3>, 3>& a, const std::array<double, 3>& b) {
+    // columns of A, and V = identity
+    double u[3][3], v[3][3];
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) {
+            u[j][i] = a[i][j];  // u[column][row]
+            v[j][i] = i == j ? 1.0 : 0.0;
+        }
+    }
+    const double eps = std::numeric_limits<double>::epsilon();
+    for (int sweep = 0; sweep < 60; ++sweep) {
+        bool rotated = false;
+        for (int p = 0; p < 2; ++p) {
+            for (int q = p + 1; q < 3; ++q) {
+                double alpha = 0, beta = 0, gamma = 0;
+                for (int k = 0; k < 3; ++k) {
+                    alpha += u[p][k] * u[p][k];
+                    beta += u[q][k] * u[q][k];
+                    gamma += u[p][k] * u[q][k];
+                }
+                if (gamma == 0.0 || std::abs(gamma) <= eps * std::sqrt(alpha * beta)) continue;
+                rotated = true;
+                const double zeta = (beta - alpha) / (2 * gamma);
+                const double t = (zeta >= 0 ? 1.0 : -1.0) / (std::abs(zeta) + std::sqrt(1 + zeta * zeta));
+                const double c = 1 / std::sqrt(1 + t * t), s = c * t;
+                for (int k = 0; k < 3; ++k) {
+                    const double up = u[p][k], uq = u[q][k];
+                    u[p][k] = c * up - s * uq;
+                    u[q][k] = s * up + c * uq;
+                    const double vp = v[p][k], vq = v[q][k];
+                    v[p][k] = c * vp - s * vq;
+                    v[q][k] = s * vp + c * vq;
+                }
+            }
+        }
+        if (!rotated) break;
+    }
+    double sigma[3], sigma_max = 0;
+    for (int j = 0; j < 3; ++j) {
+        sigma[j] = std::sqrt(u[j][0] * u[j][0] + u[j][1] * u[j][1] + u[j][2] * u[j][2]);
+        sigma_max = std::max(sigma_max, sigma[j]);
+    }
+    const double cutoff = eps * 3 * sigma_max;
+    std::array<double, 3> x{0, 0, 0};
+    for (int j = 0; j < 3; ++j) {
+        if (sigma[j] <= cutoff) continue;
+        // x += v_j (u_j . b) / sigma_j with u_j the normalized column
+        const double ub = (u[j][0] * b[0] + u[j][1] * b[1] + u[j][2] * b[2]) / (sigma[j] * sigma[j]);
+        for (int k = 0; k < 3; ++k) x[k] += v[j][k] * ub;
+    }
+    return x;
+}
+
+}  // namespace
+
+std::optional<std::variant<Vector, Axis>> Axis::intersect(const Axis& other) const {
+    if (is_coaxial(other)) return *this;
     if (is_skew(other)) return std::nullopt;
-    // Solve p1 + t1*d1 = p2 + t2*d2 using the basis (d1, -d2, d1 x d2).
+    // Solve p1 + t1*d1 = p2 + t2*d2 in the basis (d1, -d2, d1 x d2) by least squares.
     const Vector& d1 = direction;
     const Vector d2 = -other.direction;
     const Vector d3 = direction.cross(other.direction);
     const Vector rhs = other.position - position;
-    const double det = d1.dot(d2.cross(d3));
-    if (std::abs(det) < 1e-15) return std::nullopt;
-    const double t1 = rhs.dot(d2.cross(d3)) / det;
+    const std::array<std::array<double, 3>, 3> system = {
+        {{d1.X, d2.X, d3.X}, {d1.Y, d2.Y, d3.Y}, {d1.Z, d2.Z, d3.Z}}};
+    const double t1 = lstsq3(system, {rhs.X, rhs.Y, rhs.Z})[0];
     return position + d1 * t1;
 }
 
@@ -204,7 +266,24 @@ std::optional<Vector> Axis::intersect(const Vector& point) const {
     return std::nullopt;
 }
 
-std::optional<Vector> Axis::intersect(const Plane& plane) const { return plane.intersect(*this); }
+std::optional<std::variant<Vector, Location>> Axis::intersect(const Location& location) const {
+    const Vector location_dir = Plane(location).z_dir;
+    if (!intersect(location.position())) return std::nullopt;
+    if (location_dir == direction) return location;
+    return location.position();
+}
+
+std::optional<std::variant<Vector, Axis>> Axis::intersect(const Plane& plane) const { return plane.intersect(*this); }
+
+// ---- Vector.intersect
+
+std::optional<Vector> Vector::intersect(const Vector& vector) const {
+    if (*this == vector) return vector;
+    return std::nullopt;
+}
+std::optional<Vector> Vector::intersect(const Location& location) const { return location.intersect(*this); }
+std::optional<Vector> Vector::intersect(const Axis& axis) const { return axis.intersect(*this); }
+std::optional<Vector> Vector::intersect(const Plane& plane) const { return plane.intersect(*this); }
 
 bool Axis::operator==(const Axis& o) const {
     return position == o.position && direction == o.direction;
@@ -304,6 +383,25 @@ Location Location::mirror(const Plane& mirror_plane) const {
     const Vector new_pos = pos - mirror_plane.z_dir * (2.0 * distance);
     const Plane loc_plane(*this);
     return Location(Plane(new_pos, mirror_dir(loc_plane.x_dir), mirror_dir(loc_plane.z_dir)));
+}
+
+std::optional<Vector> Location::intersect(const Vector& vector) const {
+    if (position() == vector) return vector;
+    return std::nullopt;
+}
+
+std::optional<std::variant<Vector, Location>> Location::intersect(const Location& location) const {
+    if (*this == location) return *this;
+    if (position() == location.position()) return position();
+    return std::nullopt;
+}
+
+std::optional<std::variant<Vector, Location>> Location::intersect(const Axis& axis) const {
+    return axis.intersect(*this);
+}
+
+std::optional<std::variant<Vector, Location>> Location::intersect(const Plane& plane) const {
+    return plane.intersect(*this);
 }
 
 bool Location::operator==(const Location& o) const {
@@ -456,9 +554,11 @@ Plane Plane::shift_origin(const Vector& locator) const {
 }
 
 Plane Plane::shift_origin(const Axis& locator) const {
-    auto point = intersect(locator);
-    if (!point) throw std::invalid_argument(locator.to_string() + " doesn't intersect the plane");
-    return Plane(*point, x_dir, z_dir);
+    const auto intersection = intersect(locator);
+    if (!intersection || !std::holds_alternative<Vector>(*intersection)) {
+        throw std::invalid_argument(locator.to_string() + " doesn't intersect the plane");
+    }
+    return Plane(std::get<Vector>(*intersection), x_dir, z_dir);
 }
 
 void Plane::set_x_dir(const Vector& direction) {
@@ -522,8 +622,8 @@ bool Plane::contains(const Axis& axis, double tolerance) const {
                               tolerance);
 }
 
-std::optional<Vector> Plane::intersect(const Axis& axis) const {
-    if (contains(axis)) return axis.position;
+std::optional<std::variant<Vector, Axis>> Plane::intersect(const Axis& axis) const {
+    if (contains(axis)) return axis;
     Handle(Geom_Line) line = new Geom_Line(axis.wrapped());
     Handle(Geom_Plane) plane = new Geom_Plane(to_gp_ax3());
     GeomAPI_IntCS calc(line, plane);
@@ -531,8 +631,8 @@ std::optional<Vector> Plane::intersect(const Axis& axis) const {
     return std::nullopt;
 }
 
-std::optional<Axis> Plane::intersect(const Plane& other) const {
-    if (contains(other.origin) && z_dir == other.z_dir) return std::nullopt;
+std::optional<std::variant<Axis, Plane>> Plane::intersect(const Plane& other) const {
+    if (contains(other.origin) && z_dir == other.z_dir) return *this;
     Handle(Geom_Plane) s1 = new Geom_Plane(wrapped());
     Handle(Geom_Plane) s2 = new Geom_Plane(other.wrapped());
     GeomAPI_IntSS inter(s1, s2, TOLERANCE);
@@ -541,6 +641,18 @@ std::optional<Axis> Plane::intersect(const Plane& other) const {
         if (!line.IsNull()) return Axis(line->Position());
     }
     return std::nullopt;
+}
+
+std::optional<Vector> Plane::intersect(const Vector& point) const {
+    if (contains(point)) return point;
+    return std::nullopt;
+}
+
+std::optional<std::variant<Vector, Location>> Plane::intersect(const Location& location) const {
+    const Plane location_plane(location);
+    if (!contains(location_plane.origin)) return std::nullopt;
+    if (z_dir == location_plane.z_dir) return location;
+    return location_plane.origin;
 }
 
 bool Plane::operator==(const Plane& o) const {

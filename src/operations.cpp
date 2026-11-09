@@ -302,11 +302,14 @@ Part draft(const std::vector<Face>& faces, const Plane& neutral_plane, double an
 Plane project_workplane(const Vector& origin, const Vector& x_dir_in, const Vector& projection_dir_in, double distance) {
     const Vector x_dir = x_dir_in.normalized();
     const Vector projection_dir = projection_dir_in.normalized();
+    // A preliminary workplane without x direction set
     const Vector workplane_origin = origin + projection_dir * distance;
     Plane workplane(workplane_origin, std::nullopt, projection_dir);
-    const auto hit = workplane.intersect(Axis(origin + x_dir, projection_dir));
-    if (!hit) throw std::invalid_argument("x_dir perpendicular to projection_dir");
-    workplane.set_x_dir(*hit - workplane_origin);
+    // Project a point off the origin to find the projected x direction
+    const Face screen = Face::make_rect(1e9, 1e9, workplane);
+    const auto projection = screen.find_intersection_points(Axis(origin + x_dir, projection_dir));
+    if (projection.empty()) throw std::invalid_argument("x_dir perpendicular to projection_dir");
+    workplane.set_x_dir(projection[0].first - workplane_origin);
     return workplane;
 }
 
