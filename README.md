@@ -89,24 +89,35 @@ export_step(plate, "plate.step")
 
 Everything above was checked against Python build123d 0.13.0 itself, not just compiled:
 
-- `tests/compare` builds the same 855 models and values in C++ and in Python and compares them:
+- `tests/compare` builds the same 861 models and values in C++ and in Python and compares them:
   shapes by volume, area, total edge length, topology counts, bounding box and center of mass
   (to 1e-6 relative); other results value by value (points, axes, mass properties, file
   contents, …). All of them match.
 - All 24 of build123d's official algebra examples are ported in `examples/`. The 47 objects they
   show match their Python originals the same way.
-- `tests/test_*.cpp` has 58 unit tests for the C++ API itself (static result types, joints and
+- `tests/test_*.cpp` has 62 unit tests for the C++ API itself (static result types, joints and
   tree semantics, error handling, file round trips, PCBWay uploads against a local server).
 
-Results with different OCCT versions (Python build123d itself runs on OCCT 8.0.1):
+Python build123d 0.13 requires OCCT 8.0 (the comparisons ran it on 8.0.1). This port also
+builds and runs with OCCT 7.6 to 7.9. The results with each version, compared with Python on
+OCCT 8.0:
 
 | OCCT | unit tests | comparison cases | example objects |
 |---|---|---|---|
-| 8.0.0 | all | all | all |
+| 8.0.0 | 62/62 | 861/861 | 47/47 |
+| 7.9.3 | 62/62 | 848/861 | 47/47 |
+| 7.7.2 | 62/62 | 829/861 | 47/47 |
+| 7.6.3 | 62/62 | 824/861 | 44/47 |
 
-The comparisons with older OCCT versions differ only where OCCT itself behaves differently:
-the version written into STEP and glTF headers, slightly different meshes, and a few
-geometric operations.
+With the older versions, results differ only where OCCT's own results differ:
+
+- the OCCT version written into STEP and glTF headers;
+- meshes (STL, OBJ, UVs) and hidden-line views;
+- in 7.6 and 7.7, also 2D offsets (slots, offset curves), convexity, wrapping, sewing and the
+  outlines of single-line text;
+- a torus with both a partial minor and a partial major angle: OCCT builds end faces it
+  flags as invalid in every version, and before 8.0 its algorithms (volume, bounding box)
+  throw on them.
 
 ## Building
 
