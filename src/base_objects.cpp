@@ -1,5 +1,6 @@
 // The base classes of the objects (Python's BaseCurveObject, BaseLineObject, BaseEdgeObject,
 // BaseSketchObject and BasePartObject in objects_curve.py, objects_sketch.py, objects_part.py).
+#include "build123d/joints.hpp"
 #include "build123d/objects.hpp"
 #include "internal.hpp"
 
@@ -41,6 +42,11 @@ void BasePartObject::assign(const Shape& part_in, const Rotation& rotation_in, s
         obj_ = detail::make_compound({transformed.wrapped()});
     }
     label = part_in.label;
+    material = part_in.material;
+    // build123d passes the transformed part's joints on and re-parents each to this object,
+    // keeping its place in space (Joint._reparent).
+    Shape source = transformed;
+    for (const auto& joint : source.joints.values()) joint.reparent(*this);
     children = part_in.children;
 }
 

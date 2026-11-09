@@ -49,4 +49,20 @@ COMPARE_CASES {
         const Part moved = Pos(0, 0, 10) * base;
         return V::list({joint_info(separate), joint_info(fused), joint_info(cut), joint_info(common), joint_info(moved)});
     });
+    compare::add_value("integ_base_part_object_joints", [] {
+        Part part = Pos(1, 0, 0) * Box(2, 2, 2);
+        part.label = "custom";
+        RigidJoint("a", part, Location(Vector(2, 0, 0)));
+        LinearJoint("l", part, Axis::X, {0, 4});
+        const BasePartObject rotated(part, Rotation(0, 0, 90));
+        const BasePartObject aligned(part, Rotation(), Align3(Align::MIN));
+        auto info = [](const Part& p) {
+            return V::obj({{"keys", V::list_of(p.joints.keys())},
+                           {"label", p.label},
+                           {"a", p.joints["a"].location().position()},
+                           {"l", p.joints["l"].location().position()},
+                           {"l_dir", Plane(p.joints["l"].location()).z_dir}});
+        };
+        return V::list({info(rotated), info(aligned)});
+    });
 }

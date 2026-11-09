@@ -1,6 +1,21 @@
 """Python twins of cases_integration.cpp."""
 
-from build123d import Box, Cylinder, Location, Polyline, Pos, RigidJoint, Select, Sphere, make_brake_formed
+from build123d import (
+    Align,
+    Axis,
+    BasePartObject,
+    Box,
+    Cylinder,
+    LinearJoint,
+    Location,
+    Plane,
+    Polyline,
+    Pos,
+    RigidJoint,
+    Select,
+    Sphere,
+    make_brake_formed,
+)
 
 from values import V
 
@@ -39,7 +54,28 @@ def joints_through_booleans():
     return V([joint_info(p) for p in (separate, fused, cut, common, moved)])
 
 
+def base_part_object_joints():
+    part = Pos(1, 0, 0) * Box(2, 2, 2)
+    part.label = "custom"
+    RigidJoint("a", part, Location((2, 0, 0)))
+    LinearJoint("l", part, Axis.X, linear_range=(0, 4))
+    rotated = BasePartObject(part, rotation=(0, 0, 90))
+    aligned = BasePartObject(part, align=Align.MIN)
+
+    def info(p):
+        return {
+            "keys": list(p.joints.keys()),
+            "label": p.label,
+            "a": p.joints["a"].location.position,
+            "l": p.joints["l"].location.position,
+            "l_dir": Plane(p.joints["l"].location).z_dir,
+        }
+
+    return V([info(rotated), info(aligned)])
+
+
 CASES = {
     "integ_brake_select": brake_select,
     "integ_joints_through_booleans": joints_through_booleans,
+    "integ_base_part_object_joints": base_part_object_joints,
 }
