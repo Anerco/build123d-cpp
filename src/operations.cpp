@@ -210,31 +210,33 @@ Part loft(const std::vector<Shape>& sections, bool ruled, bool clean) {
             for (std::size_t j = 0; j < best.size(); ++j) hole_sections[j].push_back(inner[best[j]]);
         }
     }
-    Solid solid = Solid::make_loft(loft_sections, ruled);
+    // Perform the lofts
+    Shape new_solid = Solid::make_loft(loft_sections, ruled);
     if (!hole_sections.empty()) {
-        std::vector<TopoDS_Shape> holes;
-        for (const auto& hs : hole_sections) {
-            holes.push_back(Solid::make_loft(std::vector<Shape>(hs.begin(), hs.end()), ruled).wrapped());
-        }
-        solid = Solid(bool_op(BoolOp::CUT, {solid.wrapped()}, holes));
+        std::vector<Shape> holes;
+        for (const auto& hs : hole_sections) holes.push_back(Solid::make_loft(std::vector<Shape>(hs.begin(), hs.end()), ruled));
+        new_solid = new_solid.cut(holes);
     }
-    if (!solid.is_valid()) {
+    // Try to recover an invalid loft
+    if (!new_solid.is_valid()) {
         try {
-            const auto solid_faces = solid.faces();
+            const auto solid_faces = new_solid.faces();
             std::vector<Face> recovery(solid_faces.begin(), solid_faces.end());
             for (const auto& s : loft_sections) {
                 if (s.wrapped().ShapeType() == TopAbs_WIRE) recovery.emplace_back(Wire(s.wrapped()));
             }
-            solid = Solid(Shell(recovery));
-            if (clean) solid = solid.clean();
-            if (!solid.is_valid()) throw std::runtime_error("Recovery failed");
+            new_solid = Solid(Shell(recovery));
+            if (clean) new_solid = new_solid.clean();
+            if (!new_solid.is_valid()) throw std::runtime_error("Recovery failed");
         } catch (const std::exception&) {
             throw std::runtime_error("Failed to create valid loft");
         }
-    } else if (clean) {
-        solid = solid.clean();
     }
-    return Part(solid);
+    // (build123d cleans here in algebra mode, also after a recovery)
+    if (clean) new_solid = new_solid.clean();
+    Part result(make_compound({new_solid.wrapped()}));
+    result.set_history(ShapeHistory::of(new_solid));
+    return result;
 }
 
 Part loft(const Shape& sections, bool ruled, bool clean) {
@@ -286,17 +288,36 @@ Part thicken(const Shape& to_thicken, double amount, std::optional<Vector> norma
 }
 
 Part draft(const std::vector<Face>& faces, const Plane& neutral_plane, double angle) {
-    if (faces.empty()) throw std::invalid_argument("No faces provided");
-    const Shape parent = parent_of(faces[0], "draft");
+    std::string unsupported;
     for (const auto& f : faces) {
-        auto p = f.topo_parent();
-        if (!p || !p->is_same(parent)) {
-            throw std::invalid_argument("All faces must share the same topological parent (a Solid)");
+        const GeomType t = f.geom_type();
+        if (t != GeomType::PLANE && t != GeomType::CYLINDER && t != GeomType::CONE) {
+            unsupported += (unsupported.empty() ? "" : ", ") + build123d::to_string(t);
         }
     }
-    const auto solids = parent.solids();
-    if (solids.size() != 1) throw std::invalid_argument("Topological parent must be a single Solid");
-    return Part(solids[0].draft(faces, neutral_plane, angle));
+    if (!unsupported.empty()) throw std::invalid_argument("Draft not supported on face(s) with geometry: " + unsupported);
+    // All the faces must come from the same Solid
+    std::vector<Shape> topo_parents;
+    for (const auto& f : faces) {
+        const auto p = f.topo_parent();
+        if (!p) continue;
+        if (std::none_of(topo_parents.begin(), topo_parents.end(), [&](const Shape& o) { return o.is_same(*p); })) {
+            topo_parents.push_back(*p);
+        }
+    }
+    if (topo_parents.size() != 1) throw std::invalid_argument("All faces must share the same topological parent (a Solid)");
+    const auto parent_solids = topo_parents[0].solids();
+    if (parent_solids.size() != 1) throw std::invalid_argument("Topological parent must be a single Solid");
+    Solid new_solid;
+    try {
+        new_solid = parent_solids[0].draft(faces, neutral_plane, angle);
+    } catch (const DraftAngleError& err) {
+        throw DraftAngleError("Draft operation failed. Use `err.face` and `err.problematic_shape` for more information.",
+                              err.face, err.problematic_shape);
+    }
+    Part result(make_compound({new_solid.wrapped()}));
+    result.set_history(ShapeHistory::of(new_solid));
+    return result;
 }
 
 Plane project_workplane(const Vector& origin, const Vector& x_dir_in, const Vector& projection_dir_in, double distance) {
@@ -355,6 +376,50 @@ Sketch trace(const std::vector<Edge>& lines, double line_width) {
 // fillet / chamfer
 // ---------------------------------------------------------------------------
 
+namespace {
+
+/// target.fillet / target.chamfer on the topo_parent's own shape (a Solid or a Compound),
+/// wrapped as build123d does: Part(Compound([new_part])) made by the new part's record.
+template <class Op>
+Part part_from_parent(const Shape& target, Op op) {
+    Shape new_part;
+    if (target.wrapped().ShapeType() == TopAbs_SOLID) {
+        new_part = op(Solid(target.wrapped()));
+    } else {
+        new_part = op(Compound(target.wrapped()));
+    }
+    Part result(make_compound({new_part.wrapped()}));
+    result.set_history(ShapeHistory::of(new_part));
+    return result;
+}
+
+/// The faces of a 2D target with the given vertices filleted/chamfered, as a Compound
+/// made by the merged records of the changed faces.
+template <class FaceOp>
+Compound faces_with_corners(const Shape& target, const std::vector<Vertex>& vertices, FaceOp op) {
+    std::vector<Face> new_faces;
+    for (const auto& face : target.faces()) {
+        std::vector<Vertex> in_face;
+        for (const auto& v : face.vertices()) {
+            if (contains_vertex(vertices, v)) in_face.push_back(v);
+        }
+        new_faces.push_back(in_face.empty() ? face : op(face, in_face));
+    }
+    std::vector<TopoDS_Shape> shapes;
+    std::vector<const Shape*> made;
+    for (const auto& f : new_faces) {
+        shapes.push_back(f.wrapped());
+        made.push_back(&f);
+    }
+    Compound result(make_compound(shapes));
+    result.set_history(ShapeHistory::of(made));
+    return result;
+}
+
+bool truthy(const std::optional<double>& v) { return v && *v != 0.0; }
+
+}  // namespace
+
 Part fillet(const std::vector<Edge>& edges, double radius) {
     if (edges.empty()) throw std::invalid_argument("No objects provided");
     const Shape target = parent_of(edges[0], "fillet");
@@ -362,7 +427,7 @@ Part fillet(const std::vector<Edge>& edges, double radius) {
         throw std::invalid_argument(target.dim() == 2 ? "2D fillet operation takes only Vertices"
                                                       : "1D fillet operation takes only Vertices");
     }
-    return Part(Compound(target.wrapped()).fillet(radius, edges).wrapped());
+    return part_from_parent(target, [&](const auto& t) -> Shape { return t.fillet(radius, edges); });
 }
 
 Part fillet(const Edge& edge, double radius) { return fillet(std::vector<Edge>{edge}, radius); }
@@ -373,19 +438,14 @@ Compound fillet(const std::vector<Vertex>& vertices, double radius) {
     const int dim = target.dim();
     if (dim == 3) throw std::invalid_argument("3D fillet operation takes only Edges");
     if (dim == 2) {
-        std::vector<TopoDS_Shape> faces;
-        for (const auto& face : target.faces()) {
-            std::vector<Vertex> in_face;
-            for (const auto& v : face.vertices()) {
-                if (contains_vertex(vertices, v)) in_face.push_back(v);
-            }
-            faces.push_back(in_face.empty() ? face.wrapped() : face.fillet_2d(radius, in_face).wrapped());
-        }
-        return Compound(make_compound(faces));
+        return faces_with_corners(target, vertices, [&](const Face& face, const std::vector<Vertex>& in_face) {
+            return face.fillet_2d(radius, in_face);
+        });
     }
     if (dim == 1) {
         const Wire wire = target_wire(target);
-        return Compound(wire.fillet_2d(radius, without_end_vertices(wire, vertices)).wrapped());
+        const Wire new_wire = wire.fillet_2d(radius, without_end_vertices(wire, vertices));
+        return made_by(Compound(new_wire.wrapped()), new_wire.history());
     }
     throw std::invalid_argument("Invalid object dimension");
 }
@@ -394,13 +454,16 @@ Compound fillet(const Vertex& vertex, double radius) { return fillet(std::vector
 
 Part chamfer(const std::vector<Edge>& edges, double length, std::optional<double> length2, std::optional<double> angle,
              const std::optional<Face>& reference) {
-    if (length2 && angle) throw std::invalid_argument("Only one of length2 or angle should be provided");
-    if (angle) length2 = length * std::tan(*angle * DEG2RAD);
-    if (reference && !length2) throw std::invalid_argument("reference can only be used in conjunction with length2 or angle");
+    if (truthy(length2) && truthy(angle)) throw std::invalid_argument("Only one of length2 or angle should be provided");
+    if (truthy(angle)) length2 = length * std::tan(*angle * DEG2RAD);
+    if (reference && !reference->is_null() && !(truthy(length2) || truthy(angle))) {
+        throw std::invalid_argument("reference can only be used in conjunction with length2 or angle");
+    }
+    const double l2 = length2.value_or(length);
     if (edges.empty()) throw std::invalid_argument("No objects provided");
     const Shape target = parent_of(edges[0], "chamfer");
     if (target.dim() == 2 || target.dim() == 1) throw std::invalid_argument("2D/1D chamfer operation takes only Vertices");
-    return Part(Compound(target.wrapped()).chamfer(length, length2 ? length2 : std::optional<double>(length), edges, reference).wrapped());
+    return part_from_parent(target, [&](const auto& t) -> Shape { return t.chamfer(length, l2, edges, reference); });
 }
 
 Part chamfer(const Edge& edge, double length, std::optional<double> length2, std::optional<double> angle,
@@ -410,28 +473,25 @@ Part chamfer(const Edge& edge, double length, std::optional<double> length2, std
 
 Compound chamfer(const std::vector<Vertex>& vertices, double length, std::optional<double> length2,
                  std::optional<double> angle, const std::optional<Edge>& reference) {
-    if (length2 && angle) throw std::invalid_argument("Only one of length2 or angle should be provided");
-    if (angle) length2 = length * std::tan(*angle * DEG2RAD);
-    if (reference && !length2) throw std::invalid_argument("reference can only be used in conjunction with length2 or angle");
+    if (truthy(length2) && truthy(angle)) throw std::invalid_argument("Only one of length2 or angle should be provided");
+    if (truthy(angle)) length2 = length * std::tan(*angle * DEG2RAD);
+    if (reference && !reference->is_null() && !(truthy(length2) || truthy(angle))) {
+        throw std::invalid_argument("reference can only be used in conjunction with length2 or angle");
+    }
     const double l2 = length2.value_or(length);
     if (vertices.empty()) throw std::invalid_argument("No objects provided");
     const Shape target = parent_of(vertices[0], "chamfer");
     const int dim = target.dim();
     if (dim == 3) throw std::invalid_argument("3D chamfer operation takes only Edges");
     if (dim == 2) {
-        std::vector<TopoDS_Shape> faces;
-        for (const auto& face : target.faces()) {
-            std::vector<Vertex> in_face;
-            for (const auto& v : face.vertices()) {
-                if (contains_vertex(vertices, v)) in_face.push_back(v);
-            }
-            faces.push_back(in_face.empty() ? face.wrapped() : face.chamfer_2d(length, l2, in_face, reference).wrapped());
-        }
-        return Compound(make_compound(faces));
+        return faces_with_corners(target, vertices, [&](const Face& face, const std::vector<Vertex>& in_face) {
+            return face.chamfer_2d(length, l2, in_face, reference);
+        });
     }
     if (dim == 1) {
         const Wire wire = target_wire(target);
-        return Compound(wire.chamfer_2d(length, l2, without_end_vertices(wire, vertices), reference).wrapped());
+        const Wire new_wire = wire.chamfer_2d(length, l2, without_end_vertices(wire, vertices), reference);
+        return made_by(Compound(new_wire.wrapped()), new_wire.history());
     }
     throw std::invalid_argument("Invalid object dimension");
 }

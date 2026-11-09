@@ -152,6 +152,99 @@ def geom_with_shape():
               describe(Location((0.5, 0, 0)) & b), describe(Axis.Z.intersect(b)), describe(Plane.YZ.intersect(b))])
 
 
+def select_fused_sketch():
+    cross = Rectangle(8, 2)
+    cross += Rectangle(2, 8)
+    return V([len(cross.vertices(Select.NEW)), len(cross.vertices(Select.LAST)), len(cross.edges(Select.NEW)),
+              len(cross.edges(Select.LAST)), describe(cross.vertices(Select.NEW))])
+
+
+def select_fused_part():
+    part = Box(10, 10, 10) + Pos(Z=5) * Cylinder(2, 5, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    return V([describe(part.faces(Select.LAST)), len(part.solids(Select.NEW))])
+
+
+def select_box_plus_cylinder():
+    part = Box(10, 10, 10) + Cylinder(2, 20)
+    return V([describe(part.edges(Select.NEW)), describe(part.edges(Select.LAST)),
+              describe(part.faces(Select.NEW)), describe(part.faces(Select.LAST))])
+
+
+def select_cut_and():
+    holed = Box(10, 10, 10) - Cylinder(1, 20)
+    bar = Box(10, 10, 10) & Box(30, 2, 2)
+    return V([describe(holed.faces(Select.LAST)), len(holed.edges(Select.NEW)), len(bar.faces(Select.LAST)),
+              len(bar.faces(Select.NEW))])
+
+
+def select_chained():
+    three = (Box(10, 10, 10) + Pos(Z=5) * Cylinder(1, 5, align=(Align.CENTER, Align.CENTER, Align.MIN))
+             + Pos(X=5) * Sphere(1))
+    return describe(three.faces(Select.LAST))
+
+
+def select_multi_piece_self():
+    two = Rectangle(2, 2) + Pos(X=5) * Rectangle(2, 2)
+    plus = two + Pos(X=5) * Rectangle(1, 4)
+    return V([len(plus.faces()), len(plus.faces(Select.LAST))])
+
+
+def select_fillet_chamfer():
+    rounded = fillet(Box(10, 10, 10).edges().filter_by(Axis.Z), 1)
+    bevelled = chamfer(Box(10, 10, 10).edges().group_by(Axis.Z)[-1], 1)
+    return V([len(rounded.faces(Select.LAST)), len(rounded.edges(Select.NEW)), len(bevelled.faces(Select.NEW)),
+              len(bevelled.faces(Select.LAST)), len(bevelled.edges(Select.NEW))])
+
+
+def select_joined_lines():
+    bent = Line((0, 0), (1, 0)) + Line((1, 0), (1, 1))
+    straight = Line((0, 0), (1, 0)) + Line((1, 0), (2, 0))
+    chain = Curve() + [Line((0, 0), (1, 0)), Line((1, 0), (1, 1)), Line((1, 1), (0, 1))]
+    return V([len(bent.edges()), len(bent.edges(Select.LAST)), len(bent.edges(Select.NEW)),
+              len(bent.vertices(Select.LAST)), len(bent.vertices(Select.NEW)), len(straight.edges(Select.LAST)),
+              len(straight.vertices(Select.NEW)), len(chain.edges(Select.LAST))])
+
+
+def select_no_record():
+    try:
+        Rectangle(8, 2).vertices(Select.NEW)
+        raised = False
+    except ValueError:
+        raised = True
+    return V([raised, len(Rectangle(8, 2).vertices(Select.ALL))])
+
+
+def select_2d_fillet_chamfer():
+    rect = Rectangle(10, 6)
+    rounded = fillet(rect.vertices(), 1)
+    bevelled = chamfer(rect.vertices().group_by(Axis.X)[-1], 1)
+    return V([len(rounded.edges(Select.NEW)), len(rounded.edges(Select.LAST)), len(bevelled.edges(Select.NEW)),
+              len(bevelled.vertices(Select.LAST))])
+
+
+def select_draft_loft_clean():
+    box = Box(10, 10, 10)
+    drafted = draft(box.faces().filter_by(Axis.X), Plane.XY.offset(-5), 5)
+    lofted = loft([Rectangle(4, 4), Pos(0, 0, 5) * Circle(1)])
+    cleaned = (Box(2, 2, 2) + Pos(2, 0, 0) * Box(2, 2, 2)).clean()
+    return V([len(drafted.faces(Select.NEW)), len(drafted.faces(Select.LAST)), len(lofted.faces(Select.NEW)),
+              len(lofted.edges(Select.LAST)), len(cleaned.faces(Select.NEW)), len(cleaned.faces(Select.LAST))])
+
+
+def select_curve_fillet():
+    poly = Curve([Polyline((0, 0), (10, 0), (10, 10), (0, 10))])
+    rounded = fillet(poly.vertices(), 2)
+    return V([len(rounded.edges(Select.NEW)), len(rounded.edges(Select.LAST)), len(rounded.edges()),
+              describe(rounded.edges())])
+
+
+def core_new_edges():
+    box = Box(10, 10, 10)
+    cyl = Cylinder(2, 20)
+    both = box + cyl
+    return describe(new_edges(box, cyl, combined=both))
+
+
 CASES = {
     # 1a
     "core_and_list_part": lambda: Box(4, 4, 4) & [Pos(1, 0, 0) * Box(4, 4, 4), Sphere(2.5)],
@@ -196,4 +289,18 @@ CASES = {
     "core_geom_location": geom_location,
     "core_geom_vector": geom_vector,
     "core_geom_with_shape": geom_with_shape,
+    # 3: history
+    "core_select_fused_sketch": select_fused_sketch,
+    "core_select_fused_part": select_fused_part,
+    "core_select_box_plus_cylinder": select_box_plus_cylinder,
+    "core_select_cut_and": select_cut_and,
+    "core_select_chained": select_chained,
+    "core_select_multi_piece_self": select_multi_piece_self,
+    "core_select_fillet_chamfer": select_fillet_chamfer,
+    "core_select_joined_lines": select_joined_lines,
+    "core_select_no_record": select_no_record,
+    "core_select_2d_fillet_chamfer": select_2d_fillet_chamfer,
+    "core_select_draft_loft_clean": select_draft_loft_clean,
+    "core_select_curve_fillet": select_curve_fillet,
+    "core_new_edges": core_new_edges,
 }

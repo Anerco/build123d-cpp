@@ -139,6 +139,10 @@ public:
     /// Topological dimension (0..3), or -1 if empty or mixed.
     int dim() const;
     GeomType geom_type() const;
+    /// How the shape this one was selected from sits around it (build123d's convexity):
+    /// defined for a Vertex, Edge or Face taken out of a larger shape (see
+    /// Vertex/Mixin1D/Face); std::invalid_argument for anything else.
+    Convexity convexity() const;
     bool is_valid() const;
     bool is_manifold() const;
     /// Same TShape and location (orientation may differ).
@@ -374,6 +378,8 @@ public:
     double radius() const;
     bool is_closed() const;
     bool is_forward() const;
+    /// Is this a concave edge of the shape it was selected from (convexity() == CONCAVE)?
+    bool is_interior() const;
 
     Vector position_at(double position, PositionMode mode = PositionMode::PARAMETER) const;
     std::vector<Vector> positions(const std::vector<double>& distances,
@@ -586,6 +592,10 @@ public:
     Location center_location() const;
     Wire outer_wire() const;
     ShapeList<Wire> inner_wires() const;
+    /// Does the face curve away from the material behind it (convexity() == CONVEX)?
+    bool is_circular_convex() const;
+    /// Does the face curve into the material behind it (convexity() == CONCAVE)?
+    bool is_circular_concave() const;
     /// The plane of a planar face (std::nullopt if not planar). Usable as a bool.
     std::optional<Plane> is_planar() const;
     bool is_coplanar(const Plane& plane) const;
@@ -651,27 +661,36 @@ public:
                       int max_iterations = 10) const;
 
 protected:
-    TopoDS_Shape fillet_topods(double radius, const std::vector<Edge>& edge_list) const;
+    TopoDS_Shape fillet_topods(double radius, const std::vector<Edge>& edge_list,
+                               std::shared_ptr<ShapeHistory>* history = nullptr) const;
     TopoDS_Shape chamfer_topods(double length, std::optional<double> length2,
                                 const std::vector<Edge>& edge_list,
-                                const std::optional<Face>& face) const;
+                                const std::optional<Face>& face,
+                                std::shared_ptr<ShapeHistory>* history = nullptr) const;
     TopoDS_Shape offset_3d_topods(const std::vector<Face>& openings, double thickness,
                                   double tolerance, Kind kind) const;
 };
 
 #define BUILD123D_3D_OPS(T)                                                                    \
 public:                                                                                        \
+    /** Fillet edges of this shape; a new shape (no attributes) recording its history. */     \
     T fillet(double radius, const std::vector<Edge>& edge_list) const {                        \
-        return derive<T>(fillet_topods(radius, edge_list));                                    \
+        std::shared_ptr<ShapeHistory> fillet_history;                                          \
+        T result(fillet_topods(radius, edge_list, &fillet_history));                           \
+        result.set_history(std::move(fillet_history));                                         \
+        return result;                                                                         \
     }                                                                                          \
     T chamfer(double length, std::optional<double> length2, const std::vector<Edge>& edge_list, \
               const std::optional<Face>& face = std::nullopt) const {                          \
-        return derive<T>(chamfer_topods(length, length2, edge_list, face));                    \
+        std::shared_ptr<ShapeHistory> chamfer_history;                                         \
+        T result(chamfer_topods(length, length2, edge_list, face, &chamfer_history));          \
+        result.set_history(std::move(chamfer_history));                                        \
+        return result;                                                                         \
     }                                                                                          \
     /** Hollow (shell) this object; negative thickness offsets inwards. */                     \
     T offset_3d(const std::vector<Face>& openings, double thickness, double tolerance = 1e-4,  \
                 Kind kind = Kind::ARC) const {                                                 \
-        return derive<T>(offset_3d_topods(openings, thickness, tolerance, kind));              \
+        return T(offset_3d_topods(openings, thickness, tolerance, kind));                     \
     }
 
 class Solid : public Mixin3D {
@@ -723,10 +742,22 @@ public:
     static Solid from_bounding_box(const BoundBox& bbox);
 
     double volume() const;
+    /// Draft angle (degrees) applied to planar, cylindrical or conical faces; throws
+    /// DraftAngleError when OCCT can't draft a face or build the result.
     Solid draft(const std::vector<Face>& faces, const Plane& neutral_plane, double angle) const;
 
     BUILD123D_TYPED_OPS(Solid)
     BUILD123D_3D_OPS(Solid)
+};
+
+/// build123d's DraftAngleError (a RuntimeError): the face that failed (if known) and the
+/// shape OCCT reported as problematic.
+class DraftAngleError : public std::runtime_error {
+public:
+    DraftAngleError(const std::string& message, std::optional<Face> face = std::nullopt,
+                    Shape problematic_shape = Shape());
+    std::optional<Face> face;
+    Shape problematic_shape;
 };
 
 // ---------------------------------------------------------------------------
@@ -906,6 +937,10 @@ using algebra_t = typename detail::algebra_for<std::decay_t<T>::kDim>::type;
 // GroupBy / ShapeList
 // ---------------------------------------------------------------------------
 
+/// Tag for ShapeList::group_by(by_convexity), build123d's group_by(Convexity).
+struct ConvexityKey {};
+inline constexpr ConvexityKey by_convexity{};
+
 /// Result of ShapeList::group_by: sorted groups, indexable (negative indices allowed).
 template <class T>
 class GroupBy : public std::vector<ShapeList<T>> {
@@ -1007,6 +1042,11 @@ public:
         return grouped([key](const T& s) { return static_cast<double>(key(s)); }, reverse,
                        tol_digits);
     }
+    /// build123d's group_by(Convexity): groups of equal convexity in the enum's order
+    /// (the group keys are static_cast<double>(Convexity)).
+    GroupBy<T> group_by(ConvexityKey, bool reverse = false, int tol_digits = 6) const {
+        return grouped([](const T& s) { return static_cast<double>(s.convexity()); }, reverse, tol_digits);
+    }
 
     // ---- filtering
     /// Planar faces with normals, or lines with directions, parallel to the axis.
@@ -1023,6 +1063,10 @@ public:
     }
     ShapeList filter_by(GeomType geom_type, bool reverse = false) const {
         return filtered([&](const T& s) { return s.geom_type() == geom_type; }, reverse);
+    }
+    /// Objects with the given convexity relative to the shape they were selected from.
+    ShapeList filter_by(Convexity convexity, bool reverse = false) const {
+        return filtered([&](const T& s) { return s.convexity() == convexity; }, reverse);
     }
     template <class F, std::enable_if_t<std::is_invocable_r_v<bool, F, const T&>, int> = 0>
     ShapeList filter_by(F predicate, bool reverse = false) const {

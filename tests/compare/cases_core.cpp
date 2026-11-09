@@ -197,6 +197,93 @@ COMPARE_CASES {
                         geom(v.intersect(Plane::XY)), geom(v.intersect(Plane::YZ)), geom(v.intersect(Location(v))),
                         geom(v & Plane::XZ), geom(v & Axis::X)});
     });
+    // ---- 3: history and Select (upstream tests/test_direct_api/test_history.py)
+    add_value("core_select_fused_sketch", [] {
+        Sketch cross = Rectangle(8, 2);
+        cross += Rectangle(2, 8);
+        return V::list({V(cross.vertices(Select::NEW).size()), V(cross.vertices(Select::LAST).size()),
+                        V(cross.edges(Select::NEW).size()), V(cross.edges(Select::LAST).size()),
+                        describe(cross.vertices(Select::NEW))});
+    });
+    add_value("core_select_fused_part", [] {
+        const Part part = Box(10, 10, 10) + Pos(0, 0, 5) * Cylinder(2, 5, {Align::CENTER, Align::CENTER, Align::MIN});
+        return V::list({describe(part.faces(Select::LAST)), V(part.solids(Select::NEW).size())});
+    });
+    add_value("core_select_box_plus_cylinder", [] {
+        const Part part = Box(10, 10, 10) + Cylinder(2, 20);
+        return V::list({describe(part.edges(Select::NEW)), describe(part.edges(Select::LAST)),
+                        describe(part.faces(Select::NEW)), describe(part.faces(Select::LAST))});
+    });
+    add_value("core_select_cut_and", [] {
+        const Part holed = Box(10, 10, 10) - Cylinder(1, 20);
+        const Part bar = Box(10, 10, 10) & Box(30, 2, 2);
+        return V::list({describe(holed.faces(Select::LAST)), V(holed.edges(Select::NEW).size()),
+                        V(bar.faces(Select::LAST).size()), V(bar.faces(Select::NEW).size())});
+    });
+    add_value("core_select_chained", [] {
+        const Part three = Box(10, 10, 10) + Pos(0, 0, 5) * Cylinder(1, 5, {Align::CENTER, Align::CENTER, Align::MIN}) +
+                           Pos(5, 0, 0) * Sphere(1);
+        return describe(three.faces(Select::LAST));
+    });
+    add_value("core_select_multi_piece_self", [] {
+        const Sketch two = Rectangle(2, 2) + Pos(5, 0) * Rectangle(2, 2);
+        const Sketch plus = two + Pos(5, 0) * Rectangle(1, 4);
+        return V::list({V(plus.faces().size()), V(plus.faces(Select::LAST).size())});
+    });
+    add_value("core_select_fillet_chamfer", [] {
+        const Part rounded = fillet(Box(10, 10, 10).edges().filter_by(Axis::Z), 1);
+        const Part bevelled = chamfer(Box(10, 10, 10).edges().group_by(Axis::Z)[-1], 1);
+        return V::list({V(rounded.faces(Select::LAST).size()), V(rounded.edges(Select::NEW).size()),
+                        V(bevelled.faces(Select::NEW).size()), V(bevelled.faces(Select::LAST).size()),
+                        V(bevelled.edges(Select::NEW).size())});
+    });
+    add_value("core_select_joined_lines", [] {
+        const Curve bent = Line({0, 0}, {1, 0}) + Line({1, 0}, {1, 1});
+        const Curve straight = Line({0, 0}, {1, 0}) + Line({1, 0}, {2, 0});
+        const Curve chain = Curve() + std::vector<Shape>{Line({0, 0}, {1, 0}), Line({1, 0}, {1, 1}), Line({1, 1}, {0, 1})};
+        return V::list({V(bent.edges().size()), V(bent.edges(Select::LAST).size()), V(bent.edges(Select::NEW).size()),
+                        V(bent.vertices(Select::LAST).size()), V(bent.vertices(Select::NEW).size()),
+                        V(straight.edges(Select::LAST).size()), V(straight.vertices(Select::NEW).size()),
+                        V(chain.edges(Select::LAST).size())});
+    });
+    add_value("core_select_no_record", [] {
+        bool raised = false;
+        try {
+            (void)Rectangle(8, 2).vertices(Select::NEW);
+        } catch (const std::invalid_argument&) {
+            raised = true;
+        }
+        return V::list({V(raised), V(Rectangle(8, 2).vertices(Select::ALL).size())});
+    });
+    add_value("core_select_2d_fillet_chamfer", [] {
+        const Sketch rect = Rectangle(10, 6);
+        const Sketch rounded = fillet(rect.vertices(), 1);
+        const Sketch bevelled = chamfer(rect.vertices().group_by(Axis::X)[-1], 1);
+        return V::list({V(rounded.edges(Select::NEW).size()), V(rounded.edges(Select::LAST).size()),
+                        V(bevelled.edges(Select::NEW).size()), V(bevelled.vertices(Select::LAST).size())});
+    });
+    add_value("core_select_draft_loft_clean", [] {
+        const Part box = Box(10, 10, 10);
+        const Part drafted = draft(box.faces().filter_by(Axis::X), Plane::XY.offset(-5), 5);
+        const Part lofted = loft(std::vector<Sketch>{Rectangle(4, 4), Pos(0, 0, 5) * Circle(1)});
+        const Part cleaned = (Box(2, 2, 2) + Pos(2, 0, 0) * Box(2, 2, 2)).clean();
+        return V::list({V(drafted.faces(Select::NEW).size()), V(drafted.faces(Select::LAST).size()),
+                        V(lofted.faces(Select::NEW).size()), V(lofted.edges(Select::LAST).size()),
+                        V(cleaned.faces(Select::NEW).size()), V(cleaned.faces(Select::LAST).size())});
+    });
+    add_value("core_select_curve_fillet", [] {
+        const Curve poly = Curve(Polyline({{0, 0}, {10, 0}, {10, 10}, {0, 10}}));
+        const Curve rounded = fillet(poly.vertices(), 2);
+        return V::list({V(rounded.edges(Select::NEW).size()), V(rounded.edges(Select::LAST).size()),
+                        V(rounded.edges().size()), describe(rounded.edges())});
+    });
+    add_value("core_new_edges", [] {
+        const Part box = Box(10, 10, 10);
+        const Part cyl = Cylinder(2, 20);
+        const Part both = box + cyl;
+        return describe(new_edges(std::vector<Shape>{box, cyl}, both));
+    });
+
     add_value("core_geom_with_shape", [] {
         const Part b = Box(2, 2, 2);
         return V::list({describe(Vector(0, 0, 0) & b), describe(Axis::Z & b), describe(Plane::XY & b),

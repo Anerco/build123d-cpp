@@ -258,21 +258,6 @@ TopoDS_Wire make_wire(const std::vector<TopoDS_Shape>& edges) {
     return builder.Wire();
 }
 
-std::optional<gp_Pln> wire_plane(const Shape& wire) {
-    BRepLib_FindSurface finder(wire.wrapped(), -1, true);
-    if (finder.Found()) {
-        Handle(Geom_Plane) plane = Handle(Geom_Plane)::DownCast(finder.Surface());
-        if (!plane.IsNull()) {
-            gp_Pln pln = plane->Pln();
-            if (!finder.Location().IsIdentity()) pln.Transform(finder.Location().Transformation());
-            return pln;
-        }
-    }
-    auto common = Mixin1D(wire.wrapped()).common_plane();
-    if (common) return common->wrapped();
-    return std::nullopt;
-}
-
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -1299,113 +1284,6 @@ ShapeList<Edge> Wire::order_edges() const {
         }
     }
     return ordered;
-}
-
-Wire Wire::fillet_2d(double radius, const std::vector<Vertex>& vertices) const {
-    require_not_null("Can't fillet an empty wire");
-    const auto pln = wire_plane(*this);
-    if (!pln) throw std::invalid_argument("Wire is not planar");
-    std::vector<TopoDS_Edge> edges = wire_edges(obj_);
-    const bool closed = is_closed();
-    for (const auto& vertex : vertices) {
-        if (vertex.is_null()) continue;
-        const gp_Pnt vp = BRep_Tool::Pnt(TopoDS::Vertex(vertex.wrapped()));
-        // find the two edges meeting at this vertex (end of one, start of the next)
-        int found = -1;
-        const int n = static_cast<int>(edges.size());
-        for (int i = 0; i < n; ++i) {
-            if (!closed && i == n - 1) break;
-            const int j = (i + 1) % n;
-            const Vector end_i = Edge(edges[static_cast<std::size_t>(i)]).position_at(1);
-            const Vector start_j = Edge(edges[static_cast<std::size_t>(j)]).position_at(0);
-            if (end_i.to_pnt().Distance(vp) < TOLERANCE && start_j.to_pnt().Distance(vp) < TOLERANCE) {
-                found = i;
-                break;
-            }
-        }
-        if (found < 0) continue;  // end vertices of open wires can't be filleted
-        const std::size_t i = static_cast<std::size_t>(found);
-        const std::size_t j = (i + 1) % edges.size();
-        const Vector t0 = Edge(edges[i]).tangent_at(1.0), t1 = Edge(edges[j]).tangent_at(0.0);
-        if (t0.cross(t1).length() <= TOLERANCE && t0.dot(t1) > 0) continue;  // tangent continuous
-        ChFi2d_FilletAPI api(edges[i], edges[j], *pln);
-        if (!api.Perform(radius) || api.NbResults(vp) == 0) {
-            throw std::invalid_argument("Fillet algorithm failed for vertex at " + Vector(vp).to_string() +
-                                        " with radius " + std::to_string(radius));
-        }
-        TopoDS_Edge e1, e2;
-        const TopoDS_Edge fillet = api.Result(vp, e1, e2);
-        std::vector<TopoDS_Edge> rebuilt;
-        for (std::size_t k = 0; k < edges.size(); ++k) {
-            if (k == i) {
-                if (!e1.IsNull() && linear_length(e1) > TOLERANCE) rebuilt.push_back(e1);
-                rebuilt.push_back(fillet);
-            } else if (k == j) {
-                if (!e2.IsNull() && linear_length(e2) > TOLERANCE) rebuilt.push_back(e2);
-            } else {
-                rebuilt.push_back(edges[k]);
-            }
-        }
-        edges = rebuilt;
-    }
-    std::vector<TopoDS_Shape> shapes(edges.begin(), edges.end());
-    Wire result(occt("fillet_2d", [&] { return TopoDS_Shape(make_wire(shapes)); }));
-    if (result.is_forward() != is_forward()) result.obj_.Reverse();
-    result.copy_metadata_from(*this);
-    return result;
-}
-
-Wire Wire::chamfer_2d(double distance, double distance2, const std::vector<Vertex>& vertices,
-                      std::optional<Edge> reference) const {
-    require_not_null("Can't chamfer empty wire");
-    std::vector<TopoDS_Edge> edges = wire_edges(obj_);
-    const bool closed = is_closed();
-    for (const auto& vertex : vertices) {
-        if (vertex.is_null()) continue;
-        const gp_Pnt vp = BRep_Tool::Pnt(TopoDS::Vertex(vertex.wrapped()));
-        int found = -1;
-        const int n = static_cast<int>(edges.size());
-        for (int i = 0; i < n; ++i) {
-            if (!closed && i == n - 1) break;
-            const int j = (i + 1) % n;
-            if (Edge(edges[static_cast<std::size_t>(i)]).position_at(1).to_pnt().Distance(vp) < TOLERANCE &&
-                Edge(edges[static_cast<std::size_t>(j)]).position_at(0).to_pnt().Distance(vp) < TOLERANCE) {
-                found = i;
-                break;
-            }
-        }
-        if (found < 0) continue;
-        const std::size_t i = static_cast<std::size_t>(found);
-        const std::size_t j = (i + 1) % edges.size();
-        // `distance` is measured on the reference edge (default: the first edge).
-        bool swap = false;
-        if (reference) {
-            const Edge next(edges[j]);
-            swap = next.is_same(*reference) || (next.geom_type() == reference->geom_type() &&
-                                                (next.center() - reference->center()).length() < TOLERANCE);
-        }
-        ChFi2d_ChamferAPI api(edges[i], edges[j]);
-        if (!api.Perform()) throw std::invalid_argument("Chamfer failed");
-        TopoDS_Edge e1, e2;
-        const TopoDS_Edge chamfer = swap ? api.Result(e1, e2, distance2, distance) : api.Result(e1, e2, distance, distance2);
-        std::vector<TopoDS_Edge> rebuilt;
-        for (std::size_t k = 0; k < edges.size(); ++k) {
-            if (k == i) {
-                if (linear_length(e1) > TOLERANCE) rebuilt.push_back(e1);
-                rebuilt.push_back(chamfer);
-            } else if (k == j) {
-                if (linear_length(e2) > TOLERANCE) rebuilt.push_back(e2);
-            } else {
-                rebuilt.push_back(edges[k]);
-            }
-        }
-        edges = rebuilt;
-    }
-    std::vector<TopoDS_Shape> shapes(edges.begin(), edges.end());
-    Wire result(occt("chamfer_2d", [&] { return TopoDS_Shape(make_wire(shapes)); }));
-    if (result.is_forward() != is_forward()) result.obj_.Reverse();
-    result.copy_metadata_from(*this);
-    return result;
 }
 
 Wire Wire::close() const {

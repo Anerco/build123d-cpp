@@ -20,6 +20,7 @@
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Shape.hxx>
 #include <TopoDS_Wire.hxx>
+#include <TopLoc_Location.hxx>
 #include <gp_EulerSequence.hxx>
 
 #include <NCollection_Array1.hxx>
@@ -47,6 +48,15 @@ namespace build123d::detail {
 
 /// The topo_path of shapes extracted from `source`: source's own path plus source.
 std::shared_ptr<const std::vector<Shape>> extraction_path(const Shape& source);
+
+/// build123d's find_same_topods: the candidate that is `query` (IsSame), else the first
+/// that shares its TShape at another location (IsPartner).
+std::optional<TopoDS_Shape> find_same_topods(const TopoDS_Shape& query, const std::vector<TopoDS_Shape>& candidates);
+/// The location that carries `source`'s frame onto `target`'s.
+TopLoc_Location relocation_between(const TopoDS_Shape& source, const TopoDS_Shape& target);
+/// The faces of `parent` (default: edge.topo_parent()) that meet at `edge`, in the edge's frame.
+std::vector<TopoDS_Face> topo_explore_connected_faces(const Shape& edge,
+                                                      const std::optional<Shape>& parent = std::nullopt);
 
 /// build123d's Shape._select: narrow `owner`'s sub-shapes by what its last operation did.
 /// std::invalid_argument when a LAST/NEW selection is asked of a shape with no record.

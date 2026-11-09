@@ -104,7 +104,9 @@ Wire fillet_polyline(std::vector<Vector> points, const std::vector<double>* radi
         if (r != 0.0) {
             const Edge in = Edge::make_line(prev, here), out = Edge::make_line(here, next);
             const Face triangle(Wire(std::vector<Edge>{in, out, Edge::make_line(next, prev)}));
-            const Face filleted = triangle.fillet_2d(r, {Vertex(here)});
+            // the face's own corner vertex (Face::fillet_2d matches vertices by identity)
+            const Vertex corner_vertex = triangle.vertices().sort_by_distance(here)[0];
+            const Face filleted = triangle.fillet_2d(r, {corner_vertex});
             const auto arcs = filleted.edges().filter_by(GeomType::CIRCLE);
             if (arcs.empty()) throw std::invalid_argument("FilletPolyline: fillet failed, try a smaller radius");
             const auto ends = arc_ends(arcs[0], in);
