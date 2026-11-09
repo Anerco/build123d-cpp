@@ -2,6 +2,7 @@
 #include "case_registry.hpp"
 
 #include "../../src/optimize.hpp"
+#include "../../src/voronoi.hpp"
 
 using namespace build123d;
 using compare::V;
@@ -69,6 +70,31 @@ V curves_values(const L& curves) {
     return V::list(out);
 }
 V points_values(const std::vector<Vector>& pts) { return V::list_of(pts); }
+
+/// Points along three edges, as full_round samples them.
+std::vector<detail::Point2> sample_points(const std::vector<Edge>& edges, int n = 100) {
+    std::vector<detail::Point2> pts;
+    for (const auto& e : edges) {
+        for (int i = 0; i <= n; ++i) {
+            const Vector v = e.position_at(static_cast<double>(i) / n);
+            pts.push_back({v.X, v.Y});
+        }
+    }
+    return pts;
+}
+
+/// The Voronoi vertices sorted by their coordinates (rounded to 9 digits).
+V voronoi_values(const std::vector<detail::Point2>& pts) {
+    auto verts = detail::voronoi_vertices(pts);
+    std::sort(verts.begin(), verts.end(), [](const detail::Point2& a, const detail::Point2& b) {
+        const double ax = detail::round_digits(a[0], 9), bx = detail::round_digits(b[0], 9);
+        if (ax != bx) return ax < bx;
+        return detail::round_digits(a[1], 9) < detail::round_digits(b[1], 9);
+    });
+    std::vector<V> out;
+    for (const auto& v : verts) out.push_back(V::list({v[0], v[1]}));
+    return V::list(out);
+}
 
 V nelder_mead_values(const std::function<double(const std::vector<double>&)>& f, const std::vector<double>& x0,
                      detail::NelderMeadOptions options) {
@@ -693,4 +719,98 @@ COMPARE_CASES {
                         static_cast<double>(c.faces().size()), c.center()});
     });
     compare::add("obj_project_empty_error", [] { return project(std::vector<Face>{}, Plane::XY); });
+
+    // ---- Voronoi vertices (scipy.spatial.Voronoi) and full_round
+    compare::add_value("obj_voronoi_rect", [] {
+        const auto edges = Rectangle(34, 10).edges().sort_by(Axis::X);
+        return voronoi_values(sample_points({edges[0], edges[1], edges[2]}));
+    });
+    compare::add_value("obj_voronoi_trapezoid", [] {
+        const auto edges = Trapezoid(0.5, 1, 82).edges().sort_by(Axis::Y);
+        return voronoi_values(sample_points({edges[3], edges[1], edges[2]}));
+    });
+    compare::add_value("obj_voronoi_triangle", [] {
+        const auto edges = Triangle({.a = 10, .b = 10, .c = 10}).edges().sort_by(Axis::X);
+        return voronoi_values(sample_points({edges[0], edges[1], edges[2]}));
+    });
+    compare::add_value("obj_voronoi_arcs", [] {
+        return voronoi_values(sample_points({CenterArc({0, 0}, 5, 0, 90), Line({0, 5}, {-6, 5}),
+                                             Spline({{5, 0}, {6, -3}, {9, -4}})}, 40));
+    });
+    compare::add("obj_full_round_trap_top", [] {
+        const Trapezoid trap(0.5, 1, 90 - 8);
+        return full_round(trap.edges().sort_by(Axis::Y)[-1]);
+    });
+    compare::add("obj_full_round_trap_short", [] {
+        const Trapezoid trap(0.5, 1, 90 - 8);
+        return full_round(trap.edges().sort_by(SortBy::LENGTH)[0]);
+    });
+    compare::add("obj_full_round_trap_invert", [] {
+        const Trapezoid trap(0.5, 1, 90 - 8);
+        return full_round(trap.edges().sort_by(SortBy::LENGTH)[0], true);
+    });
+    compare::add("obj_full_round_trap_side", [] {
+        const Trapezoid trap(0.5, 1, 90 - 8);
+        return full_round(trap.edges().sort_by(Axis::X)[-1]);
+    });
+    compare::add("obj_full_round_rect", [] { return full_round((Rectangle(34, 10).edges() << Axis::X)[0]); });
+    compare::add("obj_full_round_rect_invert", [] {
+        return full_round((Rectangle(34, 10).edges() << Axis::X)[0], true);
+    });
+    compare::add("obj_full_round_rect_points", [] {
+        return full_round((Rectangle(34, 10).edges() << Axis::X)[0], false, 37);
+    });
+    compare::add("obj_full_round_triangle", [] {
+        return full_round(Triangle({.a = 10, .b = 10, .c = 10}).edges().sort_by(Axis::X)[0]);
+    });
+    compare::add_value("obj_full_round_flipped", [] {
+        const Face flipped = -Face::make_rect(34, 10);
+        const Sketch rounded = full_round((flipped.edges() << Axis::X)[0]);
+        return V::list({flipped.normal_at(), rounded.face().normal_at(), rounded.area()});
+    });
+    compare::add("obj_full_round_slot_hole", [] {
+        const Sketch s = Rectangle(30, 10) - Pos(5, 0) * Circle(2);
+        return full_round((s.edges() << Axis::X)[0]);
+    });
+    compare::add("obj_full_round_no_parent", [] { return full_round(Edge::make_line({0, 0}, {1, 0})); });
+    compare::add("obj_full_round_two_edges", [] {
+        const Edge l1 = Edge::make_spline({{-1, 0}, {1, 0}}, {{0, -8}, {0, 8}}, false, {}, true);
+        const Edge l2 = Edge::make_line(l1.position_at(0), l1.position_at(1));
+        const Face face(Wire(std::vector<Edge>{l1, l2}));
+        return full_round(face.edges()[0]);
+    });
+
+    // ---- make_brake_formed
+    const auto outline = [] { return FilletPolyline({{0, 0}, {5, 6}, {10, 1}}, 1); };
+    const auto zigzag = [] { return Polyline({{0, 0}, {5, 6}, {10, 1}}); };
+    compare::add("obj_brake_fillet_polyline", [=] { return make_brake_formed(0.5, 1, outline()); });
+    compare::add("obj_brake_widths", [=] { return make_brake_formed(0.5, {1, 2, 3, 4}, outline()); });
+    compare::add("obj_brake_right", [=] { return make_brake_formed(0.5, 1, outline(), Side::RIGHT); });
+    compare::add("obj_brake_intersection", [=] {
+        return make_brake_formed(0.5, 1.5, zigzag(), Side::LEFT, Kind::INTERSECTION);
+    });
+    compare::add("obj_brake_tangent", [=] {
+        return make_brake_formed(0.5, 1.5, zigzag(), Side::LEFT, Kind::TANGENT);
+    });
+    compare::add("obj_brake_polyline", [=] { return make_brake_formed(0.5, 2, zigzag()); });
+    compare::add("obj_brake_polyline_widths", [=] { return make_brake_formed(0.5, {1, 2, 3}, zigzag()); });
+    compare::add("obj_brake_arc", [] {
+        return make_brake_formed(0.5, 1, Edge::make_circle(5, Plane::XY, 0, 60));
+    });
+    compare::add("obj_brake_straight", [] { return make_brake_formed(0.5, 1, Edge::make_line({0, 0}, {5, 0})); });
+    compare::add("obj_brake_wrong_count", [=] { return make_brake_formed(0.5, {1, 2}, outline()); });
+    compare::add("obj_brake_no_clean", [=] {
+        return make_brake_formed(0.5, 1, outline(), Side::LEFT, Kind::ARC, false);
+    });
+    compare::add("obj_brake_curve", [=] { return make_brake_formed(0.5, 2, Curve() + zigzag()); });
+    compare::add("obj_brake_curve_steps", [] {
+        const Curve steps = Curve() + std::vector<Edge>{Line({0, 0}, {4, 0}), Line({4, 0}, {6, 3}), Line({6, 3}, {10, 3})};
+        return make_brake_formed(0.3, 1.5, steps);
+    });
+    compare::add("obj_brake_xz", [=] { return make_brake_formed(0.5, 1, Wire(Plane::XZ * outline())); });
+    compare::add("obj_brake_spline", [] { return make_brake_formed(0.4, 1, Spline({{0, 0}, {3, 2}, {6, -1}, {9, 0}})); });
+    compare::add("obj_brake_mixed_right", [] {
+        const Wire mixed(std::vector<Edge>{Edge::make_line({0, 0}, {4, 0}), Edge::make_tangent_arc({4, 0}, {1, 0}, {6, 2})});
+        return make_brake_formed(0.4, {1, 2, 1}, mixed, Side::RIGHT);
+    });
 }

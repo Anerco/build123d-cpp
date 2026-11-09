@@ -67,6 +67,17 @@ Part draft(const std::vector<Face>& faces, const Plane& neutral_plane, double an
 Plane project_workplane(const Vector& origin, const Vector& x_dir, const Vector& projection_dir,
                         double distance);
 
+/// Sheet metal part bent along `line` (an Edge, Wire or Curve): `thickness` thick, offset to
+/// `side`, as wide as `station_widths` (one width, or one per vertex of the line).
+Part make_brake_formed(double thickness, double station_widths, const Mixin1D& line,
+                       Side side = Side::LEFT, Kind kind = Kind::ARC, bool clean = true);
+Part make_brake_formed(double thickness, const std::vector<double>& station_widths, const Mixin1D& line,
+                       Side side = Side::LEFT, Kind kind = Kind::ARC, bool clean = true);
+Part make_brake_formed(double thickness, double station_widths, const Curve& line,
+                       Side side = Side::LEFT, Kind kind = Kind::ARC, bool clean = true);
+Part make_brake_formed(double thickness, const std::vector<double>& station_widths, const Curve& line,
+                       Side side = Side::LEFT, Kind kind = Kind::ARC, bool clean = true);
+
 // ---------------------------------------------------------------------------
 // Sketch operations
 // ---------------------------------------------------------------------------
@@ -77,6 +88,10 @@ Sketch make_face(const std::vector<Edge>& edges);
 /// Face from the convex hull of the edges.
 Sketch make_hull(const Shape& edges);
 Sketch make_hull(const std::vector<Edge>& edges);
+/// Replace an edge of a face (taken from a Sketch/Face, e.g. sketch.edges()[0]) by the arc of
+/// the largest circle that fits against it and its two neighbouring edges ("rounds off" the
+/// end); `invert` makes the arc concave.
+Sketch full_round(const Edge& edge, bool invert = false, int voronoi_point_count = 100);
 /// Faces made by sweeping a line of `line_width` along the curves.
 Sketch trace(const Shape& lines, double line_width = 1.0);
 Sketch trace(const std::vector<Edge>& lines, double line_width = 1.0);

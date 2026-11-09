@@ -3,6 +3,7 @@
 from math import cos, exp, sin, sqrt
 
 from scipy.optimize import minimize, minimize_scalar
+from scipy.spatial import Voronoi
 
 from build123d import *  # noqa: F403
 from build123d.topology.utils import tuplify
@@ -347,6 +348,29 @@ def obj_project_mixed():
     with_points = project([Rectangle(2, 2).face(), Vertex(1, 2, 3)], workplane=Plane.XY)
     c = project([Rectangle(2, 2).face(), Line((0, 0), (1, 1))], workplane=Plane.XY.offset(1))
     return V([list(with_points), c.area, len(c.faces()), c.center()])
+
+
+def sample_points(edges, n=100):
+    return [[p.X, p.Y] for e in edges for p in e.positions([i / n for i in range(n + 1)])]
+
+
+def voronoi_values(pts):
+    verts = [[float(v[0]), float(v[1])] for v in Voronoi(pts).vertices]
+    verts.sort(key=lambda v: (round(v[0], 9), round(v[1], 9)))
+    return V(verts)
+
+
+def obj_full_round_flipped():
+    flipped = -Face.make_rect(34, 10)
+    rounded = full_round((flipped.edges() << Axis.X)[0])
+    return V([flipped.normal_at(), rounded.face().normal_at(), rounded.area])
+
+
+def obj_full_round_two_edges():
+    l1 = Edge.make_spline([(-1, 0), (1, 0)], tangents=((0, -8), (0, 8)), scale=True)
+    l2 = Edge.make_line(l1 @ 0, l1 @ 1)
+    face = Face(Wire([l1, l2]))
+    return full_round(face.edges()[0])
 
 
 def nelder_mead_values(f, x0, bounds=None, tol=None, maxiter=None):
@@ -767,4 +791,61 @@ CASES = {
     ),
     "obj_project_mixed": obj_project_mixed,
     "obj_project_empty_error": lambda: project([], workplane=Plane.XY),
+    # Voronoi vertices and full_round
+    "obj_voronoi_rect": lambda: voronoi_values(sample_points(Rectangle(34, 10).edges().sort_by(Axis.X)[0:3])),
+    "obj_voronoi_trapezoid": lambda: voronoi_values(
+        sample_points([Trapezoid(0.5, 1, 82).edges().sort_by(Axis.Y)[i] for i in (3, 1, 2)])
+    ),
+    "obj_voronoi_triangle": lambda: voronoi_values(
+        sample_points(Triangle(a=10, b=10, c=10).edges().sort_by(Axis.X)[0:3])
+    ),
+    "obj_voronoi_arcs": lambda: voronoi_values(
+        sample_points([CenterArc((0, 0), 5, 0, 90), Line((0, 5), (-6, 5)), Spline((5, 0), (6, -3), (9, -4))], 40)
+    ),
+    "obj_full_round_trap_top": lambda: full_round(Trapezoid(0.5, 1, 90 - 8).edges().sort_by(Axis.Y)[-1]),
+    "obj_full_round_trap_short": lambda: full_round(Trapezoid(0.5, 1, 90 - 8).edges().sort_by(SortBy.LENGTH)[0]),
+    "obj_full_round_trap_invert": lambda: full_round(
+        Trapezoid(0.5, 1, 90 - 8).edges().sort_by(SortBy.LENGTH)[0], invert=True
+    ),
+    "obj_full_round_trap_side": lambda: full_round(Trapezoid(0.5, 1, 90 - 8).edges().sort_by(Axis.X)[-1]),
+    "obj_full_round_rect": lambda: full_round((Rectangle(34, 10).edges() << Axis.X)[0]),
+    "obj_full_round_rect_invert": lambda: full_round((Rectangle(34, 10).edges() << Axis.X)[0], invert=True),
+    "obj_full_round_rect_points": lambda: full_round((Rectangle(34, 10).edges() << Axis.X)[0], voronoi_point_count=37),
+    "obj_full_round_triangle": lambda: full_round(Triangle(a=10, b=10, c=10).edges().sort_by(Axis.X)[0]),
+    "obj_full_round_flipped": obj_full_round_flipped,
+    "obj_full_round_slot_hole": lambda: full_round(((Rectangle(30, 10) - Pos(5, 0) * Circle(2)).edges() << Axis.X)[0]),
+    "obj_full_round_no_parent": lambda: full_round(Edge.make_line((0, 0), (1, 0))),
+    "obj_full_round_two_edges": obj_full_round_two_edges,
+    # make_brake_formed
+    "obj_brake_fillet_polyline": lambda: make_brake_formed(0.5, 1, FilletPolyline((0, 0), (5, 6), (10, 1), radius=1)),
+    "obj_brake_widths": lambda: make_brake_formed(
+        thickness=0.5, station_widths=[1, 2, 3, 4], line=FilletPolyline((0, 0), (5, 6), (10, 1), radius=1)
+    ),
+    "obj_brake_right": lambda: make_brake_formed(
+        0.5, 1, FilletPolyline((0, 0), (5, 6), (10, 1), radius=1), side=Side.RIGHT
+    ),
+    "obj_brake_intersection": lambda: make_brake_formed(
+        0.5, 1.5, Polyline((0, 0), (5, 6), (10, 1)), kind=Kind.INTERSECTION
+    ),
+    "obj_brake_tangent": lambda: make_brake_formed(0.5, 1.5, Polyline((0, 0), (5, 6), (10, 1)), kind=Kind.TANGENT),
+    "obj_brake_polyline": lambda: make_brake_formed(0.5, 2, Polyline((0, 0), (5, 6), (10, 1))),
+    "obj_brake_polyline_widths": lambda: make_brake_formed(0.5, [1, 2, 3], Polyline((0, 0), (5, 6), (10, 1))),
+    "obj_brake_arc": lambda: make_brake_formed(0.5, 1, Edge.make_circle(5, start_angle=0, end_angle=60)),
+    "obj_brake_straight": lambda: make_brake_formed(0.5, 1, Edge.make_line((0, 0), (5, 0))),
+    "obj_brake_wrong_count": lambda: make_brake_formed(0.5, [1, 2], FilletPolyline((0, 0), (5, 6), (10, 1), radius=1)),
+    "obj_brake_no_clean": lambda: make_brake_formed(
+        0.5, 1, FilletPolyline((0, 0), (5, 6), (10, 1), radius=1), clean=False
+    ),
+    "obj_brake_curve": lambda: make_brake_formed(0.5, 2, Curve() + Polyline((0, 0), (5, 6), (10, 1))),
+    "obj_brake_curve_steps": lambda: make_brake_formed(
+        0.3, 1.5, Curve() + [Line((0, 0), (4, 0)), Line((4, 0), (6, 3)), Line((6, 3), (10, 3))]
+    ),
+    "obj_brake_xz": lambda: make_brake_formed(0.5, 1, Plane.XZ * FilletPolyline((0, 0), (5, 6), (10, 1), radius=1)),
+    "obj_brake_spline": lambda: make_brake_formed(0.4, 1, Spline((0, 0), (3, 2), (6, -1), (9, 0))),
+    "obj_brake_mixed_right": lambda: make_brake_formed(
+        0.4,
+        [1, 2, 1],
+        Wire([Edge.make_line((0, 0), (4, 0)), Edge.make_tangent_arc((4, 0), (1, 0), (6, 2))]),
+        side=Side.RIGHT,
+    ),
 }

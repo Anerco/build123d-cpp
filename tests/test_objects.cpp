@@ -184,3 +184,27 @@ TEST(objects_projection) {
     CHECK_THROWS(project(std::vector<Face>{}, Plane::XY), std::invalid_argument);
     CHECK(project(Vertex(1, 2, 3), Plane::XZ)[0] == Vector(1, 3, 0));
 }
+
+// ---------------------------------------------------------------------------
+// full_round, make_brake_formed
+// ---------------------------------------------------------------------------
+
+static_assert(std::is_same_v<decltype(full_round(Edge())), Sketch>);
+static_assert(std::is_same_v<decltype(make_brake_formed(1.0, 1.0, Edge())), Part>);
+static_assert(std::is_same_v<decltype(make_brake_formed(1.0, std::vector<double>{1.0}, Wire())), Part>);
+static_assert(std::is_same_v<decltype(make_brake_formed(1.0, 1.0, Curve())), Part>);
+
+TEST(objects_full_round_and_brake_formed) {
+    const Sketch rounded = full_round((Rectangle(34, 10).edges() << Axis::X)[0]);
+    CHECK(rounded.faces().size() == 1);
+    CHECK(rounded.edges().filter_by(GeomType::CIRCLE).size() == 1);
+    CHECK_THROWS(full_round(Edge::make_line({0, 0}, {1, 0})), std::invalid_argument);
+
+    const FilletPolyline outline({{0, 0}, {5, 6}, {10, 1}}, 1);
+    const Part sheet = make_brake_formed(0.5, {1, 2, 3, 4}, outline);
+    CHECK(sheet.solids().size() == 1);
+    CHECK_NEAR(sheet.bounding_box().max.Z, 4, 1e-2);
+    CHECK_NEAR(make_brake_formed(0.5, 1, Curve() + outline).volume(), make_brake_formed(0.5, 1, outline).volume(), 1e-9);
+    CHECK_THROWS(make_brake_formed(0.5, std::vector<double>{1, 2}, outline), std::invalid_argument);
+    CHECK_THROWS(make_brake_formed(0.5, 1, Wire()), std::invalid_argument);
+}
