@@ -1149,3 +1149,17 @@ COMPARE_CASES {
         return detect_summary(primitives, leftovers, code);
     });
 }
+
+// ---- the color Python's material setter gives a shape (bd_materials PBR look)
+#include "../../src/pbr_colors.hpp"
+
+COMPARE_CASES {
+    compare::add_value("io_material_pbr_colors", [] {
+        std::vector<V> out;
+        for (const std::string& grade : detail::catalog_pbr_grades()) {
+            const auto c = *detail::catalog_pbr_color(grade);
+            out.push_back(V::list({grade, V::list({c[0], c[1], c[2], c[3]})}));
+        }
+        return V::list(out);
+    });
+}

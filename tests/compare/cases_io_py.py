@@ -1163,3 +1163,19 @@ for _n in ["brep_cylinder", "brep_sphere", "brep_box", "brep_box_with_hole", "br
 CASES["io_detect_primitives_brep_box"] = lambda: detect_summary(*detect_primitives(Pos(1, 2, 3) * Box(2, 3, 4)))
 CASES["io_detect_primitives_brep_cylinder"] = lambda: detect_summary(*detect_primitives(Cylinder(1, 2)))
 CASES["io_detect_primitives_empty"] = lambda: detect_summary(*detect_primitives(Compound()))
+
+
+def material_pbr_colors():
+    # the color build123d's Shape.material setter applies, by material grade
+    from bd_materials import material_names, resolve
+
+    grades = sorted({resolve(n).material.name for n in material_names()})
+    out = []
+    for grade in grades:
+        box = Box(1, 1, 1)
+        box.material = grade
+        out.append([grade, list(tuple(box.color))])
+    return V(out)
+
+
+CASES["io_material_pbr_colors"] = material_pbr_colors
