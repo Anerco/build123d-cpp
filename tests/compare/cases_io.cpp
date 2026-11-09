@@ -776,7 +776,7 @@ namespace {
 
 /// What import_dxf returned: per shape its type, size, edges and bounding box (compounds
 /// with many edges, i.e. text, are summarized).
-V dxf_shapes(const ShapeList<Shape>& shapes) {
+V dxf_import_summary(const ShapeList<Shape>& shapes) {
     std::vector<V> out;
     for (const Shape& s : shapes) {
         const TopAbs_ShapeEnum t = s.wrapped().ShapeType();
@@ -814,19 +814,20 @@ COMPARE_CASES {
     for (const char* name : {"dxf_entities", "dxf_hatch", "dxf_r12", "dxf_binary", "dxf_cp1252", "dxf_3dface",
                              "dxf_polyline3d"}) {
         const std::string n = name;
-        compare::add_value("io_" + n, [n] { return dxf_shapes(import_dxf(fixture(n + ".dxf"))); });
+        compare::add_value("io_import_" + n, [n] { return dxf_import_summary(import_dxf(fixture(n + ".dxf"))); });
     }
     // A binary stream is read as Latin-1 text (build123d's BytesIO branch)
     for (const char* name : {"dxf_entities", "dxf_cp1252", "dxf_binary"}) {
         const std::string n = name;
-        compare::add_value("io_" + n + "_stream", [n] { return dxf_shapes(import_dxf_stream(fixture(n + ".dxf"))); });
+        compare::add_value("io_import_" + n + "_stream",
+                           [n] { return dxf_import_summary(import_dxf_stream(fixture(n + ".dxf"))); });
     }
     compare::add_value("io_dxf_crlf", [] {
         // the R12 fixture with \r\n line ends: universal newlines for files, not for streams
         std::string text = read_text(fixture("dxf_r12.dxf")), crlf;
         for (char c : text) crlf += c == '\n' ? std::string("\r\n") : std::string(1, c);
         std::ofstream(cpp_file("crlf.dxf"), std::ios::binary) << crlf;
-        return V::list({dxf_shapes(import_dxf(cpp_file("crlf.dxf"))), dxf_shapes(import_dxf_stream(cpp_file("crlf.dxf")))});
+        return V::list({dxf_import_summary(import_dxf(cpp_file("crlf.dxf"))), dxf_import_summary(import_dxf_stream(cpp_file("crlf.dxf")))});
     });
     compare::add_value("io_dxf_import_exported", [] {
         // ExportDXF's own files, read by both
@@ -835,7 +836,7 @@ COMPARE_CASES {
         e.add_layer("L2");
         add_dxf_shapes(e, false);
         e.write(cpp_file("export_import.dxf"));
-        return dxf_shapes(import_dxf(cpp_file("export_import.dxf")));
+        return dxf_import_summary(import_dxf(cpp_file("export_import.dxf")));
     });
     compare::add_value("io_dxf_import_exported_r12_binary", [] {
         ExportDXF e("R12");
@@ -843,14 +844,14 @@ COMPARE_CASES {
         e.add_layer("L2");
         add_dxf_shapes(e, true);
         e.write(cpp_file("export_import_r12.dxf"), false);
-        return dxf_shapes(import_dxf(cpp_file("export_import_r12.dxf")));
+        return dxf_import_summary(import_dxf(cpp_file("export_import_r12.dxf")));
     });
-    compare::add_value("io_dxf_import_missing", [] { return dxf_shapes(import_dxf(cpp_file("missing.dxf"))); });
-    compare::add_value("io_dxf_import_not_dxf", [] { return dxf_shapes(import_dxf(fixture("svg_basic.svg"))); });
+    compare::add_value("io_dxf_import_missing", [] { return dxf_import_summary(import_dxf(cpp_file("missing.dxf"))); });
+    compare::add_value("io_dxf_import_not_dxf", [] { return dxf_import_summary(import_dxf(fixture("svg_basic.svg"))); });
     compare::add_value("io_dxf_import_no_eof", [] {
         std::ofstream(cpp_file("no_eof.dxf"), std::ios::binary)
             << "  0\nSECTION\n  2\nENTITIES\n  0\nLINE\n 10\n0\n 20\n0\n 30\n0\n 11\n1\n 21\n1\n 31\n0\n  0\nENDSEC\n";
-        return dxf_shapes(import_dxf(cpp_file("no_eof.dxf")));
+        return dxf_import_summary(import_dxf(cpp_file("no_eof.dxf")));
     });
     compare::add_value("io_dxf_import_minimal", [] {
         // A hand-written file: no header, R12 style entities, an empty line value, comments
@@ -858,7 +859,7 @@ COMPARE_CASES {
             << "999\ncomment\n  0\nSECTION\n  2\nENTITIES\n  0\nLINE\n  8\n\n 10\n1.5\n 20\n-2\n 11\n4\n 21\n2\n"
                "  0\nCIRCLE\n 10\n3\n 20\n3\n 40\n2\n  0\nPOINT\n 10\n7\n 20\n8\n 30\n9\n  0\nARC\n 10\n0\n 20\n0\n"
                " 40\n1\n 50\n10\n 51\n10\n  0\nENDSEC\n  0\nEOF\n";
-        return dxf_shapes(import_dxf(cpp_file("minimal.dxf")));
+        return dxf_import_summary(import_dxf(cpp_file("minimal.dxf")));
     });
     compare::add_value("io_dxf_plain_mtext", [] {
         std::vector<V> out;
@@ -869,5 +870,195 @@ COMPARE_CASES {
             out.push_back(V(dxf::fast_plain_mtext(text)));
         }
         return V::list(out);
+    });
+}
+
+// ---- Mesher (3MF, STL). The Python side compares the files written here with its own
+// (cases_io_py.py mesh_file_diff); "same" means equivalent.
+namespace {
+
+constexpr const char* kUserUuid = "12345678-1234-5678-1234-567812345678";
+
+/// Python's Unit.name and MeshType.name.
+std::string unit_name(Unit u) {
+    switch (u) {
+        case Unit::MC: return "MC";
+        case Unit::MM: return "MM";
+        case Unit::CM: return "CM";
+        case Unit::M: return "M";
+        case Unit::IN: return "IN";
+        case Unit::FT: return "FT";
+        default: return "?";
+    }
+}
+
+std::string mesh_type_name(MeshType t) {
+    switch (t) {
+        case MeshType::OTHER: return "OTHER";
+        case MeshType::MODEL: return "MODEL";
+        case MeshType::SUPPORT: return "SUPPORT";
+        case MeshType::SOLIDSUPPORT: return "SOLIDSUPPORT";
+    }
+    return "?";
+}
+
+V mesh_properties(const Mesher& m) {
+    std::vector<V> out;
+    for (const MeshProperties& p : m.get_mesh_properties()) {
+        // lib3mf makes up random UUIDs for objects without one
+        const V uuid = p.uuid == kUserUuid ? V(p.uuid) : V(static_cast<double>(p.uuid.size()));
+        out.push_back(V::obj({{"name", p.name}, {"part_number", p.part_number},
+                              {"type", mesh_type_name(p.type)}, {"uuid", uuid}}));
+    }
+    return V::list(out);
+}
+
+V mesher_state(const Mesher& m) {
+    std::vector<V> triangles, vertices, meta;
+    for (int c : m.triangle_counts()) triangles.push_back(V(static_cast<double>(c)));
+    for (int c : m.vertex_counts()) vertices.push_back(V(static_cast<double>(c)));
+    for (const MeshMetaData& d : m.get_meta_data()) meta.push_back(V::list({d.name_space, d.name, d.type, d.value}));
+    return V::obj({{"unit", unit_name(m.model_unit())},
+                   {"mesh_count", static_cast<double>(m.mesh_count())},
+                   {"triangle_counts", V::list(triangles)},
+                   {"vertex_counts", V::list(vertices)},
+                   {"properties", mesh_properties(m)},
+                   {"meta_data", V::list(meta)}});
+}
+
+/// Shapes read from a mesh file.
+V mesh_shapes(const ShapeList<Shape>& shapes) {
+    std::vector<V> out;
+    for (const Shape& s : shapes) {
+        const BoundBox bb = s.bounding_box();
+        out.push_back(V::obj({{"type", type_name(s)},
+                              {"label", s.label},
+                              {"color", color_value(s.color)},
+                              {"volume", s.volume()},
+                              {"area", s.area()},
+                              {"faces", static_cast<double>(s.faces().size())},
+                              {"shells", static_cast<double>(s.shells().size())},
+                              {"bbox", V::list({bb.min, bb.max})}}));
+    }
+    return V::list(out);
+}
+
+/// The Mesher of the file comparisons (cases_io_py.py sample_mesher).
+Mesher sample_mesher(Unit unit = Unit::MM) {
+    Mesher m(unit);
+    Part box = Box(2, 3, 4);
+    box.label = "box";
+    box.color = Color("red");
+    m.add_shape(box, 0.001, 0.1, MeshType::MODEL, "P-1", kUserUuid);
+    m.add_shape(Pos(5, 0, 0) * Sphere(1), 0.5, 0.5, MeshType::SUPPORT);
+    Part tube = Pos(0, 6, 0) * (Cylinder(2, 3) - Cylinder(1, 3));
+    tube.color = Color(0.1, 0.2, 0.3, 0.4);
+    m.add_shape(tube, 0.05, 0.2, MeshType::SOLIDSUPPORT, "T-2");
+    m.add_meta_data("build123d", "note", "hello <&> \"world\"", "string", true);
+    m.add_meta_data("other", "count", "3", "xs:integer", false);
+    return m;
+}
+
+V mesh_file(const std::string& name) { return V::list({name, "same"}); }
+
+}  // namespace
+
+COMPARE_CASES {
+    compare::add_value("io_mesher_state", [] {
+        const Mesher m = sample_mesher();
+        const MeshMetaDataValue v = m.get_meta_data_by_key("build123d", "note");
+        return V::list({mesher_state(m), V::list({v.type, v.value})});
+    });
+    compare::add_value("io_mesher_3mf_file", [] {
+        sample_mesher().write(cpp_file("sample.3mf"));
+        return mesh_file("sample.3mf");
+    });
+    compare::add_value("io_mesher_stl_file", [] {
+        sample_mesher().write(cpp_file("sample.stl"));
+        return mesh_file("sample.stl");
+    });
+    compare::add_value("io_mesher_stream", [] {
+        const Mesher m = sample_mesher(Unit::IN);
+        std::ostringstream three_mf, stl;
+        m.write_stream(three_mf, "3mf");
+        m.write_stream(stl, "stl");
+        std::ofstream(cpp_file("stream.3mf"), std::ios::binary) << three_mf.str();
+        std::ofstream(cpp_file("stream.stl"), std::ios::binary) << stl.str();
+        return V::list({mesh_file("stream.3mf"), mesh_file("stream.stl")});
+    });
+    compare::add_value("io_mesher_read_cpp", [] {
+        // Python reads the C++ file, C++ reads it too
+        sample_mesher(Unit::CM).write(cpp_file("read.3mf"));
+        Mesher reader;
+        const ShapeList<Shape> shapes = reader.read(cpp_file("read.3mf"));
+        return V::list({mesh_shapes(shapes), mesher_state(reader)});
+    });
+    compare::add_value("io_mesher_read_py", [] {
+        Mesher reader;
+        const ShapeList<Shape> shapes = reader.read(fixture("py_mesher.3mf"));
+        return V::list({mesh_shapes(shapes), mesher_state(reader)});
+    });
+    compare::add_value("io_mesher_read_stl", [] {
+        Mesher reader, open_reader;
+        return V::list({mesh_shapes(reader.read(fixture("py_mesher.stl"))), unit_name(reader.model_unit()),
+                        mesh_shapes(open_reader.read(fixture("open_pyramid.stl")))});
+    });
+    compare::add_value("io_mesher_assemblies", [] {
+        // Children of an assembly (taking its color when they have none), a labelled compound,
+        // and the solids of a plain Part as separate meshes
+        Part a = Box(1, 1, 1);
+        a.label = "a";
+        Part b = Pos(3, 0, 0) * Sphere(1);
+        b.color = Color("blue");
+        Compound assembly = Compound::make_assembly({a, b}, "asm");
+        assembly.color = Color("green");
+        Part labelled = Pos(0, 5, 0) * Box(1, 2, 3) + Pos(4, 5, 0) * Box(1, 1, 1);
+        labelled.label = "labelled";
+        const Part plain = Pos(0, -5, 0) * Box(1, 1, 1) + Pos(3, -5, 0) * Cylinder(1, 1);
+        Mesher m;
+        m.add_shape(std::vector<Shape>{assembly, labelled, plain}, 0.01, 0.2);
+        m.write(cpp_file("assemblies.3mf"));
+        Mesher reader;
+        return V::list({mesher_state(m), mesh_file("assemblies.3mf"), mesh_shapes(reader.read(cpp_file("assemblies.3mf")))});
+    });
+    compare::add_value("io_mesher_degenerate", [] {
+        Mesher m;
+        m.add_shape(Edge::make_line({0, 0}, {1, 1}));
+        m.add_shape(Box(1, 1, 1));
+        return mesher_state(m);
+    });
+    compare::add_value("io_mesher_open_face", [] {
+        Mesher m;
+        m.add_shape(Face::make_rect(1, 1));
+        return mesher_state(m);
+    });
+    compare::add_value("io_mesher_other_type", [] {
+        // lib3mf reports meshes of type "other" as invalid
+        Mesher m;
+        m.add_shape(Box(1, 1, 1), 0.001, 0.1, MeshType::OTHER);
+        return mesher_state(m);
+    });
+    compare::add_value("io_mesher_bad_unit", [] {
+        const Mesher m(Unit::KG);
+        return V("created");
+    });
+    compare::add_value("io_mesher_bad_extension", [] {
+        sample_mesher().write(cpp_file("sample.obj"));
+        return V("written");
+    });
+    compare::add_value("io_mesher_bad_read_extension", [] {
+        Mesher m;
+        m.read(fixture("py_mesher.3MF"));
+        return V("read");
+    });
+    compare::add_value("io_mesher_bad_stream_type", [] {
+        std::ostringstream out;
+        sample_mesher().write_stream(out, "obj");
+        return V("written");
+    });
+    compare::add_value("io_mesher_read_missing", [] {
+        Mesher m;
+        m.read(cpp_file("missing.3mf"));
+        return V("read");
     });
 }

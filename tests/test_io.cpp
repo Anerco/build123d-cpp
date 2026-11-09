@@ -227,3 +227,49 @@ TEST(io_import_dxf) {
     }
     CHECK_THROWS(import_dxf(dir.file("not.dxf")), std::runtime_error);
 }
+
+static_assert(!std::is_copy_constructible_v<Mesher>);
+static_assert(std::is_move_constructible_v<Mesher>);
+
+TEST(io_mesher) {
+    const IoTempDir dir("mesher");
+    Mesher m(Unit::CM);
+    CHECK(m.model_unit() == Unit::CM);
+    CHECK(m.library_version().find('.') != std::string::npos);
+    Part box = Box(1, 2, 3);
+    box.label = "box";
+    m.add_shape(box);
+    const Part ball = Pos(5, 0, 0) * Sphere(1);
+    m.add_shape(ball.solids(), 0.1, 0.3, MeshType::SUPPORT);  // a ShapeList<Solid>
+    CHECK(m.mesh_count() == 2);
+    CHECK(m.triangle_counts().size() == 2 && m.triangle_counts()[0] == 12);
+    CHECK(m.vertex_counts()[0] == 8);
+    m.add_code_to_metadata();
+    const auto meta = m.get_meta_data();
+    CHECK(meta.size() == 1);
+    CHECK(meta[0].name_space == "build123d" && meta[0].name == "test_io.cpp" && meta[0].type == "cpp");
+    CHECK(meta[0].value.find("TEST(io_mesher)") != std::string::npos);
+    CHECK(m.get_meta_data_by_key("build123d", "test_io.cpp").type == "cpp");
+    CHECK_THROWS(m.get_meta_data_by_key("build123d", "nothing"), std::runtime_error);
+    const auto properties = m.get_mesh_properties();
+    CHECK(properties[0].name == "box" && properties[1].type == MeshType::SUPPORT);
+    CHECK(properties[1].uuid.size() == 36);
+
+    m.write(dir.file("m.3mf"));
+    Mesher moved = std::move(m);
+    moved.write(dir.file("m.stl"));
+    CHECK_THROWS(moved.write(dir.file("m.obj")), std::invalid_argument);
+    std::ostringstream stream;
+    moved.write_stream(stream, "3mf");
+    CHECK(stream.str().compare(0, 2, "PK") == 0);  // a zip archive
+
+    Mesher reader;
+    const ShapeList<Shape> shapes = reader.read(dir.file("m.3mf"));
+    CHECK(shapes.size() == 2);
+    CHECK(reader.model_unit() == Unit::CM);
+    CHECK(shapes[0].label == "box");
+    CHECK_NEAR(cast_shape<Solid>(shapes[0]).volume(), 6.0, 1e-6);
+    CHECK_THROWS(Mesher().read(dir.file("missing.3mf")), std::runtime_error);
+    CHECK_THROWS(Mesher(Unit::LB), std::invalid_argument);
+    CHECK_THROWS(Mesher().add_shape(Face::make_rect(1, 1)), std::runtime_error);
+}

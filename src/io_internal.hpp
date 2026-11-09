@@ -36,3 +36,13 @@ std::vector<std::pair<double, double>> pack2d(const std::vector<std::pair<double
 TopoDS_Shape to_splines(const TopoDS_Shape& shape, int degree = 3, double tolerance = 1e-3, bool nurbs = false);
 
 }  // namespace build123d::detail
+
+namespace build123d::detail {
+
+/// Python's tuple(color): OCCT's float color as sRGB, each value rounded to 7 digits.
+std::array<double, 4> python_color_tuple(const Color& color);
+/// Python's str(color): "Color: (1.0, 0.0, 0.0, 1.0) is 'RED'" (a CSS3 name) or
+/// "... near 'DARKSLATEGRAY'" (OCCT's nearest named color).
+std::string python_color_str(const Color& color);
+
+}  // namespace build123d::detail

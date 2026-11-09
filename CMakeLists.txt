@@ -33,6 +33,17 @@ foreach(tk IN LISTS BUILD123D_OCCT_TOOLKITS)
   endif()
 endforeach()
 
+# lib3mf (3MF and STL meshes, Mesher): its C++ binding headers and the shared library. Found
+# directly, as lib3mf's own CMake config only covers some installations and prints banners.
+find_path(LIB3MF_INCLUDE_DIR lib3mf_implicit.hpp
+          PATH_SUFFIXES Bindings/Cpp include/Bindings/Cpp lib3mf/Bindings/Cpp include/lib3mf/Bindings/Cpp)
+find_library(LIB3MF_LIBRARY NAMES 3mf lib3mf)
+if(NOT LIB3MF_INCLUDE_DIR OR NOT LIB3MF_LIBRARY)
+  message(FATAL_ERROR "lib3mf not found (scripts/setup-toolchain.sh installs it); set LIB3MF_INCLUDE_DIR "
+                      "to the directory of lib3mf_implicit.hpp and LIB3MF_LIBRARY to the library")
+endif()
+message(STATUS "lib3mf: ${LIB3MF_LIBRARY}")
+
 file(GLOB BUILD123D_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
 add_library(build123d ${BUILD123D_SOURCES})
 add_library(build123d::build123d ALIAS build123d)
@@ -46,6 +57,8 @@ target_include_directories(build123d
   PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(build123d PUBLIC ${BUILD123D_OCCT_LIBS})
+target_include_directories(build123d SYSTEM PRIVATE ${LIB3MF_INCLUDE_DIR})
+target_link_libraries(build123d PRIVATE ${LIB3MF_LIBRARY})
 if(MSVC)
   target_compile_options(build123d PRIVATE /W3 /bigobj /permissive-)
   target_compile_definitions(build123d PUBLIC _USE_MATH_DEFINES NOMINMAX)

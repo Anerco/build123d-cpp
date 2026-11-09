@@ -244,12 +244,42 @@ def dxf_files():
     polyline3d_doc()
 
 
+# ---- Mesher (3MF, STL) files written by Python build123d
+def mesher_files():
+    import struct
+
+    m = Mesher()
+    box = Box(2, 3, 4)
+    box.label = "red box"
+    box.color = Color("red")
+    hollow = Pos(10, 0, 0) * (Sphere(3) - Sphere(2))
+    hollow.label = "hollow"
+    hollow.color = Color(0.2, 0.4, 0.6, 0.5)
+    m.add_shape(box, part_number="B-1")
+    m.add_shape(hollow, linear_deflection=0.2, angular_deflection=0.4, mesh_type=MeshType.SOLIDSUPPORT)
+    m.add_shape(Pos(0, 10, 0) * Cylinder(1, 3), linear_deflection=0.1)
+    m.add_meta_data("build123d", "fixture", "make_io_fixtures.py", "string", True)
+    m.write(os.path.join(DATA, "py_mesher.3mf"))
+    m2 = Mesher(Unit.IN)
+    m2.add_shape(Pos(1, 2, 3) * Box(1, 1, 1))
+    m2.write(os.path.join(DATA, "py_mesher.stl"))
+    # an open surface: a pyramid without its base
+    apex, base = (0.0, 0.0, 1.0), [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.0, 1.0, 0.0), (0.0, 1.0, 0.0)]
+    triangles = [(base[i], base[(i + 1) % 4], apex) for i in range(4)]
+    data = b"open pyramid".ljust(80, b" ") + struct.pack("<I", len(triangles))
+    for tri in triangles:
+        data += struct.pack("<3f", 0, 0, 0) + b"".join(struct.pack("<3f", *p) for p in tri) + b"\0\0"
+    with open(os.path.join(DATA, "open_pyramid.stl"), "wb") as f:
+        f.write(data)
+
+
 def main():
     os.makedirs(DATA, exist_ok=True)
     persistence()
     step_files()
     svg_files()
     dxf_files()
+    mesher_files()
 
 
 if __name__ == "__main__":
