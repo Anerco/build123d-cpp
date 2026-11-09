@@ -12,6 +12,7 @@
 #include "build123d/enums.hpp"
 #include "build123d/geometry.hpp"
 #include "build123d/io.hpp"
+#include "build123d/json.hpp"
 #include "build123d/locations.hpp"
 #include "build123d/objects.hpp"
 #include "build123d/operations.hpp"

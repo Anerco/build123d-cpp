@@ -1,5 +1,7 @@
 """Python twins of cases_io.cpp."""
 
+import json
+
 from build123d import *  # noqa: F403
 
 from values import V
@@ -29,6 +31,82 @@ def hlr_perspective():
     return viewport(part.project_to_viewport((30, -40, 25), (0, 0, 1), None, 60.0))
 
 
+def json_encode():
+    data = {
+        "a": Axis((1, 2, 3), (0, 1, 0)),
+        "c": Color("red"),
+        "c2": Color(0.1, 0.2, 0.3, 0.4),
+        "l": Location((1, 2, 3), (10, 20, 30)),
+        "p": Plane.XZ,
+        "v": Vector(1, 2.5, -0.0),
+        "list": [1, 2.0, None, True, "x\u00e9\n\x7f\U0001F600\"\\/"],
+        "nested": {"empty": {}, "e2": []},
+    }
+    return V(
+        [
+            json.dumps(data, cls=GeomEncoder),
+            json.dumps(data, cls=GeomEncoder, indent=2),
+            json.dumps(data, cls=GeomEncoder, indent=0),
+        ]
+    )
+
+
+def json_floats():
+    floats = [0.1, 1e-05, 1e16, 1e15, 123456789012345678.0, 5e-324, -0.0, 1.0, 100.0, 0.0001, 1.5e-7, 2.5, 1.0 / 3.0,
+              1e22, 1.7976931348623157e308, -2.5e-10, 12345.678, float("nan"), float("inf"), float("-inf"), 0, -7,
+              9007199254740993]
+    return V(json.dumps(floats))
+
+
+def json_dumps_each():
+    return V(
+        [
+            json.dumps(Axis.Z, cls=GeomEncoder),
+            json.dumps(Color(0.5, 0.25, 1), cls=GeomEncoder),
+            json.dumps(Location((1, 2, 3), (0, 0, 90)), cls=GeomEncoder),
+            json.dumps(Plane.isometric, cls=GeomEncoder, indent=4),
+            json.dumps(Vector(1e-7, 3, 1e300), cls=GeomEncoder),
+        ]
+    )
+
+
+def json_decode():
+    out = []
+    for text in [
+        '{"Axis": [[1.0, 2.0, 3.0], [0.0, 1.0, 0.0]]}',
+        '{"Color": [0.1, 0.2, 0.3]}',
+        '{"Location": [[1, 2, 3], [10, 20, 30]]}',
+        '{"Plane": [[0, 0, 1], [1, 0, 0], [0, -1, 0]]}',
+        '{"Vector": [1, 2]}',
+    ]:
+        g = json.loads(text, object_hook=GeomEncoder.geometry_hook)
+        out.append(json.dumps(g, cls=GeomEncoder))
+    return V(out)
+
+
+def json_hook_two_keys():
+    json.loads('{"Vector": [1, 2, 3], "Axis": [[0, 0, 0], [0, 0, 1]]}', object_hook=GeomEncoder.geometry_hook)
+    return V("decoded")
+
+
+def json_hook_unknown():
+    json.loads('{"Foo": [1]}', object_hook=GeomEncoder.geometry_hook)
+    return V("decoded")
+
+
+def json_roundtrip():
+    text = (
+        '{"b": [1, 2.50, -0.0, 1E3, 1e-7, true, false, null, {"x": "\\u00e9\\ud83d\\ude00\\n\\/"}],'
+        ' "a": {}, "b": 3, "nan": NaN, "inf": -Infinity}'
+    )
+    return V(json.dumps(json.loads(text)))
+
+
+def json_malformed():
+    json.loads("[1, 2,]")
+    return V("parsed")
+
+
 CASES = {
     # ---- project_to_viewport
     "io_hlr_box": lambda: viewport(Box(1, 2, 3).project_to_viewport((10, -10, 10))),
@@ -47,4 +125,13 @@ CASES = {
     "io_hlr_sketch": lambda: viewport((Circle(5) - Rectangle(3, 3)).project_to_viewport((0, -10, 10))),
     "io_hlr_zero_focus": lambda: viewport(Box(2, 3, 4).project_to_viewport((10, 10, 10), (0, 0, 1), (1, 0, 0), 0.0)),
     "io_hlr_empty": lambda: viewport(Part().project_to_viewport((1, 1, 1))),
+    # ---- GeomEncoder / JSON
+    "io_json_encode": json_encode,
+    "io_json_floats": json_floats,
+    "io_json_dumps_each": json_dumps_each,
+    "io_json_decode": json_decode,
+    "io_json_hook_two_keys": json_hook_two_keys,
+    "io_json_hook_unknown": json_hook_unknown,
+    "io_json_roundtrip": json_roundtrip,
+    "io_json_malformed": json_malformed,
 }

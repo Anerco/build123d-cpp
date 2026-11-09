@@ -79,4 +79,58 @@ COMPARE_CASES {
         return viewport(Box(2, 3, 4).project_to_viewport(Vector(10, 10, 10), Vector(0, 0, 1), Vector(1, 0, 0), 0.0));
     });
     compare::add_value("io_hlr_empty", [] { return viewport(Part().project_to_viewport(Vector(1, 1, 1))); });
+
+    // ---- GeomEncoder / JSON
+    compare::add_value("io_json_encode", [] {
+        Json data = Json::object({
+            {"a", GeomEncoder::encode(Axis(Vector(1, 2, 3), Vector(0, 1, 0)))},
+            {"c", GeomEncoder::encode(Color("red"))},
+            {"c2", GeomEncoder::encode(Color(0.1, 0.2, 0.3, 0.4))},
+            {"l", GeomEncoder::encode(Location(Vector(1, 2, 3), Vector(10, 20, 30)))},
+            {"p", GeomEncoder::encode(Plane::XZ)},
+            {"v", GeomEncoder::encode(Vector(1, 2.5, -0.0))},
+            {"list", Json::array({1, 2.0, nullptr, true, "x\xc3\xa9\n\x7f\xf0\x9f\x98\x80\"\\/"})},
+            {"nested", Json::object({{"empty", Json::object()}, {"e2", Json::array()}})},
+        });
+        return V::list({data.dump(), data.dump(2), data.dump(0)});
+    });
+    compare::add_value("io_json_floats", [] {
+        Json floats = Json::array({0.1, 1e-05, 1e16, 1e15, 123456789012345678.0, 5e-324, -0.0, 1.0, 100.0, 0.0001,
+                                   1.5e-7, 2.5, 1.0 / 3.0, 1e22, 1.7976931348623157e308, -2.5e-10, 12345.678,
+                                   std::nan(""), HUGE_VAL, -HUGE_VAL, 0, -7, 9007199254740993LL});
+        return V(floats.dump());
+    });
+    compare::add_value("io_json_dumps_each", [] {
+        return V::list({GeomEncoder::dumps(Axis::Z), GeomEncoder::dumps(Color(0.5, 0.25, 1)),
+                        GeomEncoder::dumps(Location(Vector(1, 2, 3), Vector(0, 0, 90))),
+                        GeomEncoder::dumps(Plane::isometric, 4), GeomEncoder::dumps(Vector(1e-7, 3, 1e300))});
+    });
+    compare::add_value("io_json_decode", [] {
+        std::vector<V> out;
+        for (const char* text : {R"({"Axis": [[1.0, 2.0, 3.0], [0.0, 1.0, 0.0]]})", R"({"Color": [0.1, 0.2, 0.3]})",
+                                 R"({"Location": [[1, 2, 3], [10, 20, 30]]})",
+                                 R"({"Plane": [[0, 0, 1], [1, 0, 0], [0, -1, 0]]})", R"({"Vector": [1, 2]})"}) {
+            const Geometry g = GeomEncoder::loads(text);
+            out.push_back(V(GeomEncoder::encode(g).dump()));
+        }
+        return V::list(out);
+    });
+    compare::add_value("io_json_hook_two_keys", [] {
+        GeomEncoder::loads(R"({"Vector": [1, 2, 3], "Axis": [[0, 0, 0], [0, 0, 1]]})");
+        return V("decoded");
+    });
+    compare::add_value("io_json_hook_unknown", [] {
+        GeomEncoder::loads(R"({"Foo": [1]})");
+        return V("decoded");
+    });
+    compare::add_value("io_json_roundtrip", [] {
+        const std::string text =
+            "{\"b\": [1, 2.50, -0.0, 1E3, 1e-7, true, false, null, {\"x\": \"\\u00e9\\ud83d\\ude00\\n\\/\"}],"
+            " \"a\": {}, \"b\": 3, \"nan\": NaN, \"inf\": -Infinity}";
+        return V(Json::parse(text).dump());
+    });
+    compare::add_value("io_json_malformed", [] {
+        Json::parse("[1, 2,]");
+        return V("parsed");
+    });
 }
