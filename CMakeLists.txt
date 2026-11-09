@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.16)
 project(build123d_cpp VERSION 0.1.0 LANGUAGES CXX)
 
+file(STRINGS include/build123d/version.hpp BUILD123D_CPP_VERSION_LINE REGEX "cpp_version = ")
+if(NOT BUILD123D_CPP_VERSION_LINE MATCHES "\"${PROJECT_VERSION}\"")
+  message(FATAL_ERROR "cpp_version in include/build123d/version.hpp must be the project version ${PROJECT_VERSION}")
+endif()
+
 if(NOT CMAKE_CXX_STANDARD)
   # The library itself needs C++17; C++20 enables designated initializers for the
   # option structs, e.g. extrude(sketch, 10, {.both = true}).

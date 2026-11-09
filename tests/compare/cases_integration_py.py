@@ -153,7 +153,14 @@ def property_setters():
               plane.origin, plane.x_dir, plane.y_dir, plane.z_dir, edge.length, edge.label])
 
 
+def version():
+    import build123d  # pylint: disable=import-outside-toplevel
+
+    return V([build123d.__version__, list(build123d.__version_tuple__)])
+
+
 CASES = {
+    "integ_version": version,
     "integ_property_setters": property_setters,
     "integ_color_material_lookup": color_material_lookup,
     "integ_unit_tables": unit_tables,

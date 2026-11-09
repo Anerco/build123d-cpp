@@ -31,6 +31,7 @@
 #include "build123d/text.hpp"
 #include "build123d/topology.hpp"
 #include "build123d/topology_utils.hpp"
+#include "build123d/version.hpp"
 #include "build123d/viewers.hpp"
 #include "build123d/warnings.hpp"
 

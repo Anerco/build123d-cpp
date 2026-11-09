@@ -29,6 +29,9 @@ V joint_info(const Part& p) {
 }  // namespace
 
 COMPARE_CASES {
+    compare::add_value("integ_version", [] {
+        return V::list({V(version), V::list({version_tuple[0], version_tuple[1], version_tuple[2]})});
+    });
     compare::add_value("integ_property_setters", [] {
         Axis axis(Vector(0, 0, 0), Vector(1, 0, 0));
         axis.set_direction(Vector(0, 0, 2));
