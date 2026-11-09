@@ -236,3 +236,440 @@ COMPARE_CASES {
         return V::list(out);
     });
 }
+
+// ---- bd_materials -----------------------------------------------------------------------
+
+namespace {
+
+namespace fin = build123d::finishes;
+namespace proc = build123d::processes;
+
+V opt_str(const std::optional<std::string>& s) { return s ? V(*s) : V(nullptr); }
+
+/// cases_pbr_py.py material_summary
+V material_summary(const RangeMaterial& m) {
+    const auto fields = m.fields();
+    std::vector<V> props, names;
+    bool has_scale = false;
+    for (const std::string& f : fields) {
+        names.emplace_back(f);
+        if (f == "hardness_scale") has_scale = true;
+        if (f == "name" || f == "density" || f == "family" || f == "transparent" || f == "hardness_scale") continue;
+        const auto r = m.property(f);
+        props.push_back(r ? V::list({f, r->min, r->max}) : V::list({f, nullptr}));
+    }
+    return V::obj({{"name", m.name},
+                   {"kind", m.kind},
+                   {"category", m.category},
+                   {"family", opt_str(m.family)},
+                   {"transparent", m.transparent},
+                   {"density", m.density},
+                   {"fields", V::list(names)},
+                   {"hardness_scale", has_scale ? V(m.hardness_scale) : V(nullptr)},
+                   {"props", V::list(props)},
+                   {"str", m.str()}});
+}
+
+V fm_summary(const FinishedMaterial& fm, bool with_color = true) {
+    return V::obj({{"repr", fm.repr()}, {"str", fm.str()}, {"name", fm.name()}, {"pbr", pbr_summary(fm.pbr(), with_color)}});
+}
+
+/// cases_pbr_py.py message
+template <class F>
+V message(F f) {
+    try {
+        f();
+        return V("no error");
+    } catch (const std::invalid_argument& e) {
+        return V(std::string(e.what()));
+    } catch (const std::out_of_range&) {
+        return V("IndexError/KeyError");
+    } catch (const std::domain_error&) {
+        return V("ZeroDivisionError");
+    }
+}
+
+const char* name_of(fin::Mechanical k) {
+    static const char* const n[] = {"", "BEAD_BLAST", "BRUSHED", "FINE_SANDING", "SMOOTH_MACHINING", "ELECTROPOLISHED"};
+    return n[static_cast<int>(k)];
+}
+const char* name_of(fin::Chemical k) {
+    static const char* const n[] = {"",           "ANODIZED", "CHEM_FILM", "CONDUCTIVE_OXIDATION", "BLACK_OXIDE",
+                                    "PASSIVATION", "PICKLING", "DYEING"};
+    return n[static_cast<int>(k)];
+}
+const char* name_of(fin::MetalPlating k) {
+    static const char* const n[] = {"",           "CHROME_PLATING", "GOLD_PLATING", "NICKEL_PLATING", "SILVER_PLATING",
+                                    "TIN_PLATING", "PVD",            "ZINC_PLATING", "VACUUM_PLATING"};
+    return n[static_cast<int>(k)];
+}
+const char* name_of(fin::Coating k) {
+    static const char* const n[] = {"", "POWDER_COAT", "ELECTROPHORESIS", "SPRAY_PAINT"};
+    return n[static_cast<int>(k)];
+}
+const char* name_of(fin::Marking k) {
+    static const char* const n[] = {"", "LASER_ENGRAVING", "ETCHING", "SILKSCREEN"};
+    return n[static_cast<int>(k)];
+}
+
+template <class Map>
+V finish_table(const char* name, const Map& table) {
+    std::vector<V> rows;
+    for (const auto& [k, f] : table) {
+        rows.push_back(V::list({name_of(k), static_cast<int>(k), f.name, opt_str(f.notes), f.repr()}));
+    }
+    return V::list({name, V::list(rows)});
+}
+
+template <class Map>
+V grade_table(const Map& table) {
+    std::vector<V> rows;
+    for (const auto& [k, m] : table) rows.push_back(V::list({static_cast<int>(k), m.name}));
+    return V::list(rows);
+}
+
+V names_of(const std::vector<RangeMaterial>& materials) {
+    std::vector<V> out;
+    for (const auto& m : materials) out.emplace_back(m.name);
+    return V::list(out);
+}
+
+V names_of(const std::vector<fin::Finish>& finishes) {
+    std::vector<V> out;
+    for (const auto& f : finishes) out.emplace_back(f.name);
+    return V::list(out);
+}
+
+V strings(const std::vector<std::string>& items) {
+    std::vector<V> out(items.begin(), items.end());
+    return V::list(out);
+}
+
+V string_set(const std::set<std::string>& items) { return strings({items.begin(), items.end()}); }
+
+V unit_table(const std::vector<std::pair<std::string, std::string>>& t) {
+    std::vector<V> out;
+    for (const auto& [k, v] : t) out.push_back(V::list({k, v}));
+    return V::list(out);
+}
+
+std::shared_ptr<const PbrProperties> shared_preset(const char* category, const char* name) {
+    return std::make_shared<const PbrProperties>(pbr_preset(category, name));
+}
+
+}  // namespace
+
+COMPARE_CASES {
+    compare::add_value("pbr_material_catalog", [] {
+        std::vector<V> out;
+        for (const std::string& name : registry::material_names()) {
+            const FinishedMaterial fm = registry::resolve(name);
+            out.push_back(V::list({name, registry::canonical_name(fm), material_summary(fm.material), fm_summary(fm)}));
+        }
+        return V::list(out);
+    });
+
+    compare::add_value("pbr_material_variants", [] {
+        std::vector<V> out;
+        auto add = [&out](auto f) { out.push_back(outcome([&] { return fm_summary(f()); })); };
+
+        const std::vector<fin::AppliedFinish> every_finish = {
+            fin::bead_blast(), fin::brushed(), fin::fine_sanding(), fin::smooth_machining(), fin::electropolish(),
+            fin::anodize("black"), fin::chem_film(), fin::conductive_oxidation(), fin::black_oxide(), fin::passivate(),
+            fin::pickle(), fin::dye("red"), fin::chrome(), fin::gold_plate(), fin::nickel_plate(), fin::silver_plate(),
+            fin::tin_plate(), fin::pvd(), fin::zinc_plate(), fin::vacuum_plating("blue"), fin::powder_coat("red"),
+            fin::spray_paint("green"), fin::electrophoresis(), fin::laser_engrave(), fin::etch(), fin::silkscreen()};
+        for (const auto& f : every_finish) add([&] { return metals::aluminum({.finish = f}); });
+        const std::vector<std::function<FinishedMaterial(const MetalOptions&)>> metal_families = {
+            [](const MetalOptions& o) { return metals::stainless(o); },
+            [](const MetalOptions& o) { return metals::mild_steel(o); },
+            [](const MetalOptions& o) { return metals::titanium(o); },
+            [](const MetalOptions& o) { return metals::brass(o); },
+            [](const MetalOptions& o) { return metals::copper(o); },
+            [](const MetalOptions& o) { return metals::magnesium(o); },
+            [](const MetalOptions& o) { return metals::gold(o); },
+            [](const MetalOptions& o) { return metals::bronze(o); },
+            [](const MetalOptions& o) { return metals::tool_steel(o); },
+        };
+        for (const auto& mat : metal_families) {
+            for (const auto& f : {fin::brushed(), fin::bead_blast(), fin::anodize("red"), fin::pvd("gunmetal"),
+                                  fin::black_oxide(), fin::electrophoresis("navy")}) {
+                add([&] { return mat({.finish = f}); });
+            }
+        }
+        // finish geometry and lists
+        add([] { return metals::aluminum({.finish = fin::brushed({2.0, 2.0}, 30.0)}); });
+        add([] { return metals::aluminum({.finish = fin::bead_blast({0.5, 0.5})}); });
+        add([] { return metals::aluminum({.finish = fin::fine_sanding({1.0, 3.0})}); });
+        add([] { return metals::aluminum({.finish = fin::brushed({1.0, 1.0}, 0.0)}); });
+        add([] { return metals::aluminum({.finish = FinishSpec{fin::brushed(), fin::anodize("red")}}); });
+        add([] { return metals::aluminum({.finish = FinishSpec{fin::anodize("blue"), fin::bead_blast({2.0, 2.0})}}); });
+        add([] {
+            return metals::aluminum(
+                {.finish = FinishSpec{fin::powder_coat("red"), fin::spray_paint("blue", fin::Sheen::MATTE)}});
+        });
+        add([] { return metals::aluminum({.finish = FinishSpec(std::vector<fin::AppliedFinish>{})}); });
+        add([] { return metals::aluminum({.finish = FinishSpec{fin::laser_engrave()}}); });
+        // finish colors
+        for (const auto& c : std::vector<std::optional<ColorSpec>>{
+                 ColorSpec("rose gold"), ColorSpec("natural"), ColorSpec(" Champagne "), ColorSpec("#336699"),
+                 ColorSpec("#33669980"), ColorSpec(0x336699), ColorSpec(-1), ColorSpec("red", 0.5),
+                 ColorSpec{0.1, 0.2, 0.3}, ColorSpec{0.1, 0.2, 0.3, 0.4}, ColorSpec(Color(0.2, 0.4, 0.6, 0.5)),
+                 ColorSpec("gunmetal"), ColorSpec("nocolor"), std::nullopt}) {
+            add([&] { return metals::aluminum({.finish = fin::anodize(c)}); });
+        }
+        // the other surfaces
+        add([] { return metals::aluminum({.finish = fin::pvd("rose gold")}); });
+        add([] { return metals::stainless({.finish = FinishSpec{fin::brushed(), fin::pvd("gold")}}); });
+        add([] { return metals::stainless({.finish = FinishSpec{fin::bead_blast(), fin::black_oxide()}}); });
+        add([] { return plastics::nylon({.finish = fin::dye("blue")}); });
+        add([] { return wood::oak({.finish = fin::dye("red")}); });
+        add([] { return metals::aluminum({.finish = fin::dye(std::nullopt)}); });
+        add([] { return metals::aluminum({.finish = FinishSpec{fin::brushed(), fin::dye("red")}}); });
+        add([] { return metals::mild_steel({.finish = fin::zinc_plate("yellow")}); });
+        add([] { return metals::mild_steel({.finish = fin::zinc_plate()}); });
+        add([] { return plastics::abs_({.finish = fin::vacuum_plating("silver", fin::Sheen::MATTE)}); });
+        add([] { return metals::aluminum({.finish = fin::powder_coat("red", std::nullopt)}); });
+        add([] { return metals::aluminum({.finish = fin::electrophoresis(0)}); });
+        add([] { return metals::aluminum({.finish = fin::electrophoresis("#000")}); });
+        add([] { return metals::aluminum({.finish = fin::electrophoresis("black")}); });
+        add([] { return metals::stainless({.finish = fin::electrophoresis("red")}); });
+        add([] { return metals::aluminum({.finish = FinishSpec{fin::brushed(), fin::electrophoresis()}}); });
+        add([] { return metals::copper({.finish = fin::silkscreen()}); });
+        // processes
+        for (const auto& p : {proc::fdm(), proc::fdm(0.1), proc::fdm(0.2, 90.0), proc::fdm(0.3, 0.0, 2.0),
+                              proc::fdm(0.2, 0.0, 0.5), proc::fdm_skin(), proc::fdm_skin(0.6, 0.0),
+                              proc::fdm_skin(0.4, 45.0), proc::sls(), proc::sls({2.0, 2.0}), proc::mjf(), proc::slm(),
+                              proc::vat(), proc::molded(), proc::machined(), proc::cast(), proc::wrought()}) {
+            add([&] { return plastics::pla({.color = "orange", .process = p}); });
+        }
+        for (const auto& p : {proc::fdm(), proc::slm({3.0, 3.0}), proc::cast(), proc::fdm_skin()}) {
+            add([&] { return metals::aluminum({.process = p}); });
+            add([&] { return wood::oak({.process = p}); });
+        }
+        add([] { return plastics::cfrp({.process = proc::fdm()}); });
+        add([] { return plastics::pc({.opacity = 0.5, .process = proc::fdm()}); });
+        add([] { return plastics::pla({.process = proc::fdm(0.0)}); });
+        add([] { return plastics::pla({.process = proc::fdm(0.2, 0.0, 0.0)}); });
+        // colors
+        for (const auto& c : std::vector<ColorSpec>{"orange", "ORANGE", "#FF8800", "#ff880080", ColorSpec(0xFF8800),
+                                                    ColorSpec("red", 0.5), ColorSpec{0.1, 0.2, 0.3},
+                                                    ColorSpec{0.1, 0.2, 0.3, 0.4}, ColorSpec(Color(1.0, 0.5, 0.0)),
+                                                    "natural", "clear", "chrome", "rgb(10%, 20%, 30%)",
+                                                    "hsl(120, 50%, 50%)", ColorSpec{1.0}, "nocolor"}) {
+            add([&] { return plastics::pla({.color = c}); });
+        }
+        add([] { return plastics::cfrp({.color = "red"}); });
+        add([] { return plastics::petg(plastics::PETG::CF, {.color = "#11223380"}); });
+        // see-through
+        add([] { return plastics::pc(); });
+        add([] { return plastics::pc({.opacity = 0.5}); });
+        add([] { return plastics::pc({.opacity = 1.0}); });
+        add([] { return plastics::pmma({.color = "blue", .thickness_mm = 3.0, .roughness = 0.1}); });
+        add([] { return glass::soda_lime(); });
+        add([] { return glass::borosilicate({.thickness_mm = 5.0, .opacity = 0.2, .roughness = 0.05}); });
+        add([] { return glass::soda_lime({.color = "#ccffcc", .finish = fin::etch()}); });
+        add([] { return resins::transparent({.color = "gold", .opacity = 0.8}); });
+        // wood, paper, textile, resins
+        add([] { return wood::oak(); });
+        add([] { return wood::walnut({.scale = {2.0, 2.0}}); });
+        add([] { return wood::maple({.rotation = 90.0}); });
+        add([] { return wood::mdf(); });
+        add([] { return wood::osb({.scale = {0.5, 0.5}, .rotation = 45.0}); });
+        add([] { return wood::hardwood(wood::Hardwood::GENERIC); });
+        add([] { return wood::softwood(wood::Softwood::PINE); });
+        add([] { return wood::engineered_wood(wood::EngineeredWood::OSB, {.density = 600.0}); });
+        add([] { return wood::ash({.finish = fin::fine_sanding({2.0, 2.0})}); });
+        add([] { return wood::birch({.finish = fin::spray_paint("white", fin::Sheen::MATTE)}); });
+        add([] { return wood::beech({.finish = fin::brushed(), .scale = {3.0, 3.0}}); });
+        add([] { return wood::american_cherry({.finish = fin::brushed({2.0, 2.0}), .scale = {3.0, 3.0}}); });
+        add([] { return paper::paper(); });
+        add([] { return paper::paper({.color = std::nullopt}); });
+        add([] { return paper::paper({.color = "yellow", .scale = {2.0, 2.0}}); });
+        add([] { return paper::cardboard(); });
+        add([] { return paper::cardboard({.rotation = 90.0}); });
+        add([] { return paper::foamboard({.color = "black"}); });
+        add([] { return textile::leather({.color = "saddlebrown"}); });
+        add([] { return textile::felt(); });
+        add([] { return textile::woven({.scale = {3.0, 3.0}, .rotation = 15.0}); });
+        add([] { return resins::standard({.color = "grey"}); });
+        add([] { return resins::tough(); });
+        add([] { return resins::ceramic({.process = proc::vat()}); });
+        // materials of your own
+        add([] {
+            return metals::custom_metal("MyAlloy", 7000.0,
+                                        {.family = "aluminum", .tensile_strength = 300.0, .hardness = Range(10.0, 20.0)});
+        });
+        add([] { return metals::custom_metal("Mg", 1800.0, {.family = "magnesium", .finish = fin::anodize("red")}); });
+        add([] { return metals::custom_metal("Gilded", 8000.0, {.pbr = shared_preset("metal", "gold")}); });
+        add([] { return wood::custom_wood("Teak", 650.0, {.family = "teak"}); });
+        add([] { return wood::custom_wood("Walnutish", 650.0, {.family = "walnut", .scale = {2.0, 2.0}}); });
+        add([] { return paper::custom_paper("Kraft", 700.0, {.family = "corrugated_cardboard", .color = "tan"}); });
+        add([] { return textile::custom_textile("Hide", 900.0, {.family = "leather", .color = "brown"}); });
+        add([] { return textile::custom_textile("Cloth", 300.0); });
+        add([] { return plastics::custom_plastic("CF-Nylon", 1200.0, {.family = "CFRP"}); });
+        add([] {
+            return plastics::custom_plastic("Clear", 1200.0, {.transparent = true, .thickness_mm = 2.0, .opacity = 0.5});
+        });
+        add([] { return plastics::custom_plastic("Fdm", 1200.0, {.process = proc::fdm(0.1)}); });
+        add([] { return resins::custom_resin("R", 1100.0, {.color = "teal"}); });
+        add([] { return glass::custom_glass("G", 2400.0, {.opacity = 0.3}); });
+        add([] { return glass::custom_glass("G2", 2400.0, {.transparent = false}); });
+        // FinishedMaterial itself
+        const RangeMaterial base = metals::aluminum().material;
+        add([&] { return FinishedMaterial(base); });
+        add([&] { return FinishedMaterial(base, fin::brushed(), {.color = "red", .scale = {2.0, 2.0}, .rotation = 10.0}); });
+        add([&] { return FinishedMaterial(base, {.color = "red", .thickness_mm = 1.0, .opacity = 0.5, .roughness = 0.2}); });
+        add([] {
+            return FinishedMaterial(plastics::pla().material, {.color = "red",
+                                                               .thickness_mm = 1.0,
+                                                               .opacity = 0.5,
+                                                               .roughness = 0.2,
+                                                               .scale = {2.0, 3.0},
+                                                               .rotation = 45.0,
+                                                               .process = proc::fdm()});
+        });
+        add([&] { return FinishedMaterial(base, {.pbr = shared_preset("metal", "copper")}); });
+        add([] { return FinishedMaterial(wood::oak().material, {.scale = {0.5, 0.5}}); });
+        add([&] { return FinishedMaterial(with_density(base, 1000.0)); });
+        add([] { return FinishedMaterial(glass::soda_lime().material, {.color = "blue", .opacity = 0.3}); });
+        add([] {
+            FinishedMaterial fm = metals::aluminum();
+            fm.set_pbr(pbr_preset("wood", "oak"));
+            return fm;
+        });
+        add([&] {
+            FinishedMaterial fm(base, {.pbr = shared_preset("metal", "copper")});
+            fm.set_pbr(nullptr);
+            return fm;
+        });
+        out.push_back(outcome([&] {
+            return pbr_summary(
+                get_pbr_properties(base, FinishSpec{fin::brushed()}, proc::fdm(), {.color = "red", .scale = {2.0, 2.0}}));
+        }));
+        out.push_back(outcome([&] {
+            return pbr_summary(get_pbr_properties(base, fin::brushed({1.0, 1.0}, 0.0), proc::slm({2.0, 2.0})));
+        }));
+        out.push_back(outcome([&] {
+            return pbr_summary(get_pbr_properties(base, std::nullopt, std::nullopt, {.pbr = shared_preset("wood", "oak")}));
+        }));
+        {
+            std::vector<std::string> warnings;
+            const WarningHandler previous =
+                set_warning_handler([&warnings](const std::string& m) { warnings.push_back(m); });
+            const FinishedMaterial fm = plastics::pla({.process = proc::Process::FDM});
+            set_warning_handler(previous);
+            out.push_back(V::obj({{"fm", fm_summary(fm)}, {"warnings", strings(warnings)}}));
+        }
+        return V::list(out);
+    });
+
+    compare::add_value("pbr_material_messages", [] {
+        std::vector<V> out;
+        const RangeMaterial base = metals::aluminum().material;
+        const auto copper = shared_preset("metal", "copper");
+        out.push_back(message([&] { (void)FinishedMaterial(base, fin::brushed(), {.pbr = copper}); }));
+        out.push_back(message([&] { (void)FinishedMaterial(base, {.color = "red", .pbr = copper}); }));
+        out.push_back(message([&] { (void)FinishedMaterial(base, {.scale = {2.0, 1.0}, .pbr = copper}); }));
+        out.push_back(message([&] { (void)FinishedMaterial(base, {.rotation = 1.0, .pbr = copper}); }));
+        out.push_back(message([&] { (void)FinishedMaterial(base, {.process = proc::fdm(), .pbr = copper}); }));
+        out.push_back(message([&] { (void)FinishedMaterial(base, fin::brushed(), {.process = proc::fdm()}); }));
+        out.push_back(message([&] {
+            (void)FinishedMaterial(base, FinishSpec(std::vector<fin::AppliedFinish>{}), {.process = proc::fdm()});
+        }));
+        out.push_back(message([] { (void)metals::aluminum({.finish = fin::brushed(), .process = proc::cast()}); }));
+        out.push_back(message([] { (void)registry::factory("aluminum")({.color = "red"}); }));
+        out.push_back(message([] { (void)registry::factory("Alu_G7075_T6")({.thickness_mm = 1.0}); }));
+        out.push_back(message([] { (void)registry::factory("paper")({.opacity = 0.5}); }));
+        out.push_back(message([] { (void)registry::factory("oak")({.color = "red"}); }));
+        out.push_back(message([] { (void)registry::factory("abs")({.scale = std::pair{1.0, 1.0}}); }));
+        std::string aluminum30;
+        for (int i = 0; i < 30; ++i) aluminum30 += "aluminum";
+        for (const std::string& name : std::vector<std::string>{
+                 "alumnium", "Aluminium", "stainles steel", "pla generic", "xyz", "Alu-G6061", "", "  oak  x", "titanum",
+                 "petg-cf2", std::string(250, 'a'), aluminum30, "ToolSteel_D2", "HARDWOOD_OKA", "brass c360",
+                 "Nylon PA 12", "steel"}) {
+            out.push_back(message([&] { (void)registry::factory(name); }));
+        }
+        out.push_back(message([] { (void)registry::canonical_name(metals::custom_metal("Mine", 7000.0)); }));
+        out.push_back(message([] { (void)registry::canonical_name(metals::custom_metal("Alu G6061 T6", 7000.0)); }));
+        out.push_back(message([] { (void)registry::canonical_name(metals::aluminum().material); }));
+        out.push_back(message([] { (void)Range(2.0, 1.0); }));
+        out.push_back(message([] { (void)plastics::pla({.color = ColorSpec{1.0}}).pbr(); }));
+        out.push_back(message([] { (void)applicability::typical_materials(fin::Finish{"Custom"}); }));
+        out.push_back(message([] { (void)plastics::pla({.process = proc::fdm(0.0)}).pbr(); }));
+        return V::list(out);
+    });
+
+    compare::add_value("pbr_material_tables", [] {
+        const std::vector<fin::AppliedFinish> applied = {
+            fin::bead_blast(), fin::brushed({2.0, 3.0}, 45.0), fin::fine_sanding({0.5, 0.5}), fin::smooth_machining(),
+            fin::electropolish(), fin::anodize("red"), fin::chem_film(), fin::conductive_oxidation(),
+            fin::black_oxide(), fin::passivate(), fin::pickle(), fin::dye("blue"), fin::chrome(), fin::gold_plate(),
+            fin::nickel_plate(), fin::silver_plate(), fin::tin_plate(), fin::pvd(), fin::pvd("gold"),
+            fin::zinc_plate(), fin::vacuum_plating("red", fin::Sheen::MATTE), fin::powder_coat(std::nullopt, std::nullopt),
+            fin::spray_paint("white"), fin::electrophoresis(), fin::laser_engrave(), fin::etch(), fin::silkscreen(),
+            fin::anodize(0x123456), fin::anodize(ColorSpec("red", 0.5)), fin::anodize(ColorSpec{0.1, 0.2, 0.3}),
+            fin::anodize(ColorSpec(Color(1.0, 0.0, 0.0))), fin::anodize("it's")};
+        const std::vector<proc::AppliedProcess> processes = {
+            proc::fdm(),   proc::fdm(0.1, 90.0, 2.0), proc::fdm_skin(), proc::fdm_skin(0.6, 0.0), proc::sls(),
+            proc::sls({2.0, 2.0}), proc::mjf(), proc::slm(), proc::vat(), proc::molded(), proc::machined(),
+            proc::cast(), proc::wrought()};
+        std::vector<V> reprs_applied, reprs_processes, all_finishes, values, typical_f, typical_m, typical_by_finish;
+        for (const auto& f : applied) reprs_applied.emplace_back(f.repr());
+        for (const auto& p : processes) reprs_processes.emplace_back(p.repr());
+        for (const auto& f : fin::ALL_FINISHES) all_finishes.emplace_back(f.repr());
+        for (int i = 0; i < 9; ++i) values.emplace_back(proc::to_string(static_cast<proc::Process>(i)));
+        for (const auto& m : ALL_MATERIALS) typical_f.push_back(V::list({m.name, names_of(typical_finishes(m))}));
+        for (const auto& [key, subs] : applicability::TYPICAL_SUBSTRATES) {
+            const std::string name = std::visit([](auto k) { return std::string(name_of(k)); }, key);
+            typical_m.push_back(V::list({name, string_set(subs), names_of(typical_materials(key))}));
+        }
+        for (const auto& f : fin::ALL_FINISHES) typical_by_finish.push_back(V::list({f.name, names_of(typical_materials(f))}));
+        const std::pair<const char*, const std::vector<RangeMaterial>*> modules[] = {
+            {"ALL_GLASSES", &glass::ALL_GLASSES}, {"ALL_METALS", &metals::ALL_METALS},
+            {"ALL_PAPERS", &paper::ALL_PAPERS},   {"ALL_PLASTICS", &plastics::ALL_PLASTICS},
+            {"ALL_RESINS", &resins::ALL_RESINS},  {"ALL_TEXTILES", &textile::ALL_TEXTILES},
+            {"ALL_WOODS", &wood::ALL_WOODS}};
+        std::vector<V> module_lists;
+        for (const auto& [name, list] : modules) module_lists.push_back(V::list({name, names_of(*list)}));
+        return V::list({
+            V::list({finish_table("MECHANICAL_FINISHES", fin::MECHANICAL_FINISHES),
+                     finish_table("CHEMICAL_FINISHES", fin::CHEMICAL_FINISHES),
+                     finish_table("METAL_PLATING_FINISHES", fin::METAL_PLATING_FINISHES),
+                     finish_table("COATING_FINISHES", fin::COATING_FINISHES),
+                     finish_table("MARKING_FINISHES", fin::MARKING_FINISHES)}),
+            V::list(all_finishes),
+            V::list(reprs_applied),
+            V::list({applied[0] == fin::bead_blast(), applied[1] == fin::brushed(),
+                     fin::Finish{"Brushed"} == applied[1].finish}),
+            V::list(reprs_processes),
+            V::list({processes[0] == proc::fdm(), processes[0] == proc::fdm_skin()}),
+            V::list(values),
+            V::list({proc::AUTHORED_LAYER_HEIGHT_MM, proc::AUTHORED_LINE_WIDTH_MM, proc::AUTHORED_SKIN_ROTATION}),
+            V::list(typical_f),
+            V::list(typical_m),
+            V::list(typical_by_finish),
+            names_of(typical_materials(fin::brushed({2.0, 2.0}))),
+            names_of(typical_finishes(wood::custom_wood("x", 1.0).material)),
+            strings(registry::material_names()),
+            names_of(ALL_MATERIALS),
+            V::list(module_lists),
+            grade_table(metals::ALU_MATERIALS),
+            grade_table(wood::HARDWOOD_MATERIALS),
+            grade_table(plastics::NYLON_MATERIALS),
+            unit_table(PROPERTY_UNITS),
+            unit_table(MECHANICAL_PROPERTY_UNITS),
+            unit_table(THERMAL_PROPERTY_UNITS),
+            V::list({string_set(ALLOWED_CATEGORIES), string_set(FERROUS), string_set(METAL), string_set(PAINTABLE),
+                     string_set(COATABLE_POLY), string_set(EVERYTHING)}),
+            V::list({NOT_SUITABLE.min, NOT_SUITABLE.max, Range(1.0, 3.0).value_at(0.25), Range(2.0, 2.0).value_at(0.5)}),
+            material_summary(with_density(metals::aluminum().material, 2000.0)),
+            material_summary(with_density(metals::aluminum().material, std::nullopt)),
+            material_summary(
+                metals::custom_metal("C", 1.0, {.tensile_strength = NOT_SUITABLE, .yield_strength = 5.0}).material),
+            V(wood::custom_wood("W", 600.0).material.str()),
+            V(paper::custom_paper("P", 600.0, {.thickness = 0.1}).material.str()),
+        });
+    });
+}

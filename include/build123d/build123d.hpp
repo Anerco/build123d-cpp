@@ -21,6 +21,7 @@
 #include "build123d/joints.hpp"
 #include "build123d/json.hpp"
 #include "build123d/locations.hpp"
+#include "build123d/material_catalog.hpp"
 #include "build123d/materials.hpp"
 #include "build123d/mesher.hpp"
 #include "build123d/objects.hpp"

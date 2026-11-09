@@ -1,209 +1,1103 @@
-// The bd_materials catalog as far as build123d uses it: each name resolve() accepts and
-// the physical material it stands for. Generated from bd_materials 0.2.5's registry
-// (family names give their default grade).
+// bd_materials, ported: core (Range, RangeMaterial), finishes, processes, FinishedMaterial, the
+// catalog (generated into material_catalog.inc by scripts/gen_materials_data.py), the registry
+// and applicability. The looks (bd_materials.pbr) are in material_looks.cpp.
+//
+// The library itself only reads the public tables through the functions below (function-local
+// statics), so they can be used during static initialization.
 #include <algorithm>
-#include <cctype>
+#include <array>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <limits>
 #include <map>
+#include <iterator>
 #include <stdexcept>
+#include <tuple>
+#include <type_traits>
+#include <unordered_map>
 
+#include "build123d/material_catalog.hpp"
 #include "build123d/materials.hpp"
+#include "build123d/warnings.hpp"
+#include "pbr_internal.hpp"
+#include "pyformat.hpp"
 
 namespace build123d {
 
 namespace {
 
-const std::map<std::string, RangeMaterial>& catalog() {
-    static const std::map<std::string, RangeMaterial> table = {
-    {"abs", {"ABS_GENERIC", 1050.0, "plastic", "ABS", false}},
-    {"abs_flame_retardant", {"ABS_FLAME_RETARDANT", 1200.0, "plastic", "ABS", false}},
-    {"abs_generic", {"ABS_GENERIC", 1050.0, "plastic", "ABS", false}},
-    {"alloy_steel", {"AlloySteel_G4140_QUENCHED_TEMPERED", 7850.0, "metal", "alloy_steel", false}},
-    {"alloysteel.g52100_hardened_low_tempered", {"AlloySteel.G52100_HARDENED_LOW_TEMPERED", 7810.0, "metal", "alloy_steel", false}},
-    {"alloysteel_g1215_cold_drawn", {"AlloySteel_G1215_COLD_DRAWN", 7850.0, "metal", "alloy_steel", false}},
-    {"alloysteel_g4140_quenched_tempered", {"AlloySteel_G4140_QUENCHED_TEMPERED", 7850.0, "metal", "alloy_steel", false}},
-    {"alloysteel_g4340_quenched_tempered", {"AlloySteel_G4340_QUENCHED_TEMPERED", 7850.0, "metal", "alloy_steel", false}},
-    {"alu_alsi10mg_as_built", {"Alu_ALSI10MG_AS_BUILT", 2670.0, "metal", "aluminum", false}},
-    {"alu_g2024_aerospace", {"Alu_G2024_AEROSPACE", 2780.0, "metal", "aluminum", false}},
-    {"alu_g2a12_t4", {"Alu_G2A12_T4", 2800.0, "metal", "aluminum", false}},
-    {"alu_g5052_h32", {"Alu_G5052_H32", 2680.0, "metal", "aluminum", false}},
-    {"alu_g6061_t6", {"Alu_G6061_T6", 2700.0, "metal", "aluminum", false}},
-    {"alu_g7075_t6", {"Alu_G7075_T6", 2810.0, "metal", "aluminum", false}},
-    {"aluminum", {"Alu_G6061_T6", 2700.0, "metal", "aluminum", false}},
-    {"american_cherry", {"Hardwood_AMERICAN_CHERRY", 570.0, "wood", "cherry", false}},
-    {"asa", {"Asa_GENERIC", 1070.0, "plastic", "ASA", false}},
-    {"asa_generic", {"Asa_GENERIC", 1070.0, "plastic", "ASA", false}},
-    {"ash", {"Hardwood_ASH", 670.0, "wood", "ash", false}},
-    {"beech", {"Hardwood_BEECH", 720.0, "wood", "beech", false}},
-    {"birch", {"Hardwood_BIRCH", 660.0, "wood", "birch", false}},
-    {"borosilicate", {"Borosilicate_GENERIC", 2230.0, "glass", "borosilicate", true}},
-    {"borosilicate_generic", {"Borosilicate_GENERIC", 2230.0, "glass", "borosilicate", true}},
-    {"brass", {"Brass_C360_HALF_HARD", 8500.0, "metal", "brass", false}},
-    {"brass_c360_half_hard", {"Brass_C360_HALF_HARD", 8500.0, "metal", "brass", false}},
-    {"brass_c360_soft_annealed", {"Brass_C360_SOFT_ANNEALED", 8500.0, "metal", "brass", false}},
-    {"bronze", {"Bronze_C51000_PHOSPHOR", 8800.0, "metal", "bronze", false}},
-    {"bronze_c51000_phosphor", {"Bronze_C51000_PHOSPHOR", 8800.0, "metal", "bronze", false}},
-    {"bronze_c90500_tin", {"Bronze_C90500_TIN", 8800.0, "metal", "bronze", false}},
-    {"bronze_c93200_bearing", {"Bronze_C93200_BEARING", 8900.0, "metal", "bronze", false}},
-    {"cardboard", {"Cardboard_CORRUGATED", 140.0, "paper", "corrugated_cardboard", false}},
-    {"cardboard_corrugated", {"Cardboard_CORRUGATED", 140.0, "paper", "corrugated_cardboard", false}},
-    {"castable", {"Castable_GENERIC", 1150.0, "resin", "resin", false}},
-    {"castable_generic", {"Castable_GENERIC", 1150.0, "resin", "resin", false}},
-    {"ceramic", {"Ceramic_GENERIC", 1650.0, "resin", "resin", false}},
-    {"ceramic_generic", {"Ceramic_GENERIC", 1650.0, "resin", "resin", false}},
-    {"cfrp", {"CFRP_PLATE", 1600.0, "plastic", "CFRP", false}},
-    {"cfrp_plate", {"CFRP_PLATE", 1600.0, "plastic", "CFRP", false}},
-    {"copper", {"Copper_C110_ANNEALED", 8900.0, "metal", "copper", false}},
-    {"copper_c110_annealed", {"Copper_C110_ANNEALED", 8900.0, "metal", "copper", false}},
-    {"engineered_wood", {"EngineeredWood_MDF", 750.0, "wood", "mdf", false}},
-    {"engineeredwood_mdf", {"EngineeredWood_MDF", 750.0, "wood", "mdf", false}},
-    {"engineeredwood_osb", {"EngineeredWood_OSB", 640.0, "wood", "osb", false}},
-    {"esd", {"Esd_GENERIC", 1300.0, "resin", "resin", false}},
-    {"esd_generic", {"Esd_GENERIC", 1300.0, "resin", "resin", false}},
-    {"felt", {"Felt_GENERIC", 120.0, "textile", "felt", false}},
-    {"felt_generic", {"Felt_GENERIC", 120.0, "textile", "felt", false}},
-    {"flexible", {"Flexible_GENERIC", 1150.0, "resin", "resin", false}},
-    {"flexible_generic", {"Flexible_GENERIC", 1150.0, "resin", "resin", false}},
-    {"foamboard", {"Foamboard_GENERIC", 120.0, "paper", "foamboard", false}},
-    {"foamboard_generic", {"Foamboard_GENERIC", 120.0, "paper", "foamboard", false}},
-    {"fr4", {"FR4_GENERIC", 1850.0, "plastic", "FR4", false}},
-    {"fr4_generic", {"FR4_GENERIC", 1850.0, "plastic", "FR4", false}},
-    {"gold", {"Gold_PURE", 19300.0, "metal", "gold", false}},
-    {"gold_pure", {"Gold_PURE", 19300.0, "metal", "gold", false}},
-    {"hardwood", {"Hardwood_GENERIC", 675.0, "wood", "oak", false}},
-    {"hardwood_american_cherry", {"Hardwood_AMERICAN_CHERRY", 570.0, "wood", "cherry", false}},
-    {"hardwood_ash", {"Hardwood_ASH", 670.0, "wood", "ash", false}},
-    {"hardwood_beech", {"Hardwood_BEECH", 720.0, "wood", "beech", false}},
-    {"hardwood_birch", {"Hardwood_BIRCH", 660.0, "wood", "birch", false}},
-    {"hardwood_generic", {"Hardwood_GENERIC", 675.0, "wood", "oak", false}},
-    {"hardwood_maple", {"Hardwood_MAPLE", 705.0, "wood", "maple", false}},
-    {"hardwood_oak", {"Hardwood_OAK", 755.0, "wood", "oak", false}},
-    {"hardwood_walnut", {"Hardwood_WALNUT", 640.0, "wood", "walnut", false}},
-    {"high_temp", {"HighTemp_GENERIC", 1300.0, "resin", "resin", false}},
-    {"hightemp_generic", {"HighTemp_GENERIC", 1300.0, "resin", "resin", false}},
-    {"leather", {"Leather_GENERIC", 950.0, "textile", "leather", false}},
-    {"leather_generic", {"Leather_GENERIC", 950.0, "textile", "leather", false}},
-    {"magnesium", {"Magnesium_GENERIC_STRUCTURAL", 1810.0, "metal", "magnesium", false}},
-    {"magnesium_generic_structural", {"Magnesium_GENERIC_STRUCTURAL", 1810.0, "metal", "magnesium", false}},
-    {"maple", {"Hardwood_MAPLE", 705.0, "wood", "maple", false}},
-    {"mdf", {"EngineeredWood_MDF", 750.0, "wood", "mdf", false}},
-    {"mild_steel", {"MildSteel_PLAIN_CARBON_GENERIC", 7800.0, "metal", "mild_steel", false}},
-    {"mildsteel_g1018_cold_drawn", {"MildSteel_G1018_COLD_DRAWN", 7850.0, "metal", "mild_steel", false}},
-    {"mildsteel_g1045_cold_drawn", {"MildSteel_G1045_COLD_DRAWN", 7850.0, "metal", "mild_steel", false}},
-    {"mildsteel_ga36_hot_rolled", {"MildSteel_GA36_HOT_ROLLED", 7850.0, "metal", "mild_steel", false}},
-    {"mildsteel_plain_carbon_generic", {"MildSteel_PLAIN_CARBON_GENERIC", 7800.0, "metal", "mild_steel", false}},
-    {"nylon", {"Nylon_PA12", 1010.0, "plastic", "PA", false}},
-    {"nylon_pa12", {"Nylon_PA12", 1010.0, "plastic", "PA", false}},
-    {"nylon_pa12_gf35", {"Nylon_PA12_GF35", 1300.0, "plastic", "PA", false}},
-    {"nylon_pa12_sintered", {"Nylon_PA12_SINTERED", 1000.0, "plastic", "PA", false}},
-    {"nylon_pa6", {"Nylon_PA6", 1140.0, "plastic", "PA", false}},
-    {"oak", {"Hardwood_OAK", 755.0, "wood", "oak", false}},
-    {"osb", {"EngineeredWood_OSB", 640.0, "wood", "osb", false}},
-    {"paper", {"Paper_OFFICE", 800.0, "paper", "paper", false}},
-    {"paper_office", {"Paper_OFFICE", 800.0, "paper", "paper", false}},
-    {"pc", {"PC_GENERIC", 1200.0, "plastic", "PC", true}},
-    {"pc_generic", {"PC_GENERIC", 1200.0, "plastic", "PC", true}},
-    {"pe", {"PE_HDPE", 960.0, "plastic", "PE", false}},
-    {"pe_hdpe", {"PE_HDPE", 960.0, "plastic", "PE", false}},
-    {"peek", {"Peek_MOLDED", 1300.0, "plastic", "PEEK", false}},
-    {"peek_molded", {"Peek_MOLDED", 1300.0, "plastic", "PEEK", false}},
-    {"peek_printed", {"Peek_PRINTED", 1300.0, "plastic", "PEEK", false}},
-    {"petg", {"PETG_GENERIC", 1270.0, "plastic", "PETG", false}},
-    {"petg_cf", {"PETG_CF", 1320.0, "plastic", "PETG", false}},
-    {"petg_generic", {"PETG_GENERIC", 1270.0, "plastic", "PETG", false}},
-    {"phenolic", {"Phenolic_BAKELITE", 1300.0, "plastic", "phenolic", false}},
-    {"phenolic_bakelite", {"Phenolic_BAKELITE", 1300.0, "plastic", "phenolic", false}},
-    {"pine", {"Softwood_PINE", 500.0, "wood", "pine", false}},
-    {"pla", {"PLA_GENERIC", 1240.0, "plastic", "PLA", false}},
-    {"pla_carbon_filled", {"PLA_CARBON_FILLED", 1250.0, "plastic", "PLA", false}},
-    {"pla_generic", {"PLA_GENERIC", 1240.0, "plastic", "PLA", false}},
-    {"pmma", {"PMMA_GENERIC", 1180.0, "plastic", "PMMA", true}},
-    {"pmma_generic", {"PMMA_GENERIC", 1180.0, "plastic", "PMMA", true}},
-    {"pom", {"POM_GENERIC", 1410.0, "plastic", "POM", false}},
-    {"pom_generic", {"POM_GENERIC", 1410.0, "plastic", "POM", false}},
-    {"pp", {"PP_GENERIC", 905.0, "plastic", "PP", false}},
-    {"pp_generic", {"PP_GENERIC", 905.0, "plastic", "PP", false}},
-    {"pps", {"PPS_CF", 1400.0, "plastic", "PPS", false}},
-    {"pps_cf", {"PPS_CF", 1400.0, "plastic", "PPS", false}},
-    {"ptfe", {"PTFE_GENERIC", 2170.0, "plastic", "PTFE", false}},
-    {"ptfe_generic", {"PTFE_GENERIC", 2170.0, "plastic", "PTFE", false}},
-    {"rubber", {"Rubber_GENERIC", 1200.0, "plastic", "rubber", false}},
-    {"rubber_generic", {"Rubber_GENERIC", 1200.0, "plastic", "rubber", false}},
-    {"silver", {"Silver_PURE", 10490.0, "metal", "silver", false}},
-    {"silver_pure", {"Silver_PURE", 10490.0, "metal", "silver", false}},
-    {"soda_lime", {"SodaLime_GENERIC", 2500.0, "glass", "soda_lime", true}},
-    {"sodalime_generic", {"SodaLime_GENERIC", 2500.0, "glass", "soda_lime", true}},
-    {"softwood", {"Softwood_GENERIC", 470.0, "wood", "spruce", false}},
-    {"softwood_generic", {"Softwood_GENERIC", 470.0, "wood", "spruce", false}},
-    {"softwood_pine", {"Softwood_PINE", 500.0, "wood", "pine", false}},
-    {"softwood_spruce", {"Softwood_SPRUCE", 430.0, "wood", "spruce", false}},
-    {"spring_steel", {"SpringSteel_GENERIC_QUENCHED_TEMPERED", 7850.0, "metal", "spring_steel", false}},
-    {"springsteel_generic_quenched_tempered", {"SpringSteel_GENERIC_QUENCHED_TEMPERED", 7850.0, "metal", "spring_steel", false}},
-    {"spruce", {"Softwood_SPRUCE", 430.0, "wood", "spruce", false}},
-    {"stainless", {"Stainless_G304_ANNEALED", 7930.0, "metal", "stainless", false}},
-    {"stainless_g201_annealed", {"Stainless_G201_ANNEALED", 7860.0, "metal", "stainless", false}},
-    {"stainless_g303_annealed", {"Stainless_G303_ANNEALED", 8030.0, "metal", "stainless", false}},
-    {"stainless_g304_annealed", {"Stainless_G304_ANNEALED", 7930.0, "metal", "stainless", false}},
-    {"stainless_g316l_annealed", {"Stainless_G316L_ANNEALED", 8000.0, "metal", "stainless", false}},
-    {"stainless_g316l_as_built", {"Stainless_G316L_AS_BUILT", 7990.0, "metal", "stainless", false}},
-    {"stainless_g430_annealed", {"Stainless_G430_ANNEALED", 7750.0, "metal", "stainless", false}},
-    {"stainless_g430_cold_worked", {"Stainless_G430_COLD_WORKED", 7750.0, "metal", "stainless", false}},
-    {"standard", {"Standard_GENERIC", 1150.0, "resin", "resin", false}},
-    {"standard_generic", {"Standard_GENERIC", 1150.0, "resin", "resin", false}},
-    {"titanium", {"Titanium_GR5_ANNEALED", 4430.0, "metal", "titanium", false}},
-    {"titanium_gr5_annealed", {"Titanium_GR5_ANNEALED", 4430.0, "metal", "titanium", false}},
-    {"titanium_tc4_as_built", {"Titanium_TC4_AS_BUILT", 4430.0, "metal", "titanium", false}},
-    {"tool_steel", {"ToolSteel_D2_HARDENED", 7700.0, "metal", "tool_steel", false}},
-    {"toolsteel_a2_hardened", {"ToolSteel_A2_HARDENED", 7860.0, "metal", "tool_steel", false}},
-    {"toolsteel_a3_hardened", {"ToolSteel_A3_HARDENED", 7860.0, "metal", "tool_steel", false}},
-    {"toolsteel_d2_hardened", {"ToolSteel_D2_HARDENED", 7700.0, "metal", "tool_steel", false}},
-    {"toolsteel_generic_as_built", {"ToolSteel_GENERIC_AS_BUILT", 7800.0, "metal", "tool_steel", false}},
-    {"toolsteel_h13_hardened", {"ToolSteel_H13_HARDENED", 7800.0, "metal", "tool_steel", false}},
-    {"toolsteel_o1_hardened", {"ToolSteel_O1_HARDENED", 7830.0, "metal", "tool_steel", false}},
-    {"toolsteel_s7_hardened", {"ToolSteel_S7_HARDENED", 7830.0, "metal", "tool_steel", false}},
-    {"tough", {"Tough_GENERIC", 1150.0, "resin", "resin", false}},
-    {"tough_generic", {"Tough_GENERIC", 1150.0, "resin", "resin", false}},
-    {"tpu", {"TPU_SHORE_95A", 1200.0, "plastic", "TPU", false}},
-    {"tpu_shore_95a", {"TPU_SHORE_95A", 1200.0, "plastic", "TPU", false}},
-    {"tpu_sintered", {"TPU_SINTERED", 1200.0, "plastic", "TPU", false}},
-    {"transparent", {"Transparent_GENERIC", 1300.0, "resin", "resin", true}},
-    {"transparent_generic", {"Transparent_GENERIC", 1300.0, "resin", "resin", true}},
-    {"walnut", {"Hardwood_WALNUT", 640.0, "wood", "walnut", false}},
-    {"woven", {"Woven_GENERIC", 500.0, "textile", "fabric_weave", false}},
-    {"woven_generic", {"Woven_GENERIC", 500.0, "textile", "fabric_weave", false}},
-    };
-    return table;
-}
+using detail::pbr::repr_floats;
+using detail::pbr::repr_str;
 
-/// Fold a user-supplied name to its registry key (case/space/hyphen-insensitive).
-std::string normalize(const std::string& name) {
-    const auto first = name.find_first_not_of(" \t\n\r\f\v");
-    const auto last = name.find_last_not_of(" \t\n\r\f\v");
-    std::string key = first == std::string::npos ? "" : name.substr(first, last - first + 1);
+using detail::pbr::py_lower;
+using detail::pbr::py_strip;
+
+/// registry._normalize: strip, lower, spaces and hyphens to underscores.
+std::string normalize_name(const std::string& name) {
+    std::string key = py_lower(py_strip(name));
     for (char& c : key) {
-        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
         if (c == ' ' || c == '-') c = '_';
     }
     return key;
 }
 
-}  // namespace
-
-FinishedMaterial resolve_material(const std::string& name) {
-    const auto& table = catalog();
-    const auto it = table.find(normalize(name));
-    if (it == table.end()) {
-        throw std::invalid_argument("unknown material '" + name + "' (material_names() lists all " +
-                                    std::to_string(table.size()) + ")");
-    }
-    return FinishedMaterial(it->second);
+std::string join(const std::vector<std::string>& parts, const std::string& sep) {
+    std::string out;
+    for (std::size_t i = 0; i < parts.size(); ++i) out += (i ? sep : "") + parts[i];
+    return out;
 }
 
-FinishedMaterial::FinishedMaterial(const std::string& name) : FinishedMaterial(resolve_material(name)) {}
+std::string repr_pair(const std::pair<double, double>& p) { return repr_floats({p.first, p.second}, true); }
+
+// ---------------------------------------------------------------------------
+// core.py tables
+// ---------------------------------------------------------------------------
+
+using UnitTable = std::vector<std::pair<std::string, std::string>>;
+
+const UnitTable& mechanical_units() {
+    static const UnitTable t = {
+        {"areal_density", "g/m²"},
+        {"compressive_strength_parallel", "MPa"},
+        {"density", "kg/m³"},
+        {"elongation_at_break", "%"},
+        {"hardness", "per hardness_scale"},
+        {"janka_hardness", "N"},
+        {"modulus_of_elasticity", "GPa"},
+        {"modulus_of_rupture", "MPa"},
+        {"poisson_ratio", ""},
+        {"shear_modulus", "GPa"},
+        {"shear_strength", "MPa"},
+        {"tensile_strength", "MPa"},
+        {"thickness", "mm"},
+        {"yield_strength", "MPa"},
+    };
+    return t;
+}
+
+const UnitTable& thermal_units() {
+    static const UnitTable t = {
+        {"glass_transition_temperature", "°C"},
+        {"heat_deflection_temperature", "°C"},
+        {"max_service_temp", "°C"},
+        {"melting_temperature", "°C"},
+        {"specific_heat_capacity", "J/(kg·K)"},
+        {"thermal_conductivity", "W/(m·K)"},
+        {"thermal_expansion", "1/K"},
+    };
+    return t;
+}
+
+const std::set<std::string>& ferrous() {
+    static const std::set<std::string> s = {"mild_steel", "alloy_steel", "tool_steel", "spring_steel"};
+    return s;
+}
+const std::set<std::string>& metal_set() {
+    static const std::set<std::string> s = {"metal"};
+    return s;
+}
+const std::set<std::string>& paintable() {
+    static const std::set<std::string> s = {"metal", "plastic", "resin", "wood"};
+    return s;
+}
+const std::set<std::string>& coatable_poly() {
+    static const std::set<std::string> s = {"metal", "plastic", "resin"};
+    return s;
+}
+const std::set<std::string>& everything() {
+    static const std::set<std::string> s = {"metal", "plastic", "resin", "wood", "glass", "paper", "textile"};
+    return s;
+}
+
+// ---------------------------------------------------------------------------
+// The material classes
+// ---------------------------------------------------------------------------
+
+struct ClassRow {
+    const char* kind;
+    const char* category;
+    const char* fields;
+};
+
+const ClassRow kClasses[] = {
+#define B3D_MATERIAL_CLASSES
+#include "material_catalog.inc"
+#undef B3D_MATERIAL_CLASSES
+};
+
+const ClassRow& class_row(const std::string& kind) {
+    for (const ClassRow& row : kClasses) {
+        if (kind == row.kind) return row;
+    }
+    throw std::invalid_argument("unknown material class " + repr_str(kind));
+}
+
+std::vector<std::string> split(const char* text) {
+    std::vector<std::string> out;
+    std::string cur;
+    for (const char* p = text; *p; ++p) {
+        if (*p == ' ') {
+            if (!cur.empty()) out.push_back(cur);
+            cur.clear();
+        } else {
+            cur += *p;
+        }
+    }
+    if (!cur.empty()) out.push_back(cur);
+    return out;
+}
+
+using RangeField = std::optional<Range> RangeMaterial::*;
+
+const std::vector<std::pair<std::string, RangeField>>& range_fields() {
+    static const std::vector<std::pair<std::string, RangeField>> t = {
+        {"tensile_strength", &RangeMaterial::tensile_strength},
+        {"modulus_of_elasticity", &RangeMaterial::modulus_of_elasticity},
+        {"shear_modulus", &RangeMaterial::shear_modulus},
+        {"poisson_ratio", &RangeMaterial::poisson_ratio},
+        {"specific_heat_capacity", &RangeMaterial::specific_heat_capacity},
+        {"max_service_temp", &RangeMaterial::max_service_temp},
+        {"thermal_expansion", &RangeMaterial::thermal_expansion},
+        {"thermal_conductivity", &RangeMaterial::thermal_conductivity},
+        {"yield_strength", &RangeMaterial::yield_strength},
+        {"shear_strength", &RangeMaterial::shear_strength},
+        {"elongation_at_break", &RangeMaterial::elongation_at_break},
+        {"glass_transition_temperature", &RangeMaterial::glass_transition_temperature},
+        {"heat_deflection_temperature", &RangeMaterial::heat_deflection_temperature},
+        {"hardness", &RangeMaterial::hardness},
+        {"melting_temperature", &RangeMaterial::melting_temperature},
+        {"modulus_of_rupture", &RangeMaterial::modulus_of_rupture},
+        {"compressive_strength_parallel", &RangeMaterial::compressive_strength_parallel},
+        {"janka_hardness", &RangeMaterial::janka_hardness},
+        {"areal_density", &RangeMaterial::areal_density},
+        {"thickness", &RangeMaterial::thickness},
+    };
+    return t;
+}
+
+RangeField range_field(const std::string& name) {
+    for (const auto& [field, member] : range_fields()) {
+        if (field == name) return member;
+    }
+    return nullptr;
+}
+
+// ---------------------------------------------------------------------------
+// finishes.py tables
+// ---------------------------------------------------------------------------
+
+using finishes::Chemical;
+using finishes::Coating;
+using finishes::Finish;
+using finishes::Marking;
+using finishes::Mechanical;
+using finishes::MetalPlating;
+
+const std::map<Mechanical, Finish>& mechanical_finishes() {
+    static const std::map<Mechanical, Finish> t = {
+        {Mechanical::BEAD_BLAST, {"Bead Blast"}},
+        {Mechanical::BRUSHED, {"Brushed"}},
+        {Mechanical::FINE_SANDING, {"Fine Sanding"}},
+        {Mechanical::SMOOTH_MACHINING, {"Smooth machining (Ra1.6µm)", "as-machined roughness spec"}},
+        {Mechanical::ELECTROPOLISHED, {"Electropolished"}},
+    };
+    return t;
+}
+
+const std::map<Chemical, Finish>& chemical_finishes() {
+    static const std::map<Chemical, Finish> t = {
+        {Chemical::ANODIZED,
+         {"Anodized",
+          "typical colors: natural, black, gray, gold, rose gold, red, blue, champagne, brown, purple, green, orange"}},
+        {Chemical::CHEM_FILM, {"Chemical conversion coat (Chem film)", "typical colors: clear, gold"}},
+        {Chemical::CONDUCTIVE_OXIDATION, {"Electrically conductive oxidation", "color: clear"}},
+        {Chemical::BLACK_OXIDE, {"Black oxide", "color: black"}},
+        {Chemical::PASSIVATION, {"Passivation"}},
+        {Chemical::PICKLING, {"Pickling"}},
+        {Chemical::DYEING, {"Dyeing", "anodized aluminum, or dyeable polymers (esp. nylon)"}},
+    };
+    return t;
+}
+
+const std::map<MetalPlating, Finish>& metal_plating_finishes() {
+    static const std::map<MetalPlating, Finish> t = {
+        {MetalPlating::CHROME_PLATING, {"Chrome plating", "color: chrome"}},
+        {MetalPlating::GOLD_PLATING, {"Gold plating", "color: gold"}},
+        {MetalPlating::NICKEL_PLATING, {"Nickel plating", "color: nickel"}},
+        {MetalPlating::SILVER_PLATING, {"Silver plating", "color: silver"}},
+        {MetalPlating::TIN_PLATING, {"Tin plating", "color: silver"}},
+        {MetalPlating::PVD, {"PVD (Physical Vapor Deposition)", "typical colors: gold, rose gold, black, gunmetal, blue"}},
+        {MetalPlating::ZINC_PLATING,
+         {"Zinc plating", "corrosion protection for ferrous steels; typical colors: clear, blue, yellow, black"}},
+        {MetalPlating::VACUUM_PLATING, {"Vacuum plating"}},
+    };
+    return t;
+}
+
+const std::map<Coating, Finish>& coating_finishes() {
+    static const std::map<Coating, Finish> t = {
+        {Coating::POWDER_COAT, {"Powder coat"}},
+        {Coating::ELECTROPHORESIS, {"Electrophoresis"}},
+        {Coating::SPRAY_PAINT, {"Spray painting"}},
+    };
+    return t;
+}
+
+const std::map<Marking, Finish>& marking_finishes() {
+    static const std::map<Marking, Finish> t = {
+        {Marking::LASER_ENGRAVING, {"Laser engraving"}},
+        {Marking::ETCHING, {"Etching"}},
+        {Marking::SILKSCREEN, {"Silkscreen"}},
+    };
+    return t;
+}
+
+std::vector<Finish> all_finishes() {
+    std::vector<Finish> out;
+    for (const auto& [k, f] : mechanical_finishes()) out.push_back(f);
+    for (const auto& [k, f] : chemical_finishes()) out.push_back(f);
+    for (const auto& [k, f] : metal_plating_finishes()) out.push_back(f);
+    for (const auto& [k, f] : coating_finishes()) out.push_back(f);
+    for (const auto& [k, f] : marking_finishes()) out.push_back(f);
+    return out;
+}
+
+}  // namespace
+
+// ---------------------------------------------------------------------------
+// core.py
+// ---------------------------------------------------------------------------
+
+Range::Range(double min_value, double max_value) : min(min_value), max(max_value) {
+    if (min > max) throw std::invalid_argument("Range min " + pyfmt::repr(min) + " > max " + pyfmt::repr(max));
+}
+
+const Range NOT_SUITABLE = Range(std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN());
+const std::vector<std::pair<std::string, std::string>> MECHANICAL_PROPERTY_UNITS = mechanical_units();
+const std::vector<std::pair<std::string, std::string>> THERMAL_PROPERTY_UNITS = thermal_units();
+const std::vector<std::pair<std::string, std::string>> PROPERTY_UNITS = [] {
+    UnitTable t = mechanical_units();
+    t.insert(t.end(), thermal_units().begin(), thermal_units().end());
+    return t;
+}();
+const std::set<std::string> ALLOWED_CATEGORIES = {"generic", "metal", "plastic", "resin", "wood", "glass", "paper", "textile"};
+const std::set<std::string> FERROUS = ferrous();
+const std::set<std::string> METAL = metal_set();
+const std::set<std::string> PAINTABLE = paintable();
+const std::set<std::string> COATABLE_POLY = coatable_poly();
+const std::set<std::string> EVERYTHING = everything();
+
+std::vector<std::string> RangeMaterial::fields() const { return split(class_row(kind).fields); }
+
+std::optional<Range> RangeMaterial::property(const std::string& field) const {
+    const RangeField member = range_field(field);
+    if (member == nullptr) return std::nullopt;
+    const auto have = fields();
+    if (std::find(have.begin(), have.end(), field) == have.end()) return std::nullopt;
+    return this->*member;
+}
+
+std::string RangeMaterial::str() const {
+    const auto have = fields();
+    auto has = [&have](const std::string& field) { return std::find(have.begin(), have.end(), field) != have.end(); };
+    const std::string scale = has("hardness_scale") ? hardness_scale : "";
+    std::size_t width = 0;
+    for (const UnitTable* units : {&mechanical_units(), &thermal_units()}) {
+        for (const auto& [field, unit] : *units) {
+            if (has(field)) width = std::max(width, field.size());
+        }
+    }
+    std::string out = name;
+    const std::pair<const char*, const UnitTable*> groups[] = {{"mechanical", &mechanical_units()},
+                                                               {"thermal", &thermal_units()}};
+    for (const auto& [group, units] : groups) {
+        std::vector<std::pair<std::string, std::string>> names;
+        for (const auto& entry : *units) {
+            if (has(entry.first)) names.push_back(entry);
+        }
+        if (names.empty()) continue;
+        out += "\n  # " + std::string(group) + " properties";
+        for (const auto& [field, field_unit] : names) {
+            std::string unit = field == "hardness" ? scale : field_unit;
+            std::string body;
+            if (field == "density") {
+                body = pyfmt::format_g(density, 6);
+            } else {
+                const RangeField member = range_field(field);
+                const std::optional<Range>& value = this->*member;
+                if (!value) {
+                    body = "missing";
+                    unit.clear();
+                } else if (std::isnan(value->min)) {
+                    body = "n/a";
+                    unit.clear();
+                } else {
+                    body = pyfmt::format_g(value->min, 6) + " to " + pyfmt::format_g(value->max, 6);
+                }
+            }
+            std::string line = "  " + field + std::string(width - field.size(), ' ') + "  " + body + " " + unit;
+            while (!line.empty() && (line.back() == ' ' || line.back() == '\t')) line.pop_back();
+            out += "\n" + line;
+        }
+    }
+    return out;
+}
+
+RangeMaterial with_density(const RangeMaterial& material, std::optional<double> density) {
+    RangeMaterial out = material;
+    if (density) out.density = *density;
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+// finishes.py
+// ---------------------------------------------------------------------------
+
+namespace finishes {
+
+const std::map<Mechanical, Finish> MECHANICAL_FINISHES = mechanical_finishes();
+const std::map<Chemical, Finish> CHEMICAL_FINISHES = chemical_finishes();
+const std::map<MetalPlating, Finish> METAL_PLATING_FINISHES = metal_plating_finishes();
+const std::map<Coating, Finish> COATING_FINISHES = coating_finishes();
+const std::map<Marking, Finish> MARKING_FINISHES = marking_finishes();
+const std::vector<Finish> ALL_FINISHES = all_finishes();
+
+std::string Finish::repr() const {
+    return "Finish(name=" + repr_str(name) + ", notes=" + (notes ? repr_str(*notes) : "None") + ")";
+}
+
+std::string AppliedFinish::repr() const {
+    std::string sheen_repr = "None";
+    if (sheen) sheen_repr = *sheen == Sheen::GLOSS ? "<Sheen.GLOSS: 1>" : "<Sheen.MATTE: 2>";
+    return "AppliedFinish(finish=" + finish.repr() + ", color=" + (color ? color->repr() : "None") +
+           ", sheen=" + sheen_repr + ", scale=" + repr_pair(scale) + ", rotation=" + pyfmt::repr(rotation) + ")";
+}
+
+bool AppliedFinish::operator==(const AppliedFinish& o) const {
+    return finish == o.finish && color == o.color && sheen == o.sheen && scale == o.scale && rotation == o.rotation;
+}
+
+AppliedFinish bead_blast(std::pair<double, double> scale) {
+    return {mechanical_finishes().at(Mechanical::BEAD_BLAST), std::nullopt, std::nullopt, scale};
+}
+AppliedFinish brushed(std::pair<double, double> scale, double rotation) {
+    return {mechanical_finishes().at(Mechanical::BRUSHED), std::nullopt, std::nullopt, scale, rotation};
+}
+AppliedFinish fine_sanding(std::pair<double, double> scale) {
+    return {mechanical_finishes().at(Mechanical::FINE_SANDING), std::nullopt, std::nullopt, scale};
+}
+AppliedFinish smooth_machining() { return {mechanical_finishes().at(Mechanical::SMOOTH_MACHINING)}; }
+AppliedFinish electropolish() { return {mechanical_finishes().at(Mechanical::ELECTROPOLISHED)}; }
+AppliedFinish anodize(std::optional<ColorSpec> color) { return {chemical_finishes().at(Chemical::ANODIZED), std::move(color)}; }
+AppliedFinish chem_film() { return {chemical_finishes().at(Chemical::CHEM_FILM)}; }
+AppliedFinish conductive_oxidation() { return {chemical_finishes().at(Chemical::CONDUCTIVE_OXIDATION)}; }
+AppliedFinish black_oxide() { return {chemical_finishes().at(Chemical::BLACK_OXIDE)}; }
+AppliedFinish passivate() { return {chemical_finishes().at(Chemical::PASSIVATION)}; }
+AppliedFinish pickle() { return {chemical_finishes().at(Chemical::PICKLING)}; }
+AppliedFinish dye(std::optional<ColorSpec> color) { return {chemical_finishes().at(Chemical::DYEING), std::move(color)}; }
+AppliedFinish chrome() { return {metal_plating_finishes().at(MetalPlating::CHROME_PLATING)}; }
+AppliedFinish gold_plate() { return {metal_plating_finishes().at(MetalPlating::GOLD_PLATING)}; }
+AppliedFinish nickel_plate() { return {metal_plating_finishes().at(MetalPlating::NICKEL_PLATING)}; }
+AppliedFinish silver_plate() { return {metal_plating_finishes().at(MetalPlating::SILVER_PLATING)}; }
+AppliedFinish tin_plate() { return {metal_plating_finishes().at(MetalPlating::TIN_PLATING)}; }
+AppliedFinish pvd(std::optional<ColorSpec> color) { return {metal_plating_finishes().at(MetalPlating::PVD), std::move(color)}; }
+AppliedFinish zinc_plate(std::optional<ColorSpec> color) {
+    return {metal_plating_finishes().at(MetalPlating::ZINC_PLATING), std::move(color)};
+}
+AppliedFinish vacuum_plating(std::optional<ColorSpec> color, std::optional<Sheen> sheen) {
+    return {metal_plating_finishes().at(MetalPlating::VACUUM_PLATING), std::move(color), sheen};
+}
+AppliedFinish powder_coat(std::optional<ColorSpec> color, std::optional<Sheen> sheen) {
+    return {coating_finishes().at(Coating::POWDER_COAT), std::move(color), sheen};
+}
+AppliedFinish spray_paint(std::optional<ColorSpec> color, std::optional<Sheen> sheen) {
+    return {coating_finishes().at(Coating::SPRAY_PAINT), std::move(color), sheen};
+}
+AppliedFinish electrophoresis(std::optional<ColorSpec> color) {
+    return {coating_finishes().at(Coating::ELECTROPHORESIS), std::move(color)};
+}
+AppliedFinish laser_engrave() { return {marking_finishes().at(Marking::LASER_ENGRAVING)}; }
+AppliedFinish etch() { return {marking_finishes().at(Marking::ETCHING)}; }
+AppliedFinish silkscreen(std::optional<ColorSpec> color) { return {marking_finishes().at(Marking::SILKSCREEN), std::move(color)}; }
+
+}  // namespace finishes
+
+std::string FinishSpec::repr() const {
+    if (!list_) return items_.at(0).repr();
+    std::vector<std::string> parts;
+    for (const auto& f : items_) parts.push_back(f.repr());
+    return "[" + join(parts, ", ") + "]";
+}
+
+// ---------------------------------------------------------------------------
+// processes.py
+// ---------------------------------------------------------------------------
+
+namespace processes {
+
+namespace {
+
+const char* const kProcessNames[] = {"FDM", "SLS", "MJF", "SLM", "VAT", "MOLDED", "MACHINED", "CAST", "WROUGHT"};
+const char* const kProcessValues[] = {"fdm", "sls", "mjf", "slm", "vat", "molded", "machined", "cast", "wrought"};
+
+}  // namespace
+
+std::string to_string(Process process) { return kProcessValues[static_cast<int>(process)]; }
+
+std::string AppliedProcess::repr() const {
+    const int i = static_cast<int>(process);
+    return std::string("AppliedProcess(process=<Process.") + kProcessNames[i] + ": '" + kProcessValues[i] +
+           "'>, scale=" + repr_pair(scale) + ", rotation=" + pyfmt::repr(rotation) +
+           ", pitch_mm=" + (pitch_mm ? pyfmt::repr(*pitch_mm) : "None") + ", skin=" + (skin ? "True" : "False") +
+           ", mm_per_uv=" + pyfmt::repr(mm_per_uv) + ")";
+}
+
+bool AppliedProcess::operator==(const AppliedProcess& o) const {
+    return process == o.process && scale == o.scale && rotation == o.rotation && pitch_mm == o.pitch_mm &&
+           skin == o.skin && mm_per_uv == o.mm_per_uv;
+}
+
+AppliedProcess fdm(double layer_height_mm, double rotation, double mm_per_uv) {
+    return {Process::FDM, {1.0, 1.0}, rotation, layer_height_mm, false, mm_per_uv};
+}
+AppliedProcess fdm_skin(double line_width_mm, double rotation) {
+    return {Process::FDM, {1.0, 1.0}, rotation, line_width_mm, true};
+}
+AppliedProcess sls(std::pair<double, double> scale) { return {Process::SLS, scale}; }
+AppliedProcess mjf(std::pair<double, double> scale) { return {Process::MJF, scale}; }
+AppliedProcess slm(std::pair<double, double> scale) { return {Process::SLM, scale}; }
+AppliedProcess vat() { return {Process::VAT}; }
+AppliedProcess molded() { return {Process::MOLDED}; }
+AppliedProcess machined() { return {Process::MACHINED}; }
+AppliedProcess cast() { return {Process::CAST}; }
+AppliedProcess wrought() { return {Process::WROUGHT}; }
+
+}  // namespace processes
+
+// ---------------------------------------------------------------------------
+// finished.py
+// ---------------------------------------------------------------------------
+
+FinishedMaterial::FinishedMaterial(RangeMaterial material_in, std::optional<FinishSpec> finish_in,
+                                   const FinishedMaterialOptions& options) {
+    if (options.pbr && (finish_in || options.process || options.color || options.thickness_mm || options.opacity ||
+                        options.roughness || options.scale != std::pair<double, double>{1.0, 1.0} ||
+                        options.rotation != 0.0)) {
+        throw std::invalid_argument(
+            "pbr=... is a full override; do not combine it with finish, process, color, thickness_mm, opacity, "
+            "roughness, scale, or rotation");
+    }
+    if (finish_in && options.process) {
+        throw std::invalid_argument(
+            "finish and process are mutually exclusive: a finish defines the surface, so a process (the raw as-made "
+            "surface) is ignored -- pass one or the other");
+    }
+    material = std::move(material_in);
+    finish = std::move(finish_in);
+    color = options.color;
+    thickness_mm = options.thickness_mm;
+    opacity = options.opacity;
+    roughness = options.roughness;
+    if (options.process && std::holds_alternative<processes::Process>(*options.process)) {
+        const auto p = std::get<processes::Process>(*options.process);
+        static const char* const names[] = {"FDM", "SLS", "MJF", "SLM", "VAT", "MOLDED", "MACHINED", "CAST", "WROUGHT"};
+        warn(std::string("process=Process.") + names[static_cast<int>(p)] +
+             " is deprecated; call the process function instead -- process=" + processes::to_string(p) +
+             "() (from bd_materials.processes), which is also the only way to pass the per-part geometry, e.g. "
+             "fdm(rotation=90)");
+    }
+    scale = options.scale;
+    rotation = options.rotation;
+    if (options.process) {
+        if (const auto* applied = std::get_if<processes::AppliedProcess>(&*options.process)) {
+            process = *applied;
+        } else {
+            process = processes::AppliedProcess{std::get<processes::Process>(*options.process)};
+        }
+    }
+    pbr_ = options.pbr;
+}
+
+FinishedMaterial::FinishedMaterial(const std::string& name) : FinishedMaterial(registry::resolve(name)) {}
+
+std::shared_ptr<const PbrProperties> FinishedMaterial::pbr_ptr() const {
+    if (pbr_) return pbr_;
+    return std::make_shared<const PbrProperties>(pbr());
+}
+
+PbrProperties FinishedMaterial::pbr() const {
+    if (pbr_) return *pbr_;
+    return get_pbr_properties(material, finish, process,
+                              {.color = color,
+                               .thickness_mm = thickness_mm,
+                               .opacity = opacity,
+                               .roughness = roughness,
+                               .scale = scale,
+                               .rotation = rotation});
+}
+
+std::string FinishedMaterial::repr() const {
+    std::vector<std::string> parts = {material.name};
+    if (color) parts.push_back("color=" + color->repr());
+    if (thickness_mm) parts.push_back("thickness_mm=" + pyfmt::repr(*thickness_mm));
+    if (opacity) parts.push_back("opacity=" + pyfmt::repr(*opacity));
+    if (roughness) parts.push_back("roughness=" + pyfmt::repr(*roughness));
+    if (scale != std::pair<double, double>{1.0, 1.0}) parts.push_back("scale=" + repr_pair(scale));
+    if (rotation != 0.0) parts.push_back("rotation=" + pyfmt::repr(rotation));
+    if (finish) parts.push_back("finish=" + finish->repr());
+    if (process) parts.push_back("process=" + process->repr());
+    if (pbr_) parts.emplace_back("pbr=<override>");
+    return "FinishedMaterial(" + join(parts, ", ") + ")";
+}
+
+// ---------------------------------------------------------------------------
+// The catalog (materials/*.py)
+// ---------------------------------------------------------------------------
+
+namespace detail {
+
+namespace {
+
+struct GradeRow {
+    const char* module;
+    const char* enum_name;
+    const char* member;
+    int value;
+    const char* kind;
+    const char* name;
+    double density;
+    const char* family;
+    bool transparent;
+    const char* hardness_scale;
+    const char* properties;
+};
+
+const GradeRow kGrades[] = {
+#define B3D_MATERIAL_GRADES
+#include "material_catalog.inc"
+#undef B3D_MATERIAL_GRADES
+};
+
+RangeMaterial build_grade(const GradeRow& row) {
+    RangeMaterial m;
+    m.kind = row.kind;
+    m.category = class_row(row.kind).category;
+    m.name = row.name;
+    m.density = row.density;
+    if (row.family != nullptr) m.family = std::string(row.family);
+    m.transparent = row.transparent;
+    if (row.hardness_scale != nullptr) m.hardness_scale = row.hardness_scale;
+    for (const std::string& item : split(row.properties)) {
+        const auto eq = item.find('=');
+        const RangeField member = range_field(item.substr(0, eq));
+        const std::string value = item.substr(eq + 1);
+        if (value == "None") continue;
+        const auto comma = value.find(',');
+        const double lo = std::strtod(value.substr(0, comma).c_str(), nullptr);
+        const double hi = std::strtod(value.substr(comma + 1).c_str(), nullptr);
+        m.*member = Range(lo, hi);
+    }
+    return m;
+}
+
+/// The grades' materials, built once.
+const std::vector<RangeMaterial>& grade_materials() {
+    static const std::vector<RangeMaterial> materials = [] {
+        std::vector<RangeMaterial> out;
+        for (const GradeRow& row : kGrades) out.push_back(build_grade(row));
+        return out;
+    }();
+    return materials;
+}
+
+const RangeMaterial& catalog_grade(const char* module, const char* enum_name, int value) {
+    const auto& materials = grade_materials();
+    for (std::size_t i = 0; i < std::size(kGrades); ++i) {
+        const GradeRow& row = kGrades[i];
+        if (row.value == value && std::strcmp(row.enum_name, enum_name) == 0 && std::strcmp(row.module, module) == 0) {
+            return materials[i];
+        }
+    }
+    throw std::invalid_argument(std::string("no grade ") + std::to_string(value) + " of " + enum_name);
+}
+
+struct AllRow {
+    const char* module;
+    const char* enum_name;
+    int value;
+};
+
+const AllRow kAll[] = {
+#define B3D_MATERIAL_ALL
+#include "material_catalog.inc"
+#undef B3D_MATERIAL_ALL
+};
+
+/// materials.ALL_MATERIALS, built once.
+const std::vector<RangeMaterial>& all_materials() {
+    static const std::vector<RangeMaterial> materials = [] {
+        std::vector<RangeMaterial> out;
+        for (const AllRow& row : kAll) out.push_back(catalog_grade(row.module, row.enum_name, row.value));
+        return out;
+    }();
+    return materials;
+}
+
+FinishedMaterial family_material(const RangeMaterial& m, const MetalOptions& o) {
+    return FinishedMaterial(with_density(m, o.density), o.finish, {.process = o.process});
+}
+FinishedMaterial family_material(const RangeMaterial& m, const PolymerOptions& o) {
+    return FinishedMaterial(with_density(m, o.density), o.finish, {.color = o.color, .process = o.process});
+}
+FinishedMaterial family_material(const RangeMaterial& m, const TransparentOptions& o) {
+    return FinishedMaterial(with_density(m, o.density), o.finish,
+                            {.color = o.color,
+                             .thickness_mm = o.thickness_mm,
+                             .opacity = o.opacity,
+                             .roughness = o.roughness,
+                             .process = o.process});
+}
+FinishedMaterial family_material(const RangeMaterial& m, const PaperOptions& o) {
+    return FinishedMaterial(with_density(m, o.density), o.finish,
+                            {.color = o.color, .scale = o.scale, .rotation = o.rotation, .process = o.process});
+}
+FinishedMaterial family_material(const RangeMaterial& m, const TexturedOptions& o) {
+    return FinishedMaterial(with_density(m, o.density), o.finish,
+                            {.scale = o.scale, .rotation = o.rotation, .process = o.process});
+}
+FinishedMaterial family_material(const RangeMaterial& m, const TextileOptions& o) {
+    return FinishedMaterial(with_density(m, o.density), o.finish,
+                            {.color = o.color, .scale = o.scale, .rotation = o.rotation, .process = o.process});
+}
+
+/// Python's TypeError for a keyword the family function doesn't take.
+void reject(const char* function, const registry::MaterialArgs& a, const std::set<std::string>& taken) {
+    const std::pair<const char*, bool> given[] = {
+        {"finish", a.finish.has_value()},     {"color", a.color.has_value()},
+        {"thickness_mm", a.thickness_mm.has_value()}, {"opacity", a.opacity.has_value()},
+        {"roughness", a.roughness.has_value()}, {"scale", a.scale.has_value()},
+        {"rotation", a.rotation.has_value()},   {"process", a.process.has_value()},
+        {"density", a.density.has_value()},
+    };
+    for (const auto& [key, set] : given) {
+        if (set && taken.count(key) == 0) {
+            throw std::invalid_argument(std::string(function) + "() got an unexpected keyword argument '" + key + "'");
+        }
+    }
+}
+
+template <class T>
+T options_from(const registry::MaterialArgs& a, const char* function);
+
+template <>
+MetalOptions options_from<MetalOptions>(const registry::MaterialArgs& a, const char* function) {
+    reject(function, a, {"finish", "process", "density"});
+    return {a.finish, a.process, a.density};
+}
+
+template <>
+PolymerOptions options_from<PolymerOptions>(const registry::MaterialArgs& a, const char* function) {
+    reject(function, a, {"color", "finish", "process", "density"});
+    return {a.color, a.finish, a.process, a.density};
+}
+
+template <>
+TransparentOptions options_from<TransparentOptions>(const registry::MaterialArgs& a, const char* function) {
+    reject(function, a, {"color", "thickness_mm", "opacity", "roughness", "finish", "process", "density"});
+    return {a.color, a.thickness_mm, a.opacity, a.roughness, a.finish, a.process, a.density};
+}
+
+template <>
+PaperOptions options_from<PaperOptions>(const registry::MaterialArgs& a, const char* function) {
+    reject(function, a, {"color", "finish", "process", "density", "scale", "rotation"});
+    PaperOptions o;
+    if (a.color) o.color = a.color;
+    o.finish = a.finish;
+    o.process = a.process;
+    o.density = a.density;
+    if (a.scale) o.scale = *a.scale;
+    if (a.rotation) o.rotation = *a.rotation;
+    return o;
+}
+
+template <>
+TexturedOptions options_from<TexturedOptions>(const registry::MaterialArgs& a, const char* function) {
+    reject(function, a, {"finish", "process", "density", "scale", "rotation"});
+    TexturedOptions o;
+    o.finish = a.finish;
+    o.process = a.process;
+    o.density = a.density;
+    if (a.scale) o.scale = *a.scale;
+    if (a.rotation) o.rotation = *a.rotation;
+    return o;
+}
+
+template <>
+TextileOptions options_from<TextileOptions>(const registry::MaterialArgs& a, const char* function) {
+    reject(function, a, {"color", "finish", "process", "density", "scale", "rotation"});
+    TextileOptions o;
+    o.color = a.color;
+    o.finish = a.finish;
+    o.process = a.process;
+    o.density = a.density;
+    if (a.scale) o.scale = *a.scale;
+    if (a.rotation) o.rotation = *a.rotation;
+    return o;
+}
+
+}  // namespace
+
+}  // namespace detail
+
+#define B3D_MATERIAL_DEFINITIONS
+#include "material_catalog.inc"
+#undef B3D_MATERIAL_DEFINITIONS
+
+// ---------------------------------------------------------------------------
+// registry.py
+// ---------------------------------------------------------------------------
+
+namespace {
+
+struct InvokerRow {
+    const char* function;
+    registry::Factory::Function call;
+};
+
+const InvokerRow kInvokers[] = {
+#define B3D_MATERIAL_INVOKERS
+#include "material_catalog.inc"
+#undef B3D_MATERIAL_INVOKERS
+};
+
+struct RegistryRow {
+    const char* key;
+    const char* function;
+    int grade;
+};
+
+const RegistryRow kRegistry[] = {
+#define B3D_MATERIAL_REGISTRY
+#include "material_catalog.inc"
+#undef B3D_MATERIAL_REGISTRY
+};
+
+const RegistryRow* find_registry(const std::string& key) {
+    static const std::unordered_map<std::string, const RegistryRow*> index = [] {
+        std::unordered_map<std::string, const RegistryRow*> out;
+        for (const RegistryRow& row : kRegistry) out.emplace(row.key, &row);
+        return out;
+    }();
+    const auto it = index.find(key);
+    return it == index.end() ? nullptr : it->second;
+}
+
+registry::Factory::Function invoker(const char* function) {
+    for (const InvokerRow& row : kInvokers) {
+        if (std::strcmp(row.function, function) == 0) return row.call;
+    }
+    throw std::logic_error(std::string("no family function ") + function);
+}
+
+// difflib.SequenceMatcher (no junk, autojunk) and get_close_matches, on bytes.
+class SequenceMatcher {
+public:
+    explicit SequenceMatcher(const std::string& b) : b_(b) {
+        for (std::size_t i = 0; i < b_.size(); ++i) b2j_[static_cast<unsigned char>(b_[i])].push_back(static_cast<int>(i));
+        const std::size_t n = b_.size();
+        if (n >= 200) {
+            const std::size_t ntest = n / 100 + 1;
+            for (auto it = b2j_.begin(); it != b2j_.end();) {
+                it = it->second.size() > ntest ? b2j_.erase(it) : std::next(it);
+            }
+        }
+        for (const char c : b_) ++fullbcount_[static_cast<unsigned char>(c)];
+    }
+
+    void set_seq1(const std::string& a) { a_ = a; }
+
+    double real_quick_ratio() const {
+        const std::size_t la = a_.size(), lb = b_.size();
+        return ratio_of(std::min(la, lb), la + lb);
+    }
+
+    double quick_ratio() const {
+        std::map<unsigned char, long> avail;
+        std::size_t matches = 0;
+        for (const char ch : a_) {
+            const auto c = static_cast<unsigned char>(ch);
+            long numb;
+            if (avail.count(c)) {
+                numb = avail[c];
+            } else {
+                const auto it = fullbcount_.find(c);
+                numb = it == fullbcount_.end() ? 0 : it->second;
+            }
+            avail[c] = numb - 1;
+            if (numb > 0) ++matches;
+        }
+        return ratio_of(matches, a_.size() + b_.size());
+    }
+
+    double ratio() const {
+        std::size_t matches = 0;
+        for (const auto& block : matching_blocks()) matches += std::get<2>(block);
+        return ratio_of(matches, a_.size() + b_.size());
+    }
+
+private:
+    static double ratio_of(std::size_t matches, std::size_t length) {
+        return length ? 2.0 * static_cast<double>(matches) / static_cast<double>(length) : 1.0;
+    }
+
+    std::tuple<int, int, int> find_longest_match(int alo, int ahi, int blo, int bhi) const {
+        int besti = alo, bestj = blo, bestsize = 0;
+        std::unordered_map<int, int> j2len;
+        static const std::vector<int> nothing;
+        for (int i = alo; i < ahi; ++i) {
+            std::unordered_map<int, int> newj2len;
+            const auto found = b2j_.find(static_cast<unsigned char>(a_[i]));
+            const std::vector<int>& js = found == b2j_.end() ? nothing : found->second;
+            for (const int j : js) {
+                if (j < blo) continue;
+                if (j >= bhi) break;
+                const auto prev = j2len.find(j - 1);
+                const int k = newj2len[j] = (prev == j2len.end() ? 0 : prev->second) + 1;
+                if (k > bestsize) {
+                    besti = i - k + 1;
+                    bestj = j - k + 1;
+                    bestsize = k;
+                }
+            }
+            j2len = std::move(newj2len);
+        }
+        // no junk: only the extensions by non-junk (popular) elements apply
+        while (besti > alo && bestj > blo && a_[besti - 1] == b_[bestj - 1]) {
+            --besti;
+            --bestj;
+            ++bestsize;
+        }
+        while (besti + bestsize < ahi && bestj + bestsize < bhi && a_[besti + bestsize] == b_[bestj + bestsize]) {
+            ++bestsize;
+        }
+        return {besti, bestj, bestsize};
+    }
+
+    std::vector<std::tuple<int, int, int>> matching_blocks() const {
+        const int la = static_cast<int>(a_.size()), lb = static_cast<int>(b_.size());
+        std::vector<std::array<int, 4>> queue = {{0, la, 0, lb}};
+        std::vector<std::tuple<int, int, int>> blocks;
+        while (!queue.empty()) {
+            const auto [alo, ahi, blo, bhi] = queue.back();
+            queue.pop_back();
+            const auto x = find_longest_match(alo, ahi, blo, bhi);
+            const auto [i, j, k] = x;
+            if (k) {
+                blocks.push_back(x);
+                if (alo < i && blo < j) queue.push_back({alo, i, blo, j});
+                if (i + k < ahi && j + k < bhi) queue.push_back({i + k, ahi, j + k, bhi});
+            }
+        }
+        std::sort(blocks.begin(), blocks.end());
+        int i1 = 0, j1 = 0, k1 = 0;
+        std::vector<std::tuple<int, int, int>> out;
+        for (const auto& [i2, j2, k2] : blocks) {
+            if (i1 + k1 == i2 && j1 + k1 == j2) {
+                k1 += k2;
+            } else {
+                if (k1) out.emplace_back(i1, j1, k1);
+                i1 = i2;
+                j1 = j2;
+                k1 = k2;
+            }
+        }
+        if (k1) out.emplace_back(i1, j1, k1);
+        out.emplace_back(la, lb, 0);
+        return out;
+    }
+
+    std::string a_;
+    std::string b_;
+    std::map<unsigned char, std::vector<int>> b2j_;
+    std::map<unsigned char, long> fullbcount_;
+};
+
+std::vector<std::string> get_close_matches(const std::string& word, const std::vector<std::string>& possibilities,
+                                           std::size_t n = 3, double cutoff = 0.6) {
+    std::vector<std::pair<double, std::string>> result;
+    SequenceMatcher s(word);
+    for (const std::string& x : possibilities) {
+        s.set_seq1(x);
+        if (s.real_quick_ratio() >= cutoff && s.quick_ratio() >= cutoff && s.ratio() >= cutoff) {
+            result.emplace_back(s.ratio(), x);
+        }
+    }
+    std::sort(result.begin(), result.end(), [](const auto& l, const auto& r) { return l > r; });
+    if (result.size() > n) result.resize(n);
+    std::vector<std::string> out;
+    for (const auto& [score, x] : result) out.push_back(x);
+    return out;
+}
+
+}  // namespace
+
+namespace registry {
+
+Factory factory(const std::string& name) {
+    const std::string key = normalize_name(name);
+    if (const RegistryRow* row = find_registry(key)) return Factory(invoker(row->function), row->grade);
+    std::vector<std::string> keys;
+    for (const RegistryRow& row : kRegistry) keys.emplace_back(row.key);
+    const auto suggestions = get_close_matches(key, keys);
+    const std::string hint = suggestions.empty() ? "" : " -- did you mean " + join(suggestions, " / ") + "?";
+    throw std::invalid_argument("unknown material " + repr_str(name) + hint +
+                                " (bd_materials.material_names() lists all " + std::to_string(std::size(kRegistry)) +
+                                ")");
+}
+
+FinishedMaterial resolve(const std::string& name) { return factory(name)(); }
+FinishedMaterial resolve(const char* name) { return factory(name)(); }
+FinishedMaterial resolve(const FinishedMaterial& material) { return material; }
+FinishedMaterial resolve(const RangeMaterial& material) { return FinishedMaterial(material); }
 
 std::vector<std::string> material_names() {
     std::vector<std::string> names;
-    for (const auto& entry : catalog()) names.push_back(entry.first);
+    for (const RegistryRow& row : kRegistry) names.emplace_back(row.key);
+    std::sort(names.begin(), names.end());
     return names;
 }
+
+std::string canonical_name(const RangeMaterial& material) {
+    if (find_registry(normalize_name(material.name)) == nullptr) {
+        throw std::invalid_argument(repr_str(material.name) +
+                                    " is not a catalog material (user-defined materials have no registry entry), so "
+                                    "it has no name resolve() would accept");
+    }
+    return material.name;
+}
+
+std::string canonical_name(const FinishedMaterial& material) { return canonical_name(material.material); }
+
+}  // namespace registry
+
+FinishedMaterial resolve_material(const std::string& name) { return registry::resolve(name); }
+
+std::vector<std::string> material_names() { return registry::material_names(); }
+
+// ---------------------------------------------------------------------------
+// applicability.py
+// ---------------------------------------------------------------------------
+
+namespace applicability {
+
+namespace {
+
+using Table = std::vector<std::pair<FinishKey, std::set<std::string>>>;
+
+const Table& substrates() {
+    static const Table t = [] {
+        auto set = [](std::initializer_list<const char*> items) {
+            std::set<std::string> s;
+            for (const char* i : items) s.insert(i);
+            return s;
+        };
+        auto with = [](std::set<std::string> a, const std::set<std::string>& b) {
+            a.insert(b.begin(), b.end());
+            return a;
+        };
+        return Table{
+            {Mechanical::BEAD_BLAST, set({"metal", "plastic"})},
+            {Mechanical::BRUSHED, metal_set()},
+            {Mechanical::FINE_SANDING, set({"metal", "plastic", "wood"})},
+            {Mechanical::SMOOTH_MACHINING, set({"metal", "plastic", "wood"})},
+            {Mechanical::ELECTROPOLISHED, set({"stainless", "titanium"})},
+            {Chemical::ANODIZED, set({"aluminum", "titanium"})},
+            {Chemical::CHEM_FILM, set({"aluminum"})},
+            {Chemical::CONDUCTIVE_OXIDATION, set({"aluminum"})},
+            {Chemical::BLACK_OXIDE, with(ferrous(), set({"stainless", "copper", "brass"}))},
+            {Chemical::PASSIVATION, set({"stainless", "titanium"})},
+            {Chemical::PICKLING, with(ferrous(), set({"stainless"}))},
+            {Chemical::DYEING, set({"plastic", "resin", "aluminum"})},
+            {MetalPlating::CHROME_PLATING, metal_set()},
+            {MetalPlating::GOLD_PLATING, metal_set()},
+            {MetalPlating::NICKEL_PLATING, metal_set()},
+            {MetalPlating::SILVER_PLATING, metal_set()},
+            {MetalPlating::TIN_PLATING, metal_set()},
+            {MetalPlating::PVD, metal_set()},
+            {MetalPlating::ZINC_PLATING, ferrous()},
+            {MetalPlating::VACUUM_PLATING, coatable_poly()},
+            {Coating::POWDER_COAT, metal_set()},
+            {Coating::ELECTROPHORESIS, metal_set()},
+            {Coating::SPRAY_PAINT, paintable()},
+            {Marking::LASER_ENGRAVING, everything()},
+            {Marking::ETCHING, set({"metal", "glass"})},
+            {Marking::SILKSCREEN, set({"metal", "plastic", "resin", "glass"})},
+        };
+    }();
+    return t;
+}
+
+const Finish& finish_of(const FinishKey& key) {
+    return std::visit(
+        [](auto k) -> const Finish& {
+            using K = decltype(k);
+            if constexpr (std::is_same_v<K, Mechanical>) {
+                return mechanical_finishes().at(k);
+            } else if constexpr (std::is_same_v<K, Chemical>) {
+                return chemical_finishes().at(k);
+            } else if constexpr (std::is_same_v<K, MetalPlating>) {
+                return metal_plating_finishes().at(k);
+            } else if constexpr (std::is_same_v<K, Coating>) {
+                return coating_finishes().at(k);
+            } else {
+                return marking_finishes().at(k);
+            }
+        },
+        key);
+}
+
+bool matches(const RangeMaterial& material, const std::set<std::string>& subs) {
+    return subs.count(material.category) > 0 || (material.family && subs.count(*material.family) > 0);
+}
+
+}  // namespace
+
+const std::vector<std::pair<FinishKey, std::set<std::string>>> TYPICAL_SUBSTRATES = substrates();
+
+std::vector<Finish> typical_finishes(const RangeMaterial& material) {
+    std::vector<Finish> out;
+    for (const auto& [key, subs] : substrates()) {
+        if (matches(material, subs)) out.push_back(finish_of(key));
+    }
+    return out;
+}
+
+std::vector<RangeMaterial> typical_materials(const FinishKey& finish) {
+    const std::set<std::string>* subs = nullptr;
+    for (const auto& [key, s] : substrates()) {
+        if (key == finish) subs = &s;
+    }
+    if (subs == nullptr) throw std::out_of_range("not a finish of TYPICAL_SUBSTRATES");
+    std::vector<RangeMaterial> out;
+    for (const RangeMaterial& m : detail::all_materials()) {
+        if (matches(m, *subs)) out.push_back(m);
+    }
+    return out;
+}
+
+std::vector<RangeMaterial> typical_materials(const Finish& finish) {
+    for (const auto& [key, subs] : substrates()) {
+        if (finish_of(key) == finish) return typical_materials(key);
+    }
+    throw std::out_of_range(finish.repr());
+}
+
+std::vector<RangeMaterial> typical_materials(const finishes::AppliedFinish& finish) {
+    return typical_materials(finish.finish);
+}
+
+}  // namespace applicability
 
 }  // namespace build123d

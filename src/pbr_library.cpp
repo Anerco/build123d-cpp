@@ -50,17 +50,9 @@ double py_mod(double x, double y) {
     return mod;
 }
 
-std::string strip(const std::string& s) {
-    std::size_t b = 0, e = s.size();
-    while (b < e && std::isspace(static_cast<unsigned char>(s[b]))) ++b;
-    while (e > b && std::isspace(static_cast<unsigned char>(s[e - 1]))) --e;
-    return s.substr(b, e - b);
-}
+std::string strip(const std::string& s) { return detail::pbr::py_strip(s); }
 
-std::string lower(std::string s) {
-    for (auto& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    return s;
-}
+std::string lower(const std::string& s) { return detail::pbr::py_lower(s); }
 
 /// int(text, 16)
 int parse_hex(const std::string& text) {

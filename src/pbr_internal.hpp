@@ -13,6 +13,21 @@
 
 namespace build123d::detail::pbr {
 
+/// Python's str.strip() and str.lower() for ASCII text (strip's whitespace includes \x1c-\x1f).
+inline std::string py_strip(const std::string& s) {
+    auto space = [](char c) { return c == ' ' || (c >= '\t' && c <= '\r') || (c >= '\x1c' && c <= '\x1f'); };
+    std::size_t b = 0, e = s.size();
+    while (b < e && space(s[b])) ++b;
+    while (e > b && space(s[e - 1])) --e;
+    return s.substr(b, e - b);
+}
+inline std::string py_lower(std::string s) {
+    for (char& c : s) {
+        if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+    }
+    return s;
+}
+
 /// PIL.ImageColor.getrgb: 3 or 4 integer channels (std::invalid_argument for an unknown
 /// color, as Python's ValueError).
 std::vector<int> getrgb(const std::string& color);
