@@ -326,6 +326,16 @@ TEST(step_assembly_labels_and_colors) {
     CHECK(labels == (std::set<std::string>{"red box", "blue ball"}));
 }
 
+TEST(warning_handler) {
+    std::vector<std::string> seen;
+    const WarningHandler previous = set_warning_handler([&](const std::string& m) { seen.push_back(m); });
+    warn("first");
+    set_warning_handler({});
+    warn("silenced");
+    set_warning_handler(previous);
+    CHECK(seen == std::vector<std::string>{"first"});
+}
+
 int main(int argc, char** argv) {
     int failed = 0, run = 0;
     const std::set<std::string> only(argv + 1, argv + argc);
