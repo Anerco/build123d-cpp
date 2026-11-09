@@ -14,6 +14,7 @@ from build123d import (
     RigidJoint,
     Select,
     Sphere,
+    Unit,
     make_brake_formed,
 )
 
@@ -74,7 +75,16 @@ def base_part_object_joints():
     return V([info(rotated), info(aligned)])
 
 
+def unit_tables():
+    import build123d  # pylint: disable=import-outside-toplevel
+
+    per_meter = [build123d.UNITS_PER_METER[u] for u in (Unit.IN, Unit.FT, Unit.MC, Unit.MM, Unit.CM, Unit.M)]
+    per_kilogram = [build123d.UNITS_PER_KILOGRAM[u] for u in (Unit.G, Unit.KG, Unit.LB)]
+    return V([per_meter, per_kilogram, [build123d.G, build123d.KG, build123d.LB, build123d.G_PER_LB]])
+
+
 CASES = {
+    "integ_unit_tables": unit_tables,
     "integ_brake_select": brake_select,
     "integ_joints_through_booleans": joints_through_booleans,
     "integ_base_part_object_joints": base_part_object_joints,

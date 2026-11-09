@@ -2,6 +2,7 @@
 // Enumerations mirror build123d/build_enums.py.
 #pragma once
 
+#include <map>
 #include <stdexcept>
 #include <string>
 
@@ -108,6 +109,11 @@ inline double units_per_kilogram(Unit unit) {
     }
     throw std::invalid_argument("Not a mass unit");
 }
+
+/// build123d's UNITS_PER_METER and UNITS_PER_KILOGRAM tables (see also the functions above).
+inline const std::map<Unit, double> UNITS_PER_METER = {{Unit::IN, M / IN}, {Unit::FT, M / FT}, {Unit::MC, M / MC},
+                                                      {Unit::MM, M / MM}, {Unit::CM, M / CM}, {Unit::M, 1.0}};
+inline const std::map<Unit, double> UNITS_PER_KILOGRAM = {{Unit::G, KG / G}, {Unit::KG, 1.0}, {Unit::LB, KG / LB}};
 
 #if defined(BUILD123D_RESTORE_IN)
 #pragma pop_macro("IN")

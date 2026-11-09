@@ -29,6 +29,14 @@ V joint_info(const Part& p) {
 }  // namespace
 
 COMPARE_CASES {
+    compare::add_value("integ_unit_tables", [] {
+        std::vector<V> per_meter, per_kilogram;
+        for (const Unit u : {Unit::IN, Unit::FT, Unit::MC, Unit::MM, Unit::CM, Unit::M}) {
+            per_meter.push_back(UNITS_PER_METER.at(u));
+        }
+        for (const Unit u : {Unit::G, Unit::KG, Unit::LB}) per_kilogram.push_back(UNITS_PER_KILOGRAM.at(u));
+        return V::list({V::list(per_meter), V::list(per_kilogram), V::list({G, KG, LB, G_PER_LB})});
+    });
     compare::add_value("integ_brake_select", [] {
         const Part part = make_brake_formed(0.5, 2, Polyline({{0, 0}, {5, 6}, {10, 1}}));
         return V::obj({{"new_edges", part.edges(Select::NEW).size()},
