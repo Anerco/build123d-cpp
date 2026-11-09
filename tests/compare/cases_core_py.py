@@ -954,6 +954,134 @@ def attributes_survive():
               attrs(-r.faces()[0])])
 
 
+def mixin1d_queries():
+    spline = Edge.make_spline([(0, 0, 0), (3, 2, 1), (6, -1, 2), (9, 0, 0)])
+    wire = Wire.make_polygon([(0, 0, 0), (4, 0, 0), (4, 3, 0), (0, 3, 2)], close=False)
+    arc = Edge.make_circle(5, Plane.XZ, 10, 200)
+    derivatives = []
+    for c in (spline, wire, arc):
+        for order in (1, 2, 3):
+            derivatives.append(c.derivative_at(0.3, order))
+            derivatives.append(c.derivative_at(0.3, order, PositionMode.LENGTH))
+        derivatives.append(c.derivative_at(c @ 0.6, 1))
+    angles = []
+    for u in (0.0, 0.25, 0.5, 0.75, 1.0):
+        angles.append(arc.tangent_angle_at(u, PositionMode.PARAMETER, Plane.XZ))
+        angles.append(Edge.make_circle(2).tangent_angle_at(u))
+        angles.append(Edge.make_circle(2).tangent_angle_at(u * 3, PositionMode.LENGTH, Plane.XY.rotated((0, 0, 30))))
+    planar = Edge.make_line((0, 0, 1), (1, 1, 1)).common_plane(Edge.make_line((2, 0, 1), (3, 4, 1)))
+    not_planar = Edge.make_line((0, 0, 0), (1, 0, 0)).common_plane(Edge.make_line((0, 1, 1), (0, 2, 3)))
+    line_only = Edge.make_line((0, 0, 0), (1, 1, 0)).common_plane()
+    params = [wire.param_at_point(p) for p in ((1, 0.5, 0), (4, 1.5, 0), (2, 3, 1))]
+    params.append(spline.param_at_point(spline @ 0.37))
+    locs = [geom(loc) for loc in spline.locations([0.1, 0.5, 0.9])]
+    locs.append(geom(spline.location_at(0.4, PositionMode.PARAMETER, FrameMethod.FRENET, x_dir=(0, 0, 1))))
+    locs.append(geom(wire.location_at(2.5, PositionMode.LENGTH, FrameMethod.CORRECTED)))
+    locs.append(geom(spline.location_at(4.0, PositionMode.LENGTH, FrameMethod.CORRECTED)))
+    try:
+        Edge.make_line((0, 0, 0), (1, 0, 0)).normal()
+        no_normal = False
+    except Exception:  # noqa: BLE001
+        no_normal = True
+    try:
+        straight_normal = wire.edges()[0].normal() == Vector()
+    except Exception:  # noqa: BLE001
+        straight_normal = None
+    return V([derivatives, angles, geom(planar) if planar else None, not_planar is not None,
+              geom(line_only) if line_only else None, params, locs, Edge.make_circle(3, Plane.XZ).normal(),
+              straight_normal, no_normal])
+
+
+def edge_wire_queries():
+    a = Edge.make_line((0, 0, 0), (4, 0, 0))
+    b = Edge.make_three_point_arc((0, 2, 0), (2, 3, 0), (4, 2, 0))
+    rev = b.reversed()
+    rebuilt = b.reversed(reconstruct=True)
+    w1 = Wire.make_polygon([(0, 0, 0), (1, 0, 0), (1, 1, 0)], close=False)
+    w2 = Wire.make_polygon([(1, 1, 0), (0, 2, 0), (-1, 1, 0)], close=False)
+    messy = Wire([Edge.make_line((0, 0), (1, 0)), Edge.make_line((1, 1), (1, 0)), Edge.make_line((1, 1), (0, 1))])
+    ordered = [[e @ 0, e @ 1] for e in messy.order_edges()]
+    combined = Wire.combine([Edge.make_line((0, 0), (1, 0)), Edge.make_line((1, 0), (1, 1)),
+                             Edge.make_line((5, 5), (6, 5))])
+    return V([describe([Edge.make_mid_way(a, b), Edge.make_mid_way(a, b, 0.25)]), rev @ 0, rev % 0, rebuilt @ 0,
+              rebuilt % 0, rev.is_forward, rebuilt.is_forward, describe(w1.stitch(w2).edges()), w1.stitch(w2).length,
+              ordered, len(combined), describe(combined), w1.close().is_closed, w1.close().length,
+              Wire.make_ellipse(3, 2, Plane.XY, 0, 90, AngularDirection.COUNTER_CLOCKWISE, True).length,
+              Wire.make_ellipse(3, 2, Plane.XY, 0, 90, AngularDirection.COUNTER_CLOCKWISE, False).length,
+              len(Wire.make_ellipse(3, 2, Plane.XY, 0, 90, AngularDirection.COUNTER_CLOCKWISE, True).edges())])
+
+
+def face_queries():
+    rect = Face.make_rect(4, 2, Plane.XZ.offset(1))
+    tilted = Face.make_rect(3, 1).rotate(Axis.Z, 30)
+    square = Face.make_rect(2, 2)
+    cyl = Cylinder(2, 4).faces().filter_by(GeomType.CYLINDER)[0]
+    holed = square.make_holes([Wire.make_circle(0.5)])
+    ell = (Rectangle(4, 4) - Pos(1, 1) * Rectangle(2, 2)).faces()[0]
+    chamfered = square.chamfer_2d(0.5, 0.25, [square.vertices()[0]], square.edges()[0])
+    return V([rect.width, rect.length, tilted.width, tilted.length, cyl.width, square.geometry, rect.geometry,
+              ell.geometry, cyl.geometry, cyl.radius, rect.radius,
+              geom(cyl.axis_of_rotation) if cyl.axis_of_rotation else None, rect.axis_of_rotation is not None,
+              geom(rect.location_at(0.2, 0.7)), geom(cyl.location_at(0.25, 0.5)), geom(rect.center_location),
+              geom(cyl.center_location), rect.is_coplanar(Plane.XZ.offset(1)), rect.is_coplanar(Plane.XZ),
+              square.is_inside((0.5, 0.5, 0)), square.is_inside((3, 0, 0)), holed.area, holed.without_holes().area,
+              len(holed.inner_wires()), chamfered.area, describe(chamfered.edges()),
+              describe([Face.make_surface_from_curves(Edge.make_line((0, 0, 0), (4, 0, 0)),
+                                                      Edge.make_three_point_arc((0, 0, 3), (2, 1, 3), (4, 0, 3)))])])
+
+
+def shell_solid_queries():
+    lofted = Shell.make_loft([Wire.make_rect(4, 4), Wire.make_circle(1, Plane.XY.offset(3))])
+    revolved = Shell.revolve(Edge.make_line((2, 0, 0), (3, 0, 2)), 180, Axis.Z)
+    extruded = Shell.extrude(Wire.make_polygon([(0, 0, 0), (2, 0, 0), (2, 1, 0)], close=False), (0, 0, 3))
+    from_bbox = Solid.from_bounding_box((Rot(10, 20, 0) * Box(1, 2, 3)).bounding_box())
+    box = Box(4, 4, 4)
+    mixed = Compound([Box(1, 1, 1), Pos(3, 0, 0) * Sphere(1),
+                      Compound([Pos(0, 4, 0) * Box(1, 1, 1), Face.make_rect(1, 1)])])
+    return V([describe([lofted, revolved, extruded]), from_bbox.volume, from_bbox.center(), box.is_inside((1, 1, 1)),
+              box.is_inside((2, 0, 0)), box.is_inside((2.1, 0, 0)), box.is_inside((2.0005, 0, 0), 1e-3),
+              len(mixed.get_type(Solid)), len(mixed.get_type(Face)), len(mixed.get_type(Compound)), len(list(mixed))])
+
+
+def shape_queries():
+    box = Box(2, 2, 2)
+    sphere = Pos(5, 1, 0) * Sphere(1)
+    d, p1, p2 = box.distance_to_with_closest_points(sphere)
+    dp, q1, q2 = box.distance_to_with_closest_points((4, 4, 4))
+    closest = box.closest_points(sphere)
+    hits = box.faces_intersected_by_axis(Axis((-5, 0.2, 0.3), (1, 0, 0)))
+    vertices, triangles = Sphere(1).tessellate(0.1, 0.2)
+    vsum = sum(vertices, Vector(0, 0, 0))
+    moved = box.transformed((10, 20, 30), (1, 2, 3))
+    scaled = box.scale((1, 2, 3), (1, 1, 1))
+    scaled2 = box.scale(2, (1, 0, 0))
+    return V([box.distance_to(sphere), box.distance_to((4, 4, 4)), d, p1, p2, dp, q1, q2, closest[0], closest[1],
+              describe(hits), len(vertices), len(triangles), vsum, moved.center(), moved.faces()[0].normal_at(),
+              scaled.bounding_box().min, scaled.bounding_box().max, scaled2.bounding_box().min, scaled2.bounding_box().max])
+
+
+def skip_clean_case():
+    from build123d.topology import SkipClean
+
+    a = Box(2, 2, 2)
+    b = Pos(2, 0, 0) * Box(2, 2, 2)
+    with SkipClean():
+        faces_skip = len((a + b).faces())
+    return V([len((a + b).faces()), faces_skip, len((a + b).faces())])
+
+
+def plane_helpers():
+    p = Plane.XY.offset(2).rotated((0, 0, 30))
+    try:
+        p.shift_origin((0, 0, 5))
+        not_in = False
+    except ValueError:
+        not_in = True
+    return V([geom(p.shift_origin((1, 1, 2))), geom(p.shift_origin(Axis((3, 4, 0), (0, 0, 1)))),
+              geom(Plane.XZ.shift_origin(Vertex(1, 0, 4))), not_in, geom(p.location_between(Plane.YZ.offset(1))),
+              geom(p.rotated((10, 20, 30), Extrinsic.XYZ))])
+
+
 CASES = {
     # 1a
     "core_and_list_part": lambda: Box(4, 4, 4) & [Pos(1, 0, 0) * Box(4, 4, 4), Sphere(2.5)],
@@ -1072,4 +1200,12 @@ CASES = {
     "core_compound_members11": compound_members11,
     "core_sort_wires_by_build_order": sort_wires_case,
     "core_attributes_survive": attributes_survive,
+    # 13: never compared before
+    "core_mixin1d_queries": mixin1d_queries,
+    "core_edge_wire_queries": edge_wire_queries,
+    "core_face_queries": face_queries,
+    "core_shell_solid_queries": shell_solid_queries,
+    "core_shape_queries": shape_queries,
+    "core_skip_clean": skip_clean_case,
+    "core_plane_helpers": plane_helpers,
 }
