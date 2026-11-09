@@ -204,6 +204,8 @@ struct Range {
     Range(double value) : Range(value, value) {}  // NOLINT(google-explicit-constructor)
     /// The value a fraction `r` of the way from min to max.
     double value_at(double r) const { return min + r * (max - min); }
+    /// repr(): "Range(min=85.0, max=100.0)" (C++ numbers are floats).
+    std::string repr() const;
     bool operator==(const Range& other) const { return min == other.min && max == other.max; }
     bool operator!=(const Range& other) const { return !(*this == other); }
 };
@@ -276,6 +278,9 @@ struct RangeMaterial {
     std::optional<Range> property(const std::string& field) const;
     /// str(): the name and the mechanical and thermal properties with their units.
     std::string str() const;
+    /// repr(): the dataclass's, "MetalMaterial(name='Alu_G6061_T6', density=2700.0, ...)" (C++
+    /// numbers are floats: Python shows the catalog's integer values as ints).
+    std::string repr() const;
 };
 
 /// with_density: the material with another density (none: the same).

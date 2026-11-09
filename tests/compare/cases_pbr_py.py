@@ -207,7 +207,18 @@ def material_summary(m):
     return {"name": m.name, "kind": type(m).__name__, "category": m.category, "family": m.family,
             "transparent": m.transparent, "density": m.density,
             "fields": [f.name for f in dataclasses.fields(m)],
-            "hardness_scale": getattr(m, "hardness_scale", None), "props": props, "str": str(m)}
+            "hardness_scale": getattr(m, "hardness_scale", None), "props": props, "str": str(m),
+            "repr": repr(as_floats(m))}
+
+
+def as_floats(m):
+    """The material with its numbers as floats, as C++ has them."""
+    changes = {"density": float(m.density)}
+    for f in dataclasses.fields(m):
+        v = getattr(m, f.name)
+        if isinstance(v, Range):
+            changes[f.name] = Range(float(v.min), float(v.max))
+    return dataclasses.replace(m, **changes)
 
 
 def fm_summary(fm, with_color=True):

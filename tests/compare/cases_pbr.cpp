@@ -267,7 +267,8 @@ V material_summary(const RangeMaterial& m) {
                    {"fields", V::list(names)},
                    {"hardness_scale", has_scale ? V(m.hardness_scale) : V(nullptr)},
                    {"props", V::list(props)},
-                   {"str", m.str()}});
+                   {"str", m.str()},
+                   {"repr", m.repr()}});
 }
 
 V fm_summary(const FinishedMaterial& fm, bool with_color = true) {

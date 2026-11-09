@@ -289,7 +289,32 @@ const std::set<std::string> PAINTABLE = paintable();
 const std::set<std::string> COATABLE_POLY = coatable_poly();
 const std::set<std::string> EVERYTHING = everything();
 
+std::string Range::repr() const { return "Range(min=" + pyfmt::repr(min) + ", max=" + pyfmt::repr(max) + ")"; }
+
 std::vector<std::string> RangeMaterial::fields() const { return split(class_row(kind).fields); }
+
+std::string RangeMaterial::repr() const {
+    std::vector<std::string> parts;
+    for (const std::string& field : fields()) {
+        std::string value;
+        if (field == "name") {
+            value = repr_str(name);
+        } else if (field == "density") {
+            value = pyfmt::repr(density);
+        } else if (field == "family") {
+            value = family ? repr_str(*family) : "None";
+        } else if (field == "transparent") {
+            value = transparent ? "True" : "False";
+        } else if (field == "hardness_scale") {
+            value = repr_str(hardness_scale);
+        } else {
+            const std::optional<Range>& r = this->*range_field(field);
+            value = r ? r->repr() : "None";
+        }
+        parts.push_back(field + "=" + value);
+    }
+    return kind + "(" + join(parts, ", ") + ")";
+}
 
 std::optional<Range> RangeMaterial::property(const std::string& field) const {
     const RangeField member = range_field(field);
