@@ -27,133 +27,6 @@ using namespace detail;
 
 namespace {
 
-using Shapes = std::vector<TopoDS_Shape>;
-
-/// Shape._bool_op_list for a Common or a Section: the top-level pieces of the cleaned result.
-Shapes bool_op_list(const TopoDS_Shape& arg, const TopoDS_Shape& tool, bool section) {
-    TopoDS_Shape result = occt("intersect", [&] {
-        std::unique_ptr<BRepAlgoAPI_BooleanOperation> operation;
-        if (section) {
-            operation = std::make_unique<BRepAlgoAPI_Section>();
-        } else {
-            operation = std::make_unique<BRepAlgoAPI_Common>();
-        }
-        operation->SetArguments(to_list({arg}));
-        operation->SetTools(to_list({tool}));
-        operation->SetRunParallel(true);
-        operation->Build();
-        return operation->Shape();
-    });
-    if (clean_enabled()) result = clean_shape(result);
-    if (result.IsNull()) return {};
-    result = unwrap(result, true);
-    if (result.ShapeType() == TopAbs_COMPOUND) return top_level(result);
-    return {result};
-}
-
-/// ShapeList.expand: compounds dissolved, wires to edges, shells to faces, nulls dropped.
-Shapes expand(const Shapes& shapes) {
-    Shapes out;
-    for (const auto& s : shapes) {
-        if (s.IsNull()) continue;
-        switch (s.ShapeType()) {
-            case TopAbs_COMPOUND: {
-                const Shapes inner = expand(children(s));
-                out.insert(out.end(), inner.begin(), inner.end());
-                break;
-            }
-            case TopAbs_SHELL:
-                for (const auto& f : entities(s, TopAbs_FACE)) out.push_back(f);
-                break;
-            case TopAbs_WIRE:
-                for (const auto& e : Wire(s).edges()) out.push_back(e.wrapped());
-                break;
-            default: out.push_back(s);
-        }
-    }
-    return out;
-}
-
-/// ShapeList(set(...)): drop shapes that are the same (TShape and location) as earlier ones.
-Shapes unique(const Shapes& shapes) {
-    Shapes out;
-    for (const auto& s : shapes) {
-        if (std::none_of(out.begin(), out.end(), [&](const TopoDS_Shape& o) { return o.IsSame(s); })) {
-            out.push_back(s);
-        }
-    }
-    return out;
-}
-
-/// Edge.trim_infinite on an operand, sized from the shape it's intersected with.
-TopoDS_Shape finite_operand(const TopoDS_Shape& shape_with_bbox, const TopoDS_Shape& other) {
-    if (other.ShapeType() != TopAbs_EDGE) return other;
-    const Edge edge(other);
-    if (!edge.is_infinite()) return other;
-    const BoundBox bbox = Shape(shape_with_bbox).bounding_box(std::nullopt, false);
-    return edge.trim_infinite(bbox.diagonal() + (edge.center() - bbox.center()).length()).wrapped();
-}
-
-Shapes intersect_with_1d(const TopoDS_Shape& self, const TopoDS_Shape& other, double tolerance);
-
-/// Mixin1D._intersect(other) for a shape `other`.
-Shapes mixin1d_intersect(const TopoDS_Shape& self, TopoDS_Shape other, double tolerance) {
-    other = finite_operand(self, other);
-    Shapes results;
-    switch (other.ShapeType()) {
-        case TopAbs_EDGE:
-        case TopAbs_WIRE: {
-            // Common (collinear overlap) + Section (crossing vertices)
-            results = expand(bool_op_list(self, other, false));
-            for (const auto& s : bool_op_list(self, other, true)) {
-                if (s.ShapeType() == TopAbs_VERTEX) results.push_back(s);
-            }
-            break;
-        }
-        case TopAbs_VERTEX:
-            if (Shape(other).distance_to(Shape(self)) <= tolerance) results.push_back(other);
-            break;
-        default:
-            // Delegate to higher-order shapes (Face, Solid, etc.)
-            results = intersect_with_1d(other, self, tolerance);
-    }
-    return results;
-}
-
-/// X._intersect(other) where `other` is an Edge or Wire, for any shape type X.
-Shapes intersect_with_1d(const TopoDS_Shape& self, const TopoDS_Shape& other_in, double tolerance) {
-    switch (self.ShapeType()) {
-        case TopAbs_VERTEX:
-            // Vertex._intersect delegates to the edge
-            return mixin1d_intersect(other_in, self, tolerance);
-        case TopAbs_EDGE:
-        case TopAbs_WIRE: return mixin1d_intersect(self, other_in, tolerance);
-        case TopAbs_FACE:
-        case TopAbs_SHELL:
-            // 2D + Edge: Section for intersection
-            return bool_op_list(self, finite_operand(self, other_in), true);
-        case TopAbs_SOLID:
-            // Solid + Edge: Common
-            return expand(bool_op_list(self, finite_operand(self, other_in), false));
-        default: {
-            // Compound: distribute over the elements (OR semantics)
-            Shapes results;
-            for (const auto& element : children(self)) {
-                const Shapes r = intersect_with_1d(element, other_in, tolerance);
-                results.insert(results.end(), r.begin(), r.end());
-            }
-            return unique(results);
-        }
-    }
-}
-
-/// Shape.intersect(other) for an Edge and one operand, as shapes (empty for None).
-Shapes edge_intersect(const Edge& self, const TopoDS_Shape& other) {
-    if (self.is_null()) throw std::invalid_argument("Can't intersect an empty edge");
-    if (other.IsNull()) return {};
-    return unique(expand(mixin1d_intersect(self.wrapped(), other, 1e-6)));
-}
-
 /// Edge.param_at_point as build123d computes it: a vertex or the projected point gives the
 /// parameter along the underlying curve (the edge's orientation is ignored), validated with
 /// position_at; otherwise a bounded search with scipy's minimize_scalar.
@@ -211,11 +84,11 @@ double python_param_at_point(const Edge& edge, const Vector& pnt) {
 }
 
 /// The shortest trim of `edge` from its start to one of the intersection vertices.
-std::optional<Edge> shortest_trim(const Edge& edge, const Shapes& intersections) {
+std::optional<Edge> shortest_trim(const Edge& edge, const ShapeList<Shape>& intersections) {
     if (intersections.empty()) return std::nullopt;
     std::vector<Edge> trims;
     for (const auto& s : intersections) {
-        for (const auto& v : Shape(s).vertices()) trims.push_back(edge.trim(0, python_param_at_point(edge, Vector(v))));
+        for (const auto& v : s.vertices()) trims.push_back(edge.trim(0, python_param_at_point(edge, Vector(v))));
     }
     if (trims.empty()) return std::nullopt;
     std::stable_sort(trims.begin(), trims.end(), [](const Edge& a, const Edge& b) { return a.length() < b.length(); });
@@ -235,28 +108,16 @@ Edge Edge::trim_infinite(double half_length) const {
     return Edge::make_line(origin - direction * half_length, origin + direction * half_length);
 }
 
-std::optional<Edge> Edge::trim_to_other(const Shape& other) const {
-    return shortest_trim(*this, edge_intersect(*this, other.wrapped()));
-}
+// build123d: intersections = self.intersect(other); the shortest trim to one of their vertices.
+std::optional<Edge> Edge::trim_to_other(const Shape& other) const { return shortest_trim(*this, intersect(other)); }
 
-std::optional<Edge> Edge::trim_to_other(const Axis& other) const {
-    return shortest_trim(*this, edge_intersect(*this, Edge(other).wrapped()));
-}
+std::optional<Edge> Edge::trim_to_other(const Axis& other) const { return shortest_trim(*this, intersect(other)); }
 
-std::optional<Edge> Edge::trim_to_other(const Location& other) const {
-    return shortest_trim(*this, edge_intersect(*this, Vertex(other.position()).wrapped()));
-}
+std::optional<Edge> Edge::trim_to_other(const Location& other) const { return shortest_trim(*this, intersect(other)); }
 
-std::optional<Edge> Edge::trim_to_other(const Plane& other) const {
-    if (is_null()) throw std::invalid_argument("Can't intersect an empty edge");
-    // 1D + Plane: run Section directly with an infinite face
-    const TopoDS_Shape face = occt("intersect", [&] { return TopoDS_Shape(BRepBuilderAPI_MakeFace(other.wrapped()).Face()); });
-    return shortest_trim(*this, unique(expand(expand(bool_op_list(obj_, face, true)))));
-}
+std::optional<Edge> Edge::trim_to_other(const Plane& other) const { return shortest_trim(*this, intersect(other)); }
 
-std::optional<Edge> Edge::trim_to_other(const Vector& other) const {
-    return shortest_trim(*this, edge_intersect(*this, Vertex(other).wrapped()));
-}
+std::optional<Edge> Edge::trim_to_other(const Vector& other) const { return shortest_trim(*this, intersect(other)); }
 
 // ---------------------------------------------------------------------------
 // Limit

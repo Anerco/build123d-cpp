@@ -11,6 +11,7 @@
 #include <TopoDS_Vertex.hxx>
 
 #include "build123d/operations.hpp"
+#include "build123d/topology_utils.hpp"
 #include "internal.hpp"
 #include "voronoi.hpp"
 
@@ -20,69 +21,7 @@ using namespace detail;
 
 namespace {
 
-/// topo_explore_common_vertex: the first vertex of edge1 that edge2 shares.
-std::optional<TopoDS_Vertex> common_vertex(const TopoDS_Shape& edge1, const TopoDS_Shape& edge2) {
-    for (TopExp_Explorer e1(edge1, TopAbs_VERTEX); e1.More(); e1.Next()) {
-        for (TopExp_Explorer e2(edge2, TopAbs_VERTEX); e2.More(); e2.Next()) {
-            if (e1.Current().IsSame(e2.Current())) return TopoDS::Vertex(e1.Current());
-        }
-    }
-    return std::nullopt;
-}
 
-/// topo_explore_connected_edges (topology/one_d.py): the edges of `parent` sharing a vertex
-/// with `edge` with at least the requested continuity.
-ShapeList<Edge> topo_explore_connected_edges(const Edge& edge, const Shape& parent,
-                                             ContinuityLevel continuity = ContinuityLevel::C0) {
-    if (edge.is_null()) throw std::invalid_argument("edge is empty");
-    std::vector<TopoDS_Shape> topods_edges;
-    for (const auto& e : parent.edges()) {
-        if (!e.is_null()) topods_edges.push_back(e.wrapped());
-    }
-    // Work with the parent's own copy of the edge so vertices match
-    std::optional<TopoDS_Shape> parent_edge;
-    for (const auto& c : topods_edges) {
-        if (c.IsSame(edge.wrapped())) {
-            parent_edge = c;
-            break;
-        }
-    }
-    if (!parent_edge) {
-        for (const auto& c : topods_edges) {
-            if (c.IsPartner(edge.wrapped())) {
-                parent_edge = c;
-                break;
-            }
-        }
-    }
-    if (!parent_edge) return {};
-    const TopoDS_Edge given = TopoDS::Edge(*parent_edge);
-    const TopLoc_Location relocation = edge.wrapped().Location().Multiplied(given.Location().Inverted());
-
-    ShapeList<Edge> connected;
-    for (const auto& topods_edge : topods_edges) {
-        if (given.IsSame(topods_edge)) continue;
-        const auto vertex = common_vertex(given, topods_edge);
-        if (!vertex) continue;
-        const double u1 = BRep_Tool::Parameter(*vertex, given);
-        const double u2 = BRep_Tool::Parameter(*vertex, TopoDS::Edge(topods_edge));
-        const BRepAdaptor_Curve curve1(given), curve2(TopoDS::Edge(topods_edge));
-        const GeomAbs_Shape actual = BRepLProp::Continuity(curve1, curve2, u1, u2, TOLERANCE, TOLERANCE);
-        ContinuityLevel level;
-        switch (actual) {
-            case GeomAbs_C0: level = ContinuityLevel::C0; break;
-            case GeomAbs_G1:
-            case GeomAbs_C1: level = ContinuityLevel::C1; break;
-            default: level = ContinuityLevel::C2;
-        }
-        if (static_cast<int>(level) < static_cast<int>(continuity)) continue;
-        if (std::any_of(connected.begin(), connected.end(), [&](const Edge& c) { return c.wrapped().IsSame(topods_edge); })) {
-            continue;
-        }
-        connected.push_back(relocation.IsIdentity() ? Edge(topods_edge) : Edge(topods_edge.Moved(relocation)));
-    }
-    return connected;
-}
 
 }  // namespace
 

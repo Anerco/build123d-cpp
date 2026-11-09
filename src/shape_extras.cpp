@@ -18,6 +18,7 @@
 #include <gp_Mat.hxx>
 
 #include "build123d/warnings.hpp"
+#include "build123d/pack.hpp"
 #include "internal.hpp"
 
 namespace build123d {
@@ -51,75 +52,13 @@ TopoDS_Shape Shape::to_splines_topods(int degree, double tolerance, bool nurbs) 
 
 namespace {
 
-/// pack_utils._pack2d: a growing bin packer (jakesgordon/bin-packing); the positions of
-/// the rectangles in input order.
+/// pack_utils._pack2d (the shared port in pack.cpp), with sizes and positions as arrays.
 std::vector<std::array<double, 2>> pack2d(const std::vector<std::array<double, 2>>& sizes) {
-    struct Node {
-        bool used = false;
-        double x = 0, y = 0, w = 0, h = 0;
-        Node* down = nullptr;
-        Node* right = nullptr;
-    };
-    std::vector<std::unique_ptr<Node>> pool;
-    const auto make = [&](Node n) {
-        pool.push_back(std::make_unique<Node>(n));
-        return pool.back().get();
-    };
-    std::function<Node*(Node*, double, double)> find_node = [&](Node* start, double w, double h) -> Node* {
-        if (start->used) {
-            Node* found = find_node(start->right, w, h);
-            return found ? found : find_node(start->down, w, h);
-        }
-        if (w <= start->w && h <= start->h) return start;
-        return nullptr;
-    };
-    const auto split_node = [&](Node* node, double w, double h) {
-        node->used = true;
-        node->down = make({false, node->x, node->y + h, node->w, node->h - h});
-        node->right = make({false, node->x + w, node->y, node->w - w, h});
-        return node;
-    };
-    if (sizes.empty()) throw std::invalid_argument("no objects to pack");
-    struct Item {
-        std::size_t index;
-        double w, h;
-    };
-    std::vector<Item> items;
-    for (std::size_t i = 0; i < sizes.size(); ++i) items.push_back({i, sizes[i][0], sizes[i][1]});
-    std::stable_sort(items.begin(), items.end(),
-                     [](const Item& a, const Item& b) { return std::min(a.w, a.h) > std::min(b.w, b.h); });
-    std::stable_sort(items.begin(), items.end(),
-                     [](const Item& a, const Item& b) { return std::max(a.w, a.h) > std::max(b.w, b.h); });
-    Node* root = make({false, 0, 0, items[0].w, items[0].h});
-    const auto grow_right = [&](double w, double h) {
-        root = make({true, 0, 0, root->w + w, root->h, root, make({false, root->w, 0, w, root->h})});
-        Node* node = find_node(root, w, h);
-        if (!node) throw std::runtime_error("Failed to grow right!");
-        return split_node(node, w, h);
-    };
-    const auto grow_down = [&](double w, double h) {
-        root = make({true, 0, 0, root->w, root->h + h, make({false, 0, root->h, root->w, h}), root});
-        Node* node = find_node(root, w, h);
-        if (!node) throw std::runtime_error("Failed to grow down!");
-        return split_node(node, w, h);
-    };
-    const auto grow_node = [&](double w, double h) {
-        const bool can_grow_down = w <= root->w;
-        const bool can_grow_right = h <= root->h;
-        const bool should_grow_right = can_grow_right && (root->h >= (root->w + w));
-        const bool should_grow_down = can_grow_down && (root->w >= (root->h + h));
-        if (should_grow_right) return grow_right(w, h);
-        if (should_grow_down) return grow_down(w, h);
-        if (can_grow_right) return grow_right(w, h);
-        if (can_grow_down) return grow_down(w, h);
-        throw std::runtime_error("Failed to grow!");
-    };
-    std::vector<std::array<double, 2>> positions(sizes.size());
-    for (const auto& item : items) {
-        Node* node = find_node(root, item.w, item.h);
-        node = node ? split_node(node, item.w, item.h) : grow_node(item.w, item.h);
-        positions[item.index] = {node->x, node->y};
-    }
+    std::vector<std::pair<double, double>> pairs;
+    pairs.reserve(sizes.size());
+    for (const auto& s : sizes) pairs.emplace_back(s[0], s[1]);
+    std::vector<std::array<double, 2>> positions;
+    for (const auto& [x, y] : detail::pack2d(pairs)) positions.push_back({x, y});
     return positions;
 }
 
