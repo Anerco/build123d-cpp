@@ -122,9 +122,10 @@ def gordon_point_guide():
 
 
 def gordon_tolerance():
-    profiles, guides = create_test_curves(3, 3)
-    moved_guides = [g.translate((0, 0, 5e-4)) for g in guides]
-    return V(summary(Face.make_gordon_surface(profiles, moved_guides, 2e-3)))
+    profiles, guides = create_test_curves(3, 4)
+    moved_guides = [g.translate((0, 0, 1e-6)) for g in guides]
+    return V([summary(Face.make_gordon_surface(profiles, moved_guides, 1e-3)),
+              Face.make_gordon_surface(profiles, guides, 1e-3).area])
 
 
 def gordon_errors():
@@ -147,12 +148,15 @@ def gordon_errors():
     point_guides = [Spline(p[0], (p[0] + p[2]) / 2, p[3]), Spline(p[1], (p[0] + p[2]) / 2, p[2])]
     apart_profiles = [Line((0, 0, 0), (1, 0, 0)), Line((0, 1, 0), (1, 1, 0))]
     apart_guides = [Line((0, 0, 1), (0, 1, 1)), Line((1, 0, 1), (1, 1, 1))]
+    near_profiles, near_guides = create_test_curves(4, 4)
+    near_guides = [g.translate((0, 0, 2e-5)) for g in near_guides]
     return V([raises(lambda: Face.make_gordon_surface(empty_profile, guides)),
               raises(lambda: Face.make_gordon_surface(profiles, empty_guide)),
               raises(lambda: Face.make_gordon_surface(point_middle, point_guides)),
               raises(lambda: Face.make_gordon_surface(apart_profiles, apart_guides)),
               raises(lambda: Face.make_gordon_surface([profiles[0]], guides)),
-              raises(lambda: Face.make_gordon_surface([profiles[0], profiles[0]], guides))])
+              raises(lambda: Face.make_gordon_surface([profiles[0], profiles[0]], guides)),
+              raises(lambda: Face.make_gordon_surface(near_profiles, near_guides, 1e-3))])
 
 
 CASES = {

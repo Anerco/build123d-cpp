@@ -148,11 +148,12 @@ COMPARE_CASES {
         return summary(Face::make_gordon_surface(profile_curves, guides));
     });
     add_value("core_gordon_tolerance", [] {
-        // the curves meet only within 1e-3
-        const auto [profiles, guides] = create_test_curves(3, 3);
+        // the guides pass 1e-6 above the profiles
+        const auto [profiles, guides] = create_test_curves(3, 4);
         std::vector<Edge> moved_guides;
-        for (const auto& g : guides) moved_guides.push_back(g.translate(Vector(0, 0, 5e-4)));
-        return summary(Face::make_gordon_surface(profiles, moved_guides, 2e-3));
+        for (const auto& g : guides) moved_guides.push_back(g.translate(Vector(0, 0, 1e-6)));
+        return V::list({summary(Face::make_gordon_surface(profiles, moved_guides, 1e-3)),
+                        V(Face::make_gordon_surface(profiles, guides, 1e-3).area())});
     });
     add_value("core_gordon_errors", [] {
         const auto raises = [](auto f) -> V {
@@ -177,6 +178,9 @@ COMPARE_CASES {
             Spline({kPoints[1], (kPoints[0] + kPoints[2]) / 2, kPoints[2]})};
         const std::vector<Edge> apart_profiles{Line(Vector(0, 0, 0), Vector(1, 0, 0)), Line(Vector(0, 1, 0), Vector(1, 1, 0))};
         const std::vector<Edge> apart_guides{Line(Vector(0, 0, 1), Vector(0, 1, 1)), Line(Vector(1, 0, 1), Vector(1, 1, 1))};
+        // 2e-5 apart: too far for the intersection search
+        auto [near_profiles, near_guides] = create_test_curves(4, 4);
+        for (auto& g : near_guides) g = g.translate(Vector(0, 0, 2e-5));
         const std::vector<Edge> one_profile{profiles[0]};
         const std::vector<Edge> twice{profiles[0], profiles[0]};
         return V::list({raises([&] { (void)Face::make_gordon_surface(empty_profile, guides); }),
@@ -184,6 +188,7 @@ COMPARE_CASES {
                         raises([&] { (void)Face::make_gordon_surface(point_middle, point_guides); }),
                         raises([&] { (void)Face::make_gordon_surface(apart_profiles, apart_guides); }),
                         raises([&] { (void)Face::make_gordon_surface(one_profile, guides); }),
-                        raises([&] { (void)Face::make_gordon_surface(twice, guides); })});
+                        raises([&] { (void)Face::make_gordon_surface(twice, guides); }),
+                        raises([&] { (void)Face::make_gordon_surface(near_profiles, near_guides, 1e-3); })});
     });
 }
