@@ -194,6 +194,8 @@ python tests/compare/compare_examples.py build/examples       # the examples
 | `Compound(children=[a, b])` | `Compound::make_assembly({a, b})`, or `Compound c; c.children = {a, b};` |
 | `child.parent = assembly` | `assembly.children.push_back(child)` (the tree stores a copy) |
 | `node.global_location` | `node.global_location()` |
+| `part.color = "red"`, `part.material = "aluminum"` | the same |
+| `part._color` | `part.color.raw()` |
 | `RigidJoint("j", part, location)` | the same |
 | `a.joints["j"].connect_to(b.joints["k"], angle=90)` | `a.joints["j"].connect_to(b.joints["k"], {.angle = 90})` |
 | `with SkipClean(): ...` | `{ SkipClean skip; ... }` |
@@ -250,6 +252,11 @@ Shapes are values: copying one copies it, where Python shares the object.
 - Joint objects are handles to the joint in their part's `joints`: `j.connect_to(...)` and
   `part.joints["j"].connect_to(...)` act on the same joint. Copying a part gives the copy its
   own joints (Python's deepcopy does the same). A joint whose part was destroyed throws.
+- `color` and `material` behave like build123d's properties. A shape without its own takes its
+  nearest ancestor's when read, and keeps it. Assigning a material (a catalog name or a
+  `FinishedMaterial`) also colors the shape with the material's look. Read them like a
+  `std::optional`. `raw()` and `set_raw()` give and set the shape's own value without either
+  effect, like Python's `_color` and `_material`.
 
 ### Differences from Python build123d
 
@@ -265,8 +272,6 @@ Where Python build123d has a bug, the C++ is the corrected version:
 
 Smaller differences:
 
-- Assigning `Shape::material` doesn't recolor the shape; Python's setter applies the
-  material's color.
 - `Face::wrap_faces` leaves the faces it is given unchanged (Python moves them).
 - Where Python returns something in an arbitrary order (from a `set`), the C++ keeps the order
   found: `ShapeList` set operations, `Face::axes_of_symmetry`, `FontManager::register_folder`.
