@@ -11,7 +11,9 @@
 #include <TopoDS_Iterator.hxx>
 
 #include "build123d/objects.hpp"
+#include "build123d/text.hpp"
 #include "internal.hpp"
+#include "py_compat.hpp"
 
 namespace build123d {
 
@@ -141,7 +143,7 @@ Font_FontAspect to_aspect(FontStyle style) {
     return Font_FA_Regular;
 }
 
-Shape position_glyph(const Shape& glyph, const Wire& path, double position) {
+Shape position_glyph(const Shape& glyph, const Mixin1D& path, double position) {
     const BoundBox bbox = glyph.bounding_box();
     const Vector face_bottom_center((bbox.min.X + bbox.max.X) / 2, 0, 0);
     const double relative = position + face_bottom_center.X / path.length();
@@ -153,16 +155,68 @@ Shape position_glyph(const Shape& glyph, const Wire& path, double position) {
 
 }  // namespace
 
+namespace {
+
+std::string text_align_name(TextAlign a) {
+    switch (a) {
+        case TextAlign::BOTTOM: return "TextAlign.BOTTOM";
+        case TextAlign::CENTER: return "TextAlign.CENTER";
+        case TextAlign::LEFT: return "TextAlign.LEFT";
+        case TextAlign::RIGHT: return "TextAlign.RIGHT";
+        case TextAlign::TOP: return "TextAlign.TOP";
+        case TextAlign::TOPFIRSTLINE: return "TextAlign.TOPFIRSTLINE";
+    }
+    return "TextAlign";
+}
+
+/// make_text's _make_face: the face of the combined edges, facing +Z.
+Face make_text_face(const std::vector<Edge>& edges) {
+    Face face(Wire::combine(edges).at(0));
+    if (face.normal_at().Z < 0) face = -face;
+    return face;
+}
+
+}  // namespace
+
+std::tuple<std::string, std::string, Handle(Font_SystemFont)> Compound::resolve_font(const std::string& font,
+                                                                                    const std::string& font_path,
+                                                                                    FontStyle font_style) {
+    FontManager manager;
+    std::string selected_name;
+    if (!font_path.empty() && !manager.check_font(font_path).IsNull()) {
+        const std::vector<std::string> face_names = manager.register_font(font_path, true, false);
+        if (std::find(face_names.begin(), face_names.end(), font) != face_names.end()) {
+            selected_name = font;
+        } else if (face_names.empty()) {
+            throw std::out_of_range("list index out of range");
+        } else {
+            selected_name = face_names[0];
+        }
+    } else {
+        selected_name = font;
+    }
+    const Handle(Font_SystemFont) system_font = manager.find_font(selected_name, font_style);
+    if (system_font.IsNull()) throw std::invalid_argument("No font found for '" + selected_name + "'");
+    return {system_font->FontName().ToCString(), system_font->FontPath(to_aspect(font_style)).ToCString(),
+            system_font};
+}
+
 Compound Compound::make_text(const std::string& txt, double font_size, const std::string& font,
                              const std::string& font_path, FontStyle font_style,
                              std::pair<TextAlign, TextAlign> text_align, std::optional<Align2> align,
-                             double position_on_path, const std::optional<Wire>& text_path) {
+                             double position_on_path, const std::optional<Mixin1D>& text_path,
+                             double single_line_width) {
+    const auto [resolved_font, resolved_font_path, system_font] = resolve_font(font, font_path, font_style);
+
+    // Validate TextAlign parameters
     Graphic3d_HorizontalTextAlignment h_align;
     switch (text_align.first) {
         case TextAlign::LEFT: h_align = Graphic3d_HTA_LEFT; break;
         case TextAlign::CENTER: h_align = Graphic3d_HTA_CENTER; break;
         case TextAlign::RIGHT: h_align = Graphic3d_HTA_RIGHT; break;
-        default: throw std::invalid_argument("Horizontal TextAlign must be LEFT, CENTER, or RIGHT");
+        default:
+            throw std::invalid_argument("Horizontal TextAlign must be LEFT, CENTER, or RIGHT. Got " +
+                                        text_align_name(text_align.first));
     }
     Graphic3d_VerticalTextAlignment v_align;
     switch (text_align.second) {
@@ -170,23 +224,13 @@ Compound Compound::make_text(const std::string& txt, double font_size, const std
         case TextAlign::CENTER: v_align = Graphic3d_VTA_CENTER; break;
         case TextAlign::TOP: v_align = Graphic3d_VTA_TOP; break;
         case TextAlign::TOPFIRSTLINE: v_align = Graphic3d_VTA_TOPFIRSTLINE; break;
-        default: throw std::invalid_argument("Vertical TextAlign must be BOTTOM, CENTER, TOP, or TOPFIRSTLINE");
+        default:
+            throw std::invalid_argument("Vertical TextAlign must be BOTTOM, CENTER, TOP, or TOPFIRSTLINE. Got " +
+                                        text_align_name(text_align.second));
     }
 
+    // Write text to shape
     Compound text_flat = occt("Text", [&] {
-        Handle(Font_FontMgr) manager = Font_FontMgr::GetInstance();
-        std::string name = font;
-        if (!font_path.empty()) {
-            Handle(Font_SystemFont) checked = manager->CheckFont(font_path.c_str());
-            if (!checked.IsNull()) {
-                manager->RegisterFont(checked, true);
-                name = checked->FontName().ToCString();
-            }
-        }
-        Font_FontAspect aspect = to_aspect(font_style);
-        Handle(Font_SystemFont) system_font =
-            manager->FindFont(TCollection_AsciiString(name.c_str()), Font_StrictLevel_Any, aspect);
-        if (system_font.IsNull()) throw std::invalid_argument("No font found for '" + name + "'");
         StdPrs_BRepFont brep_font(NCollection_String(system_font->FontName().ToCString()), to_aspect(font_style),
                                   font_size, Font_StrictLevel_Any);
         if (system_font->IsSingleStrokeFont()) brep_font.SetCompositeCurveMode(false);
@@ -194,25 +238,40 @@ Compound Compound::make_text(const std::string& txt, double font_size, const std
         return Compound(builder.Perform(brep_font, NCollection_String(txt.c_str()), gp_Ax3(), h_align, v_align));
     });
 
+    // Align the text from the bounding box
     if (align) text_flat = text_flat.translate(text_flat.bounding_box().to_align_offset(*align));
 
-    if (text_path) {
+    // Place text on path
+    if (text_path && !text_path->is_null()) {
         std::vector<Shape> glyphs;
         for (const auto& g : text_flat.get_top_level_shapes()) {
             glyphs.push_back(position_glyph(g, *text_path, position_on_path));
         }
         text_flat = Compound(glyphs);
     }
-    return text_flat;
-}
 
-std::vector<std::string> available_fonts() {
-    std::vector<std::string> names;
-    Handle(Font_FontMgr) manager = Font_FontMgr::GetInstance();
-    for (const auto& f : manager->GetAvailableFonts()) names.emplace_back(f->FontName().ToCString());
-    std::sort(names.begin(), names.end());
-    names.erase(std::unique(names.begin(), names.end()), names.end());
-    return names;
+    // Outline single line text; offset_2d's distance is a radius, single_line_width the width
+    if (system_font->IsSingleStrokeFont() && single_line_width > 0) {
+        std::vector<TopoDS_Shape> outline;
+        for (const auto& e : text_flat.edges()) {
+            outline.push_back(make_text_face(e.offset_2d(single_line_width / 2).edges()).wrapped());
+        }
+        // Compound([]) + outline: the faces fused (fuzzy) and cleaned
+        if (outline.size() <= 1) {
+            text_flat = Compound(detail::make_compound(outline));
+        } else {
+            text_flat = Compound(bool_op(BoolOp::FUSE, {outline[0]},
+                                         std::vector<TopoDS_Shape>(outline.begin() + 1, outline.end()), TOLERANCE));
+        }
+        for (const auto& f : text_flat.get_top_level_shapes()) {
+            if (!f.is_valid()) {
+                throw std::invalid_argument("single_line_width (" + py_float_repr(single_line_width) +
+                                            ") is too large for the text and produces invalid faces. Try a "
+                                            "smaller width");
+            }
+        }
+    }
+    return text_flat;
 }
 
 }  // namespace build123d

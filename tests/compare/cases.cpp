@@ -19,7 +19,7 @@
 namespace {
 std::string occt_failure_text(const Standard_Failure& e) {
 #if OCC_VERSION_HEX >= 0x080000
-    return std::string(e.DynamicType()->Name()) + ": " + e.what();
+    return e.what();
 #else
     const char* message = e.GetMessageString();
     return std::string(e.DynamicType()->Name()) + ": " + (message != nullptr ? message : "");

@@ -228,3 +228,110 @@ TEST(objects_pack) {
     const auto positions = detail::pack2d({{2, 10}, {3, 2}});
     CHECK(positions == (std::vector<std::pair<double, double>>{{0, 0}, {2, 0}}));
 }
+
+// ---------------------------------------------------------------------------
+// Operation overloads (lists wherever build123d takes them)
+// ---------------------------------------------------------------------------
+
+static_assert(std::is_same_v<decltype(extrude(std::vector<Face>{}, Until::NEXT, Part())), Part>);
+static_assert(std::is_same_v<decltype(revolve(std::vector<Sketch>{})), Part>);
+static_assert(std::is_same_v<decltype(revolve(std::vector<Shape>{})), Part>);
+static_assert(std::is_same_v<decltype(thicken(std::vector<Face>{}, 1.0)), Part>);
+static_assert(std::is_same_v<decltype(draft(Face(), Plane::XY, 5.0)), Part>);
+static_assert(std::is_same_v<decltype(make_face(std::vector<Wire>{})), Sketch>);
+static_assert(std::is_same_v<decltype(make_face(std::vector<Shape>{})), Sketch>);
+static_assert(std::is_same_v<decltype(trace(std::vector<Curve>{})), Sketch>);
+static_assert(std::is_same_v<decltype(scale(std::vector<Part>{}, Vector(1, 2, 3))), Part>);
+static_assert(std::is_same_v<decltype(scale(Box(1, 1, 1))), Part>);
+static_assert(std::is_same_v<decltype(split(std::vector<Part>{}, Face())), Part>);
+static_assert(std::is_same_v<decltype(offset(Rectangle(1, 1))), Sketch>);
+static_assert(std::is_same_v<decltype(sweep(Circle(1), std::vector<Edge>{})), Part>);
+static_assert(std::is_same_v<decltype(sweep(std::vector<Edge>{}, std::vector<Edge>{})), Sketch>);
+static_assert(std::is_same_v<decltype(bounding_box(Compound())), Compound>);
+static_assert(std::is_same_v<decltype(bounding_box(Circle(1))), Sketch>);
+static_assert(std::is_same_v<decltype(bounding_box(Box(1, 1, 1))), Part>);
+
+TEST(objects_operation_overloads) {
+    // Empty inputs behave as in build123d: an empty Sketch gives an empty Part, an empty list of
+    // profiles raises
+    CHECK(extrude(Sketch(), 1).solids().empty());
+    CHECK(revolve(Sketch()).solids().empty());
+    CHECK_THROWS(revolve(std::vector<Face>{}), std::invalid_argument);
+    CHECK(thicken(std::vector<Face>{}, 1).solids().empty());
+    CHECK_THROWS(trace(std::vector<Edge>{}), std::out_of_range);
+    const std::vector<Edge> path{Edge::make_line({0, 0, 0}, {0, 0, 5}), Edge::make_line({0, 0, 5}, {3, 0, 8})};
+    CHECK(sweep(Circle(1), path).solids().size() == 1);
+    CHECK(sweep(Circle(1), {path[0], path[1]}).solids().size() == 1);
+    const std::vector<Edge> broken{Edge::make_line({0, 0, 0}, {0, 0, 5}), Edge::make_line({0, 1, 6}, {3, 0, 8})};
+    CHECK_THROWS(sweep(Circle(1), broken), std::invalid_argument);
+    CHECK_THROWS(offset(Rectangle(10, 2) - Circle(0.8), -0.3), std::invalid_argument);
+    CHECK_NEAR(scale(std::vector<Part>{Box(2, 2, 2)}, Vector(1, 2, 3)).volume(), 48, 1e-9);
+}
+
+// ---------------------------------------------------------------------------
+// Text and fonts
+// ---------------------------------------------------------------------------
+
+static_assert(std::is_same_v<decltype(available_fonts()), std::vector<FontInfo>>);
+static_assert(std::is_same_v<decltype(FontManager().register_font("")), std::vector<std::string>>);
+static_assert(std::is_same_v<decltype(Compound::resolve_font()),
+                             std::tuple<std::string, std::string, Handle(Font_SystemFont)>>);
+
+TEST(objects_text_fonts) {
+    // The bundled single-line font is found (in the source tree here) and registered
+    CHECK(!FontManager::bundled_path().empty());
+    const auto [name, path, system_font] = Compound::resolve_font("singleline");
+    CHECK(name == "Relief SingleLine CAD");
+    CHECK(path.find("reliefsingleline/ReliefSingleLineCAD-Regular.ttf") != std::string::npos);
+    CHECK(system_font->IsSingleStrokeFont());
+    const auto fonts = available_fonts();
+    CHECK(std::is_sorted(fonts.begin(), fonts.end(), [](const FontInfo& a, const FontInfo& b) { return a.name < b.name; }));
+    CHECK(std::find(fonts.begin(), fonts.end(), FontInfo{"Relief SingleLine CAD", {FontStyle::REGULAR}}) != fonts.end());
+    CHECK(FontInfo({"Arial", {FontStyle::REGULAR}}).repr() == "Font(name='Arial', styles=('REGULAR',))");
+
+    // Single-line text: wires from make_text, outlined faces from Text
+    const Compound strokes = Compound::make_text("Hi", 5, "singleline");
+    CHECK(strokes.faces().empty() && !strokes.wires().empty());
+    const Text text("Hi", 5, {.font = "singleline"});
+    CHECK_NEAR(text.single_line_width, 0.2, 1e-12);
+    CHECK(!text.faces().empty());
+    CHECK(text.font == "Relief SingleLine CAD");
+    CHECK_THROWS(Text("Hi", 5, {.single_line_width = 0}), std::invalid_argument);
+    CHECK_THROWS(FontManager().register_font("/nonexistent/font.ttf"), std::runtime_error);
+}
+
+// ---------------------------------------------------------------------------
+// Drafting
+// ---------------------------------------------------------------------------
+
+static_assert(std::is_base_of_v<BaseSketchObject, ArrowHead>);
+static_assert(std::is_base_of_v<BaseSketchObject, Arrow>);
+static_assert(std::is_base_of_v<BaseSketchObject, DimensionLine>);
+static_assert(std::is_base_of_v<BaseSketchObject, ExtensionLine>);
+static_assert(std::is_base_of_v<BaseSketchObject, TechnicalDrawing>);
+static_assert(std::is_base_of_v<DraftOptions, Draft>);
+static_assert(std::is_same_v<decltype(Draft::_process_path(Edge())), std::variant<Edge, Wire>>);
+
+TEST(objects_drafting) {
+    const Draft draft({.font_size = 3, .line_width = 0.25});
+    CHECK(draft.font_size == 3 && draft.is_metric() && draft.fractional_precision == 64);
+    CHECK_THROWS(Draft({.fractional_precision = 12}), std::invalid_argument);
+
+    CHECK(!DimensionTolerance().has_value());
+    CHECK(DimensionTolerance(0.1).symmetric() == 0.1);
+    CHECK((DimensionTolerance{0.1, 0.2}.plus_minus() == std::make_pair(0.1, 0.2)));
+    CHECK(draft._number_with_units(3.14159, {0.01, 0.02}) == "3.14 +0.01 -0.02mm");
+
+    const DimensionLine d_line({{0, 0}, {50, 0}}, draft, {.label = "L", .arrows = {true, false}});
+    CHECK_NEAR(d_line.dimension, 50, 1e-12);
+    CHECK(!d_line.faces().empty());
+    const ExtensionLine e_line(Edge::make_line({0, 0}, {30, 0}), Vector(0, 8), draft);
+    CHECK_NEAR(e_line.dimension, 30, 1e-9);
+    CHECK(e_line.bounding_box().min.Y > 0);  // the side the offset points to
+
+    CHECK(Date(2024, 2, 29).isoformat() == "2024-02-29");
+    CHECK_THROWS(Date(2023, 2, 29), std::invalid_argument);
+    CHECK(TechnicalDrawing::page_sizes.at(PageSize::A4) == std::make_pair(297.0, 210.0));
+    const TechnicalDrawing page({.design_date = Date(2024, 1, 1), .page_size = PageSize::A5});
+    CHECK(page.faces().size() > 50);
+}

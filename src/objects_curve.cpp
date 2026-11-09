@@ -115,11 +115,16 @@ Edge sagitta_arc(const Vector& start, const Vector& end, double sagitta) {
 }
 
 Edge polar_line(const Vector& start, double length, double angle, const Vector& dir, LengthMode mode) {
+    // Python's float division raises ZeroDivisionError for an exact zero divisor
+    const auto divide = [](double a, double b) {
+        if (b == 0.0) throw std::domain_error("float division by zero");
+        return a / b;
+    };
     Vector length_vector;
     switch (mode) {
         case LengthMode::DIAGONAL: length_vector = dir * length; break;
-        case LengthMode::HORIZONTAL: length_vector = dir * std::abs(length / std::cos(angle * DEG2RAD)); break;
-        case LengthMode::VERTICAL: length_vector = dir * std::abs(length / std::sin(angle * DEG2RAD)); break;
+        case LengthMode::HORIZONTAL: length_vector = dir * std::abs(divide(length, std::cos(angle * DEG2RAD))); break;
+        case LengthMode::VERTICAL: length_vector = dir * std::abs(divide(length, std::sin(angle * DEG2RAD))); break;
     }
     return Edge::make_line(start, start + length_vector);
 }
@@ -157,7 +162,8 @@ Wire fillet_polyline(std::vector<Vector> points, const std::vector<double>* radi
         lines.push_back(Edge::make_line(lines.back().position_at(1), lines.front().position_at(0)));
     }
     const std::size_t n = points.size();
-    if (!close && n == 2) return Wire(lines);
+    // build123d indexes the (empty) list of fillets of an open line with no corner
+    if (!close && n == 2) throw std::out_of_range("list index out of range");
 
     // Fillet arc (or nothing for radius 0) at each corner, with its incoming/outgoing segments.
     struct Corner {

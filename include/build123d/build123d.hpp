@@ -10,6 +10,7 @@
 #pragma once
 
 #include "build123d/cast.hpp"
+#include "build123d/drafting.hpp"
 #include "build123d/enums.hpp"
 #include "build123d/exporters.hpp"
 #include "build123d/geometry.hpp"
@@ -24,6 +25,7 @@
 #include "build123d/pack.hpp"
 #include "build123d/pcbway.hpp"
 #include "build123d/persistence.hpp"
+#include "build123d/text.hpp"
 #include "build123d/topology.hpp"
 #include "build123d/topology_utils.hpp"
 #include "build123d/viewers.hpp"

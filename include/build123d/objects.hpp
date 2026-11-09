@@ -462,12 +462,17 @@ struct TextOptions {
     FontStyle font_style = FontStyle::REGULAR;
     std::pair<TextAlign, TextAlign> text_align = {TextAlign::CENTER, TextAlign::CENTER};
     std::optional<Align2> align;
-    std::optional<Wire> path;
+    /// The Edge or Wire for the text to follow (an Edge extends beyond its ends, a Wire doesn't).
+    std::optional<Mixin1D> path;
     double position_on_path = 0.0;
+    /// Width of the outline of a single-line font's strokes; defaults to 4% of font_size.
+    std::optional<double> single_line_width;
     double rotation = 0.0;
 };
 
-/// Text as faces: Text("Hello", 10, {.font_style = FontStyle::BOLD}).
+/// Text as faces: Text("Hello", 10, {.font_style = FontStyle::BOLD}). The single-line font
+/// ("singleline") is outlined `single_line_width` wide. After construction `font` and
+/// `font_path` hold the font that was used (see Compound::resolve_font).
 class Text : public BaseSketchObject {
 public:
     Text(const std::string& txt, double font_size, const TextOptions& options = {});
@@ -478,12 +483,10 @@ public:
     FontStyle font_style;
     std::pair<TextAlign, TextAlign> text_align;
     std::optional<Align2> align;
-    std::optional<Wire> text_path;
+    std::optional<Mixin1D> text_path;
     double position_on_path;
+    double single_line_width;
 };
-
-/// Font family names known to the font manager.
-std::vector<std::string> available_fonts();
 
 // ---------------------------------------------------------------------------
 // 3D objects

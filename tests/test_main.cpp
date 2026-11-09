@@ -6,6 +6,7 @@
 #include <BRep_Tool.hxx>
 #include <Poly_Triangulation.hxx>
 #include <Standard_Failure.hxx>
+#include <Standard_Version.hxx>
 #include <TopoDS.hxx>
 
 #include <chrono>
@@ -350,7 +351,11 @@ int main(int argc, char** argv) {
         } catch (const Standard_Failure& e) {
             // Before OCCT 8, Standard_Failure doesn't derive from std::exception.
             ++failed;
+#if OCC_VERSION_HEX >= 0x080000
+            std::cout << "FAILED  " << test.name << ": OCCT " << e.what() << "\n";
+#else
             std::cout << "FAILED  " << test.name << ": OCCT " << e.DynamicType()->Name() << "\n";
+#endif
         } catch (const std::exception& e) {
             ++failed;
             std::cout << "FAILED  " << test.name << ": " << e.what() << "\n";

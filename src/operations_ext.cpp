@@ -1,4 +1,4 @@
-// full_round (operations_sketch.py) and make_brake_formed (operations_part.py).
+// full_round (operations_sketch.py), make_brake_formed and draft of one face (operations_part.py).
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -178,6 +178,14 @@ Sketch full_round(const Edge& edge, bool invert, int voronoi_point_count) {
     // Flip the face to match the original parent
     if (topo_parent->faces()[0].normal_at() != pending_face.normal_at()) pending_face = -pending_face;
     return Sketch(std::vector<Face>{pending_face});
+}
+
+// ---------------------------------------------------------------------------
+// draft of a single face
+// ---------------------------------------------------------------------------
+
+Part draft(const Face& faces, const Plane& neutral_plane, double angle) {
+    return draft(std::vector<Face>{faces}, neutral_plane, angle);
 }
 
 // ---------------------------------------------------------------------------

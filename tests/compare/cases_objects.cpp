@@ -1,6 +1,11 @@
 // Objects, operations, text and drafting compared with cases_objects_py.py.
 #include "case_registry.hpp"
 
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+
 #include "../../src/optimize.hpp"
 #include "../../src/voronoi.hpp"
 
@@ -117,6 +122,115 @@ V pack2d_values(const std::vector<std::pair<double, double>>& sizes) {
     std::vector<V> out;
     for (const auto& [x, y] : detail::pack2d(sizes)) out.push_back(V::list({x, y}));
     return V::list(out);
+}
+
+// ---- fonts
+
+const std::string kDejaVu = "/usr/share/fonts/truetype/dejavu/";
+
+std::string bundled_font() { return FontManager::bundled_path() + "/reliefsingleline/ReliefSingleLineCAD-Regular.ttf"; }
+
+/// A font path, from reliefsingleline/ on for the bundled font (installed elsewhere in Python).
+std::string font_path_value(const std::string& path) {
+    const auto i = path.find("reliefsingleline/");
+    return i == std::string::npos ? path : path.substr(i);
+}
+
+V font_info_values(const std::vector<FontInfo>& fonts) {
+    std::vector<V> out;
+    for (const auto& f : fonts) {
+        std::vector<V> styles;
+        for (const auto s : f.styles) {
+            styles.emplace_back(s == FontStyle::REGULAR ? "REGULAR"
+                                : s == FontStyle::BOLD  ? "BOLD"
+                                : s == FontStyle::ITALIC ? "ITALIC"
+                                                         : "BOLDITALIC");
+        }
+        out.push_back(V::list({f.name, V::list(styles)}));
+    }
+    return V::list(out);
+}
+
+Font_FontAspect aspect_of(FontStyle s) {
+    return s == FontStyle::REGULAR ? Font_FA_Regular
+           : s == FontStyle::BOLD  ? Font_FA_Bold
+           : s == FontStyle::ITALIC ? Font_FA_Italic
+                                    : Font_FA_BoldItalic;
+}
+
+V system_font_values(const Handle(Font_SystemFont)& font, FontStyle style) {
+    return V::list({std::string(font->FontName().ToCString()),
+                    font_path_value(font->FontPath(aspect_of(style)).ToCString()), font->FontFaceId(aspect_of(style))});
+}
+
+V top_level_values(const Compound& compound) {
+    std::vector<V> out;
+    for (const auto& s : compound.get_top_level_shapes()) {
+        const double length = s.shape_type() == ShapeType::WIRE   ? Wire(s.wrapped()).length()
+                              : s.shape_type() == ShapeType::EDGE ? Edge(s.wrapped()).length()
+                                                                  : 0.0;
+        out.push_back(V::list({to_string(s.shape_type()), s.edges().size(), length}));
+    }
+    return V::list(out);
+}
+
+std::string read_bytes(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+}
+
+/// A TrueType collection of font files (their table offsets moved behind the collection header).
+void write_collection(const std::vector<std::string>& files, const std::string& path) {
+    const auto u32 = [](const std::string& d, std::size_t p) {
+        return (std::uint32_t(std::uint8_t(d[p])) << 24) | (std::uint32_t(std::uint8_t(d[p + 1])) << 16) |
+               (std::uint32_t(std::uint8_t(d[p + 2])) << 8) | std::uint32_t(std::uint8_t(d[p + 3]));
+    };
+    const auto put32 = [](std::string& d, std::size_t p, std::uint32_t v) {
+        for (int k = 0; k < 4; ++k) d[p + k] = char((v >> (24 - 8 * k)) & 0xFF);
+    };
+    std::string body;
+    std::vector<std::uint32_t> starts;
+    const std::size_t header = 12 + 4 * files.size();
+    for (const auto& file : files) {
+        std::string font = read_bytes(file);
+        const auto start = static_cast<std::uint32_t>(header + body.size());
+        const std::size_t num_tables = (std::uint8_t(font[4]) << 8) | std::uint8_t(font[5]);
+        for (std::size_t i = 0; i < num_tables; ++i) put32(font, 12 + 16 * i + 8, u32(font, 12 + 16 * i + 8) + start);
+        starts.push_back(start);
+        body += font;
+        while (body.size() % 4) body.push_back('\0');
+    }
+    std::string out(header, '\0');
+    out.replace(0, 4, "ttcf");
+    put32(out, 4, 0x00010000);
+    put32(out, 8, static_cast<std::uint32_t>(files.size()));
+    for (std::size_t i = 0; i < starts.size(); ++i) put32(out, 12 + 4 * i, starts[i]);
+    std::ofstream(path, std::ios::binary) << out << body;
+}
+
+std::string temp_file(const std::string& name) { return (std::filesystem::temp_directory_path() / name).string(); }
+
+V tri_values(const Triangle& t) {
+    return V::list({t.a, t.b, t.c, t.A, t.B, t.C, t.area(), V::list({t.vertex_A, t.vertex_B, t.vertex_C})});
+}
+
+// ---- drafting: the settings of upstream test_drafting.py
+
+Draft metric() {
+    return Draft({.font_size = 3.0, .font = "Arial", .font_style = FontStyle::REGULAR, .head_type = HeadType::CURVED,
+                  .arrow_length = 3.0, .line_width = 0.25, .unit = Unit::MM, .number_display = NumberDisplay::DECIMAL,
+                  .display_units = true, .decimal_precision = 2, .fractional_precision = 64, .extension_gap = 2.0});
+}
+
+/// create_test_sketch's outer face.
+Sketch test_sketch_outer() {
+    const Polyline l1({{10, 20}, {-20, 20}, {-20, -20}, {10, -20}});
+    return make_face(l1 + RadiusArc(l1.position_at(0), l1.position_at(1), 25));
+}
+
+Sketch test_sketch_shape() {
+    const Sketch outer = test_sketch_outer();
+    return outer - offset(outer, -0.5);
 }
 
 /// (width, length) pairs drawn with random.seed(123456) as in upstream test_pack.py.
@@ -880,4 +994,655 @@ COMPARE_CASES {
         return bbox_values(pack(std::vector<Box>{Box(2, 2, 2), Box(2, 2, 2), Box(3, 1, 1)}, -1.5));
     });
     compare::add_value("obj_pack_empty_part", [] { return bbox_values(pack(std::vector<Part>{Part()}, 1)); });
+
+    // ---- operation signatures and inputs (lists, empty inputs)
+    const auto z5 = [] { return Edge::make_line({0, 0, 0}, {0, 0, 5}); };
+    compare::add("obj_ops_extrude_empty_sketch", [] { return extrude(Sketch(), 1); });
+    compare::add("obj_ops_extrude_empty_list", [] { return extrude(std::vector<Face>{}, 1); });
+    compare::add("obj_ops_extrude_tuple_both", [] {
+        return extrude(std::vector<Face>{Face::make_rect(1, 1), Pos(3, 0) * Face::make_rect(1, 1)}, 1, {.both = true});
+    });
+    compare::add("obj_ops_extrude_list_until", [] {
+        return extrude(std::vector<Face>{Face::make_rect(2, 2), Pos(5, 0) * Face::make_rect(1, 1)}, Until::NEXT,
+                       Pos(0, 0, 5) * Box(20, 20, 1));
+    });
+    compare::add("obj_ops_extrude_list_until_last", [] {
+        return extrude(std::vector<Face>{Face::make_rect(2, 2), Pos(5, 0) * Face::make_rect(1, 1)}, Until::LAST,
+                       Pos(0, 0, 5) * Box(20, 20, 1) + Pos(0, 0, 9) * Box(20, 20, 1));
+    });
+    compare::add("obj_ops_extrude_empty_until", [] { return extrude(Sketch(), Until::NEXT, Shape()); });
+    compare::add("obj_ops_extrude_until_no_target", [] {
+        return extrude(Face::make_rect(1, 1), Until::NEXT, Shape());
+    });
+    compare::add("obj_ops_revolve_sketches", [] {
+        return revolve(std::vector<Sketch>{Plane::XZ * (Pos(3, 0) * Rectangle(1, 1)), Plane::XZ * (Pos(6, 0) * Circle(0.5))});
+    });
+    compare::add("obj_ops_revolve_mixed", [] {
+        return revolve(std::vector<Shape>{Plane::XZ * (Pos(3, 0) * Rectangle(1, 1)), (Plane::XZ * (Pos(6, 0) * Circle(0.5))).face()},
+                       Axis::Z, 90);
+    });
+    compare::add("obj_ops_revolve_empty_sketch", [] { return revolve(Sketch()); });
+    compare::add("obj_ops_revolve_empty_list", [] { return revolve(std::vector<Face>{}); });
+    compare::add("obj_ops_thicken_list", [] {
+        return thicken(std::vector<Face>{Face::make_rect(1, 1), Pos(3, 0) * Face::make_rect(1, 1)}, 1);
+    });
+    compare::add("obj_ops_thicken_list_both", [] {
+        return thicken(std::vector<Face>{Face::make_rect(1, 1), Pos(3, 0) * Face::make_rect(1, 1)}, 0.5, std::nullopt, true);
+    });
+    compare::add("obj_ops_thicken_empty_sketch", [] { return thicken(Sketch(), 1); });
+    compare::add("obj_ops_thicken_empty_list", [] { return thicken(std::vector<Face>{}, 1); });
+    compare::add("obj_ops_draft_single_face", [] {
+        return draft(Box(10, 10, 10).faces().filter_by(Axis::Z, true)[0], Plane::XY.offset(-5), 5);
+    });
+    compare::add("obj_ops_make_face_mixed", [] {
+        return make_face(std::vector<Shape>{Wire::make_polygon({{0, 0}, {3, 0}, {3, 2}}, false), Curve() + Line({3, 2}, {0, 0})});
+    });
+    compare::add("obj_ops_make_face_curves", [] {
+        return make_face(std::vector<Curve>{Curve() + Polyline({{0, 0}, {3, 0}, {3, 2}, {0, 0}})});
+    });
+    compare::add("obj_ops_make_face_wires", [] {
+        return make_face(std::vector<Wire>{Wire::make_polygon({{0, 0}, {4, 0}}, false),
+                                           Wire::make_polygon({{4, 0}, {2, 3}, {0, 0}}, false)});
+    });
+    compare::add("obj_ops_make_face_empty", [] { return make_face(std::vector<Edge>{}); });
+    compare::add("obj_ops_trace_mixed", [] {
+        return trace(std::vector<Shape>{Wire::make_polygon({{0, 0}, {3, 0}, {3, 2}}, false), Curve() + Line({5, 5}, {8, 5})}, 0.5);
+    });
+    compare::add("obj_ops_trace_wires", [] { return trace(std::vector<Wire>{Wire::make_polygon({{0, 0}, {3, 0}, {3, 2}}, false)}); });
+    compare::add("obj_ops_trace_empty", [] { return trace(std::vector<Edge>{}); });
+    compare::add("obj_ops_offset_default", [] { return offset(Rectangle(2, 2)); });
+    compare::add("obj_ops_offset_hole_splits", [] { return offset(Rectangle(10, 2) - Circle(0.8), -0.3); });
+    compare::add("obj_ops_offset_hole_grows", [] { return offset(Rectangle(10, 4) - Circle(0.8), -0.3); });
+    compare::add("obj_ops_offset_hole_vanishes", [] { return offset(Rectangle(10, 4) - Circle(0.8), 1); });
+    compare::add("obj_ops_offset_nested_compound", [] {
+        return offset(Compound(std::vector<Shape>{Compound(std::vector<Shape>{Edge::make_line({0, 0}, {4, 0})}),
+                                                  Edge::make_line({4, 0}, {4, 3})}),
+                      0.5);
+    });
+    compare::add("obj_ops_offset_compound_wire_edge", [] {
+        return offset(Compound(std::vector<Shape>{Wire::make_polygon({{0, 0}, {5, 0}, {5, 5}}, false),
+                                                  Edge::make_line({5, 5}, {0, 5})}),
+                      0.5);
+    });
+    compare::add("obj_ops_scale_default", [] { return scale(Box(2, 2, 2)); });
+    compare::add("obj_ops_scale_list_vector", [] {
+        return scale(std::vector<Part>{Box(2, 2, 2), Pos(5, 0, 0) * Box(2, 2, 2)}, Vector(1, 2, 3));
+    });
+    compare::add("obj_ops_scale_list_vector_about", [] {
+        return scale(std::vector<Part>{Box(2, 2, 2), Pos(5, 0, 0) * Sphere(1)}, Vector(1, 2, 3), Vector(1, 1, 1));
+    });
+    compare::add("obj_ops_split_list_face", [] {
+        return split(std::vector<Part>{Box(2, 2, 2), Pos(5, 0, 0) * Box(2, 2, 2)}, Face::make_rect(20, 20, Plane::XY.offset(0.5)));
+    });
+    compare::add("obj_ops_split_list_face_both", [] {
+        return split(std::vector<Part>{Box(2, 2, 2), Pos(5, 0, 0) * Sphere(1)}, Face::make_rect(20, 20, Plane::XY.offset(0.25)),
+                     Keep::BOTH);
+    });
+    compare::add("obj_ops_sweep_curve_children", [=] {
+        return sweep(Curve() + std::vector<Edge>{Line({0, 0}, {1, 0}), Line({0, 2}, {1, 2})}, z5());
+    });
+    compare::add("obj_ops_sweep_curve_connected", [=] {
+        return sweep(Curve() + std::vector<Edge>{Line({0, 0}, {1, 0}), Line({1, 0}, {1, 1})}, z5());
+    });
+    compare::add("obj_ops_sweep_path_edges", [] {
+        return sweep(Circle(1), std::vector<Edge>{Edge::make_line({0, 0, 0}, {0, 0, 5}), Edge::make_line({0, 0, 5}, {3, 0, 8})});
+    });
+    compare::add("obj_ops_sweep_path_edges_list", [] {
+        return sweep(std::vector<Sketch>{Circle(1), Pos(0, 0, 0) * Rectangle(0.5, 0.5)},
+                     std::vector<Edge>{Edge::make_line({0, 0, 0}, {0, 0, 5}), Edge::make_line({0, 0, 5}, {3, 0, 8})});
+    });
+    compare::add("obj_ops_sweep_path_edges_bad", [] {
+        return sweep(Circle(1), std::vector<Edge>{Edge::make_line({0, 0, 0}, {0, 0, 5}), Edge::make_line({0, 1, 6}, {3, 0, 8})});
+    });
+    compare::add("obj_ops_sweep_path_curve_bad", [] {
+        return sweep(Circle(1), Curve() + std::vector<Edge>{Line({0, 0, 0}, {0, 0, 5}), Line({1, 1, 6}, {3, 0, 8})});
+    });
+    compare::add("obj_ops_sweep_mixed", [] {
+        return sweep(std::vector<Shape>{Face::make_rect(1, 1), Edge::make_line({3, 0}, {4, 0})},
+                     Edge::make_line({0, 0, 0}, {0, 0, 4}));
+    });
+    compare::add("obj_ops_sweep_mixed_holed", [] {
+        return sweep(std::vector<Shape>{Rectangle(4, 4) - Circle(1), Edge::make_line({3, 0}, {4, 0})},
+                     Edge::make_line({0, 0, 0}, {0, 0, 4}));
+    });
+    compare::add("obj_ops_sweep_compound_faces", [] {
+        return sweep(Compound(std::vector<Shape>{Face::make_rect(1, 1), Pos(3, 0, 0) * Face::make_rect(1, 1)}),
+                     Edge::make_line({0, 0, 0}, {0, 0, 4}));
+    });
+    compare::add("obj_ops_sweep_binormal_edge", [] {
+        return sweep(Pos(5, 0, 0) * Rectangle(1, 1), Edge::make_helix(5, 10, 5),
+                     {.binormal = Wire(Edge::make_line({0, 0, 0}, {0, 0, 10}))});
+    });
+    compare::add("obj_ops_sweep_empty_list", [=] { return sweep(std::vector<Face>{}, z5()); });
+    compare::add("obj_ops_bounding_box_compound_faces", [] {
+        return bounding_box(Compound(std::vector<Shape>{Pos(1, 2) * Face::make_rect(2, 1), Pos(-3, 0) * Circle(1).face()}));
+    });
+    compare::add("obj_ops_bounding_box_shapes", [] {
+        return bounding_box(std::vector<Shape>{Pos(0, 0, 3) * Box(1, 2, 3), Pos(5, 5, 5) * Sphere(1)});
+    });
+
+    // ---- objects with edge and error inputs (both sides must agree on what fails)
+    compare::add("obj_edge_line1", [] { return Line(std::vector<Vector>{{0, 0}}); });
+    compare::add("obj_edge_line3", [] { return Line(std::vector<Vector>{{0, 0}, {1, 0}, {2, 0}}); });
+    compare::add("obj_edge_line_same", [] { return Line({0, 0}, {0, 0}); });
+    compare::add("obj_edge_polyline1", [] { return Polyline({{0, 0}}); });
+    compare::add("obj_edge_polyline_close2", [] { return Polyline({{0, 0}, {1, 0}}, true); });
+    compare::add("obj_edge_tpa2", [] { return ThreePointArc(std::vector<Vector>{{0, 0}, {1, 1}}); });
+    compare::add("obj_edge_tpa_collinear", [] { return ThreePointArc({0, 0}, {1, 0}, {2, 0}); });
+    compare::add("obj_edge_spline1", [] { return Spline({{0, 0}}); });
+    compare::add("obj_edge_spline_tan1", [] { return Spline({{0, 0}, {1, 1}, {2, 0}}, {{1, 0}}); });
+    compare::add("obj_edge_spline_tan3", [] { return Spline({{0, 0}, {1, 1}, {2, 0}}, {{1, 0}, {1, 1}, {1, 0}}); });
+    compare::add("obj_edge_spline_scalars", [] { return Spline({{0, 0}, {1, 1}, {2, 0}}, {{1, 0}, {1, 0}}, {1}); });
+    compare::add("obj_edge_tangent_arc3", [] { return TangentArc(std::vector<Vector>{{0, 0}, {1, 1}, {2, 0}}, {1, 0}); });
+    compare::add("obj_edge_radius_arc_small", [] { return RadiusArc({0, 0}, {10, 0}, 2); });
+    compare::add("obj_edge_radius_arc_neg", [] { return RadiusArc({0, 0}, {10, 0}, -8); });
+    compare::add("obj_edge_sagitta_zero", [] { return SagittaArc({0, 0}, {10, 0}, 0); });
+    compare::add("obj_edge_center_arc_zero", [] { return CenterArc({0, 0}, 5, 0, 0.0); });
+    compare::add("obj_edge_center_arc_720", [] { return CenterArc({0, 0}, 5, 0, 720.0); });
+    compare::add("obj_edge_jern_zero_radius", [] { return JernArc({0, 0}, {1, 0}, 0, 90.0); });
+    compare::add("obj_edge_jern_neg", [] { return JernArc({0, 0}, {1, 0}, 2, -90.0); });
+    compare::add("obj_edge_helix_neg_pitch", [] { return Helix(-2, 10, 3); });
+    compare::add("obj_edge_helix_cone", [] { return Helix(2, 10, 3, {0, 0, 0}, {0, 0, 1}, 10, true); });
+    compare::add("obj_edge_polar_neg", [] { return PolarLine({0, 0}, -5.0, 30.0); });
+    compare::add("obj_edge_polar_vertical_0", [] { return PolarLine({0, 0}, 5.0, 0.0, LengthMode::VERTICAL); });
+    compare::add("obj_edge_polar_vertical_180", [] { return PolarLine({0, 0}, 5.0, 180.0, LengthMode::VERTICAL); });
+    compare::add("obj_edge_polar_horizontal_90", [] { return PolarLine({0, 0}, 5.0, 90.0, LengthMode::HORIZONTAL); });
+    compare::add("obj_edge_polar_direction_vertical", [] {
+        return PolarLine({0, 0}, 5.0, Vector(1, 0), LengthMode::VERTICAL);
+    });
+    compare::add("obj_edge_fillet_poly_mismatch", [] {
+        return FilletPolyline({{0, 0}, {5, 0}, {5, 5}, {0, 5}}, std::vector<double>{1, 1, 1});
+    });
+    compare::add("obj_edge_fillet_poly_zero", [] { return FilletPolyline({{0, 0}, {5, 0}, {5, 5}}, 0.0); });
+    compare::add("obj_edge_fillet_poly_two", [] { return FilletPolyline({{0, 0}, {5, 0}}, 1.0); });
+    compare::add("obj_edge_fillet_poly_close_list", [] {
+        return FilletPolyline({{0, 0}, {5, 0}, {5, 5}, {0, 5}}, std::vector<double>{1, 0.5, 0.25, 0.75}, true);
+    });
+    compare::add("obj_edge_reg_poly2", [] { return RegularPolygon(3, 2); });
+    compare::add("obj_edge_reg_poly_minor", [] { return RegularPolygon(3, 5, false); });
+    compare::add("obj_edge_trap_bad", [] { return Trapezoid(5, 2, 20); });
+    compare::add("obj_edge_trap_obtuse", [] { return Trapezoid(5, 2, 120); });
+    compare::add("obj_edge_tri_two", [] { return Triangle({.a = 3, .b = 4}); });
+    compare::add("obj_edge_tri_bad", [] { return Triangle({.a = 1, .b = 2, .c = 5}); });
+    compare::add("obj_edge_tri_aaa", [] { return Triangle({.A = 60, .B = 60, .C = 60}); });
+    compare::add("obj_edge_tri_ssa_ambiguous", [] { return Triangle({.a = 3, .b = 4, .A = 40}); });
+    compare::add_value("obj_tri_ssa_ab", [] { return tri_values(Triangle({.a = 5, .b = 3, .A = 70})); });
+    compare::add_value("obj_tri_ssa_ac", [] { return tri_values(Triangle({.a = 5, .c = 3, .A = 70})); });
+    compare::add_value("obj_tri_ssa_ba", [] { return tri_values(Triangle({.a = 3, .b = 5, .B = 70})); });
+    compare::add_value("obj_tri_ssa_bc", [] { return tri_values(Triangle({.b = 5, .c = 3, .B = 70})); });
+    compare::add_value("obj_tri_ssa_ca", [] { return tri_values(Triangle({.a = 3, .c = 5, .C = 70})); });
+    compare::add_value("obj_tri_ssa_cb", [] { return tri_values(Triangle({.b = 3, .c = 5, .C = 70})); });
+    compare::add_value("obj_tri_ssa_right", [] { return tri_values(Triangle({.a = 4, .b = 8, .A = 30})); });
+    compare::add_value("obj_tri_ssa_obtuse_only", [] { return tri_values(Triangle({.a = 6, .b = 4, .A = 120})); });
+    compare::add_value("obj_tri_ssa_none", [] { return tri_values(Triangle({.a = 2, .b = 8, .A = 60})); });
+    compare::add_value("obj_tri_sas_abC", [] { return tri_values(Triangle({.a = 3, .b = 4, .C = 90})); });
+    compare::add_value("obj_tri_sas_bcA", [] { return tri_values(Triangle({.b = 3, .c = 5, .A = 40})); });
+    compare::add_value("obj_tri_sas_caB", [] { return tri_values(Triangle({.a = 2, .c = 7, .B = 110})); });
+    compare::add_value("obj_tri_aas_c", [] { return tri_values(Triangle({.c = 5, .A = 40, .B = 60})); });
+    compare::add_value("obj_tri_aas_a", [] { return tri_values(Triangle({.a = 5, .B = 40, .C = 60})); });
+    compare::add_value("obj_tri_aas_b", [] { return tri_values(Triangle({.b = 5, .A = 30, .C = 100})); });
+    compare::add_value("obj_tri_aas_bad", [] { return tri_values(Triangle({.a = 5, .A = 100, .B = 90})); });
+    compare::add_value("obj_tri_sss", [] { return tri_values(Triangle({.a = 4, .b = 5, .c = 6})); });
+    compare::add_value("obj_tri_angle_180", [] { return tri_values(Triangle({.a = 3, .b = 4, .C = 180})); });
+    compare::add_value("obj_tri_zero_side", [] { return tri_values(Triangle({.a = 0, .b = 4, .C = 30})); });
+    compare::add("obj_edge_slot_cp_same", [] { return SlotCenterPoint({0, 0}, {0, 0}, 2); });
+    compare::add("obj_edge_slot_c2c_zero", [] { return SlotCenterToCenter(0, 2); });
+    compare::add("obj_edge_slot_overall_narrow", [] { return SlotOverall(2, 3); });
+    compare::add("obj_edge_superellipse_order1", [] { return Superellipse(4, 2, 1); });
+    compare::add("obj_edge_rect_rounded_big", [] { return RectangleRounded(4, 2, 1); });
+    compare::add("obj_edge_circle_half", [] { return Circle(2, 180); });
+    compare::add("obj_edge_convex_3", [] { return ConvexPolyhedron({{0, 0, 0}, {1, 0, 0}, {0, 1, 0}}); });
+    compare::add("obj_convex_cube", [] {
+        std::vector<Vector> pts;
+        for (double x : {0, 2}) for (double y : {0, 3}) for (double z : {0, 1}) pts.emplace_back(x, y, z);
+        return ConvexPolyhedron(pts);
+    });
+    compare::add("obj_convex_interior", [] {
+        return ConvexPolyhedron({{0, 0, 0}, {4, 0, 0}, {0, 4, 0}, {0, 0, 4}, {1, 1, 1}, {0.5, 0.2, 0.3}, {2, 0, 0}, {0, 2, 2}});
+    });
+    compare::add("obj_convex_icosahedron", [] {
+        const double p = 1.618033988749895;
+        std::vector<Vector> pts;
+        for (double s1 : {-1, 1}) for (double s2 : {-1, 1}) pts.emplace_back(0, s1, s2 * p);
+        for (double s1 : {-1, 1}) for (double s2 : {-1, 1}) pts.emplace_back(s1, s2 * p, 0);
+        for (double s1 : {-1, 1}) for (double s2 : {-1, 1}) pts.emplace_back(s2 * p, 0, s1);
+        return ConvexPolyhedron(pts);
+    });
+    compare::add("obj_convex_duplicates", [] {
+        return ConvexPolyhedron({{0, 0, 0}, {0, 0, 0}, {3, 0, 0}, {0, 3, 0}, {0, 0, 3}, {3, 0, 0}});
+    });
+    compare::add("obj_convex_flat", [] { return ConvexPolyhedron({{0, 0, 0}, {1, 0, 0}, {0, 1, 0}, {1, 1, 0}}); });
+    compare::add("obj_convex_aligned", [] {
+        return ConvexPolyhedron({{1, 2, 3}, {4, 1, 2}, {2, 5, 1}, {3, 3, 4}, {0, 1, 1}, {5, 4, 3}}, Rotation(10, 20, 30), Align::MIN);
+    });
+    compare::add("obj_edge_cylinder_arc", [] { return Cylinder(2, 5, 90); });
+    compare::add("obj_edge_sphere_parts", [] { return Sphere(3, -45, 30, 200); });
+    compare::add("obj_edge_torus_partial", [] { return Torus(5, 1, 30, 270, 180); });
+    compare::add("obj_edge_wedge", [] { return Wedge(4, 3, 2, 1, 0.5, 3, 1.5); });
+    compare::add("obj_edge_cone_point", [] { return Cone(3, 0, 4); });
+    compare::add("obj_edge_text_empty", [] { return Text("", 5); });
+    compare::add("obj_edge_text_lines", [] { return Text("a\nb", 5, {.text_align = {TextAlign::LEFT, TextAlign::TOPFIRSTLINE}}); });
+    compare::add("obj_edge_bezier_weights", [] { return Bezier({{0, 0}, {1, 1}, {2, 0}}, {1, 2}); });
+    compare::add("obj_edge_bspline_bad", [] { return BSpline({{0, 0}, {1, 1}, {2, 0}}, {0, 1}, 2); });
+    compare::add("obj_edge_blend_c0", [] {
+        return BlendCurve(Line({0, 0}, {1, 0}), Line({2, 1}, {3, 1}), ContinuityLevel::C0);
+    });
+    compare::add("obj_edge_ellstart_none", [] { return EllipticalStartArc({0, 0}, {1, 0}, 4, 2, 90); });
+    compare::add("obj_edge_ellstart_dir", [] {
+        return EllipticalStartArc({0, 0}, {1, 1}, 4, 2, 120, 30.0, Vector(0, 1));
+    });
+
+    // ---- drafting
+    compare::add_value("obj_draft_numbers", [] {
+        const Draft d2({.decimal_precision = 2});
+        const Draft whole({.decimal_precision = -1});
+        const Draft zero({.decimal_precision = 0});
+        const Draft inch({.unit = Unit::IN});
+        const Draft frac({.unit = Unit::IN, .number_display = NumberDisplay::FRACTION, .fractional_precision = 64});
+        const Draft frac16({.unit = Unit::IN, .number_display = NumberDisplay::FRACTION, .fractional_precision = 16});
+        const Draft no_units({.display_units = false, .decimal_precision = 3});
+        const Draft cm({.unit = Unit::CM});
+        return V::list({d2._number_with_units(3.141),
+                        d2._number_with_units(3.149),
+                        d2._number_with_units(0),
+                        d2._number_with_units(3.14, 0.01),
+                        d2._number_with_units(3.14, {0.01, 0}),
+                        d2._number_with_units(2.675),
+                        d2._number_with_units(0.125),
+                        d2._number_with_units(0.375),
+                        d2._number_with_units(-0.001),
+                        d2._number_with_units(-12.345678),
+                        d2._number_with_units(1e20),
+                        d2._number_with_units(3.14, {}, false),
+                        d2._number_with_units(3.14, 0.05, true),
+                        whole._number_with_units(314.1),
+                        whole._number_with_units(315.0),
+                        whole._number_with_units(325.0),
+                        zero._number_with_units(2.5),
+                        zero._number_with_units(3.5),
+                        zero._number_with_units(-0.4),
+                        inch._number_with_units((5.0 / 8) * IN),
+                        inch._number_with_units(10.0, {0.5, 0.25}),
+                        frac._number_with_units((5.0 / 8) * IN),
+                        frac._number_with_units(M_PI * IN),
+                        frac16._number_with_units(M_PI * IN),
+                        frac._number_with_units(2 * IN),
+                        frac._number_with_units(IN / 128),
+                        frac._number_with_units(3 * IN / 128),
+                        frac._number_with_units(-1.5 * IN),
+                        frac._number_with_units(0.999 * IN),
+                        frac._number_with_units(2.5 * IN, 0.125 * IN),
+                        no_units._number_with_units(7.0 / 3),
+                        cm._number_with_units(12.5),
+                        d2._round_to_str(1.005),
+                        zero._round_to_str(-0.5)});
+    });
+    compare::add_value("obj_draft_labels", [] {
+        const Draft d0({.decimal_precision = 0});
+        const Draft d2({.decimal_precision = 2});
+        const Edge arc1 = Edge::make_circle(100, Plane::XY, 0, 30);
+        const Wire arc_wire(std::vector<Edge>{Edge::make_line({10, -5}, {10, 0}), Edge::make_circle(10, Plane::XY, 0, 60)});
+        return V::list({d0._label_to_str(std::nullopt, arc1, true, {}),
+                        d2._label_to_str(std::nullopt, arc_wire, true, {}),
+                        d2._label_to_str(std::nullopt, Edge::make_circle(7, Plane::XY, 10, 123), true, {}),
+                        d2._label_to_str("Given", arc1, true, 0.1),
+                        d2._label_to_str(std::nullopt, Edge::make_line({0, 0}, {12.5, 0}), false, 0.1),
+                        d2._label_to_str(std::nullopt, Polyline({{0, 0}, {3, 0}, {3, 4}}), false, {0.2, 0.1})});
+    });
+    compare::add_value("obj_draft_label_angle_line", [] {
+        return V(Draft({.decimal_precision = 0})._label_to_str(std::nullopt, Edge::make_line({0, 0, 0}, {100, 0, 0}), true, 0));
+    });
+    compare::add_value("obj_draft_bad_precision", [] { return V(Draft({.fractional_precision = 37}).fractional_precision); });
+    compare::add_value("obj_draft_zero_precision", [] { return V(Draft({.fractional_precision = 0}).fractional_precision); });
+    compare::add_value("obj_draft_attrs", [] {
+        const Draft d({.font_size = 4, .unit = Unit::IN, .number_display = NumberDisplay::FRACTION, .fractional_precision = 32});
+        return V::list({d.font_size, d.font, "REGULAR", d.head_type == HeadType::CURVED ? "CURVED" : "?", d.arrow_length,
+                        d.line_width, d.pad_around_text, d.unit == Unit::IN ? "IN" : "?",
+                        d.number_display == NumberDisplay::FRACTION ? "FRACTION" : "?", d.display_units, d.decimal_precision,
+                        d.fractional_precision, d.extension_gap, d.is_metric(), Draft().is_metric(),
+                        Draft({.unit = Unit::M}).is_metric(), Draft::unit_LUT.at(true), Draft::unit_LUT.at(false)});
+    });
+    compare::add_value("obj_draft_paths", [] {
+        std::vector<V> out;
+        for (const PathDescriptor& path : std::vector<PathDescriptor>{
+                 PathDescriptor({{0, 0, 0}, {100, 0, 0}}), PathDescriptor({{0, 0}, {5, 0}, {5, 5}, {0, 9}}),
+                 Edge::make_line({1, 2}, {3, 4}), Polyline({{0, 0}, {1, 0}, {1, 1}})}) {
+            const auto p = Draft::_process_path(path);
+            std::visit([&](const auto& x) {
+                out.push_back(V::list({x.shape_type() == ShapeType::WIRE ? "Wire" : "Edge", x.length(), x.position_at(0),
+                                       x.position_at(1)}));
+            }, p);
+        }
+        return V::list(out);
+    });
+    compare::add_value("obj_draft_sketch_location", [] {
+        std::vector<V> out;
+        const auto add = [&](const Mixin1D& path, double u, bool flip) {
+            const Location loc = Draft::_sketch_location(path, u, flip);
+            out.push_back(V::list({loc.position(), loc.orientation()}));
+        };
+        add(Edge::make_line({0, 0}, {10, 0}), 0.5, false);
+        add(Edge::make_line({0, 0}, {10, 5}), 0.25, true);
+        add(Edge::make_circle(5, Plane::XY, 0, 180), 0.5, false);
+        add(Polyline({{0, 0}, {10, 0}, {10, 10}}), 0.75, true);
+        add(Edge::make_line({0, 0}, {10, 0}), -0.4, false);
+        add(Edge::make_line({0, 0}, {10, 0}), 1.3, true);
+        return V::list(out);
+    });
+    compare::add("obj_draft_arrowhead_curved", [] { return ArrowHead(10, HeadType::CURVED); });
+    compare::add("obj_draft_arrowhead_filleted", [] { return ArrowHead(10, HeadType::FILLETED); });
+    compare::add("obj_draft_arrowhead_straight", [] { return ArrowHead(10, HeadType::STRAIGHT); });
+    compare::add("obj_draft_arrowhead_rotated", [] { return ArrowHead(4, HeadType::FILLETED, 120); });
+    compare::add("obj_draft_arrow_start", [] { return Arrow(3, Edge::make_line({0, 0}, {20, 0}), 0.5); });
+    compare::add("obj_draft_arrow_end", [] { return Arrow(3, Edge::make_line({0, 0}, {20, 10}), 0.5, false); });
+    compare::add("obj_draft_arrow_wire", [] {
+        return Arrow(2, Polyline({{0, 0}, {10, 0}, {10, 10}}), 0.3, false, HeadType::STRAIGHT);
+    });
+    compare::add("obj_draft_arrow_arc", [] {
+        return Arrow(2, Edge::make_circle(10, Plane::XY, 0, 120), 0.4, true, HeadType::FILLETED);
+    });
+    compare::add("obj_draft_dim_two_points", [] { return DimensionLine({{0, 0, 0}, {100, 0, 0}}, metric()); });
+    compare::add("obj_draft_dim_three_points", [] { return DimensionLine({{0, 0, 0}, {50, 0, 0}, {50, 50, 0}}, metric()); });
+    compare::add("obj_draft_dim_edge", [] { return DimensionLine(Edge::make_line({0, 0}, {100, 0}), metric()); });
+    compare::add("obj_draft_dim_vertices", [] {
+        return DimensionLine(std::vector<Vertex>(Edge::make_line({0, 0}, {100, 0}).vertices()), metric());
+    });
+    compare::add("obj_draft_dim_label", [] { return DimensionLine({{0, 0, 0}, {100, 0, 0}}, metric(), {.label = "Test"}); });
+    compare::add("obj_draft_dim_outside_arrows", [] { return DimensionLine({{0, 0, 0}, {15, 0, 0}}, metric()); });
+    compare::add("obj_draft_dim_outside_label", [] { return DimensionLine({{0, 0, 0}, {5, 0, 0}}, metric()); });
+    compare::add("obj_draft_dim_single_outside", [] {
+        return DimensionLine({{0, 0, 0}, {5, 0, 0}}, metric(), {.arrows = {false, true}});
+    });
+    compare::add("obj_draft_dim_first_arrow", [] {
+        return DimensionLine({{0, 0, 0}, {40, 0, 0}}, metric(), {.arrows = {true, false}});
+    });
+    compare::add("obj_draft_dim_no_arrows", [] {
+        return DimensionLine({{0, 0, 0}, {5, 0, 0}}, metric(), {.arrows = {false, false}});
+    });
+    compare::add("obj_draft_dim_vertical", [] { return DimensionLine({{0, 0}, {0, 100}}, Draft()); });
+    compare::add("obj_draft_dim_reversed", [] { return DimensionLine({{60, 10}, {0, 10}}, metric()); });
+    compare::add("obj_draft_dim_diagonal", [] { return DimensionLine({{0, 0}, {30, -40}}, metric(), {.tolerance = 0.05}); });
+    compare::add("obj_draft_dim_tolerance_pair", [] {
+        return DimensionLine({{0, 0}, {80, 0}}, metric(), {.tolerance = {0.1, 0.2}});
+    });
+    compare::add("obj_draft_dim_arc_angle", [] {
+        return DimensionLine(Edge::make_circle(20, Plane::XY, 0, 75), metric(), {.label_angle = true});
+    });
+    compare::add("obj_draft_dim_wire", [] { return DimensionLine(Polyline({{0, 0}, {30, 0}, {30, 30}}), metric()); });
+    compare::add("obj_draft_dim_imperial", [] {
+        return DimensionLine({{0, 0}, {3 * IN, 0}}, Draft({.font_size = 5.0, .unit = Unit::IN, .number_display = NumberDisplay::FRACTION}));
+    });
+    compare::add("obj_draft_dim_avoid_sketch", [] {
+        return DimensionLine({{45, 45}, {-45, -45}}, metric(), {.sketch = Rectangle(100, 100) - Rectangle(90, 90)});
+    });
+    compare::add("obj_draft_dim_padding", [] {
+        return DimensionLine(Edge::make_line({0, 0}, {Text("Test", 3.0).bounding_box().size.X + 4, 0}), metric(),
+                             {.label = "Test", .arrows = {false, true}});
+    });
+    compare::add("obj_draft_dim_min_shaft", [] {
+        return DimensionLine(Edge::make_line({0, 0}, {Text("Test", 3.0).bounding_box().size.X + 7, 0}), metric(),
+                             {.label = "Test"});
+    });
+    compare::add("obj_draft_dim_singleline", [] {
+        return DimensionLine({{0, 0}, {50, 0}}, Draft({.font = "singleline", .head_type = HeadType::STRAIGHT}));
+    });
+    compare::add("obj_draft_ext_min_x", [] { return ExtensionLine(test_sketch_outer().edges().sort_by(Axis::X)[0], 10, metric()); });
+    compare::add("obj_draft_ext_zero", [] { return ExtensionLine(test_sketch_outer().edges().sort_by(Axis::X)[0], 0, metric()); });
+    compare::add("obj_draft_ext_sketch", [] {
+        return ExtensionLine(test_sketch_outer().edges().sort_by(Axis::Y)[0], 10, metric(), {.sketch = test_sketch_shape()});
+    });
+    const auto diagonal = [] { return Edge::make_line({100, 100}, {200, 200}); };
+    compare::add("obj_draft_ext_vertical_out", [=] {
+        return ExtensionLine(diagonal(), -10, metric(), {.measurement_direction = Vector(0, 1, 0)});
+    });
+    compare::add("obj_draft_ext_vertical_in", [=] {
+        return ExtensionLine(diagonal(), 10, metric(), {.measurement_direction = Vector(0, 1, 0)});
+    });
+    compare::add("obj_draft_ext_otherside", [=] {
+        return ExtensionLine(diagonal(), 110, metric(), {.measurement_direction = Vector(0, 1, 0)});
+    });
+    compare::add("obj_draft_ext_vertical_line", [] {
+        return ExtensionLine(Edge::make_line({100, 100}, {100, 200}), 10, metric(), {.measurement_direction = Vector(0, 1, 0)});
+    });
+    compare::add("obj_draft_ext_horizontal", [=] {
+        return ExtensionLine(diagonal(), 10, metric(), {.measurement_direction = Vector(1, 0, 0)});
+    });
+    compare::add("obj_draft_ext_angled", [=] {
+        return ExtensionLine(diagonal(), 10, metric(), {.measurement_direction = Vector(1, 1, 0)});
+    });
+    compare::add("obj_draft_ext_half_circle", [] {
+        return ExtensionLine(Edge::make_circle(50, Plane::XY, 0, 180), -10, metric(), {.measurement_direction = Vector(1, 0, 0)});
+    });
+    compare::add("obj_draft_ext_full_circle", [] {
+        return ExtensionLine(Edge::make_circle(50), 10, metric(), {.measurement_direction = Vector(0, 1, 0)});
+    });
+    compare::add("obj_draft_ext_vector_above", [] { return ExtensionLine(Edge::make_line({0, 0}, {40, 0}), Vector(0, 10), metric()); });
+    compare::add("obj_draft_ext_vector_below", [] { return ExtensionLine(Edge::make_line({0, 0}, {40, 0}), Vector(0, -10), metric()); });
+    compare::add("obj_draft_ext_vector_right", [] { return ExtensionLine(Edge::make_line({0, 0}, {0, 40}), Vector(10, 0), metric()); });
+    compare::add("obj_draft_ext_vector_left", [] { return ExtensionLine(Edge::make_line({0, 0}, {0, 40}), Vector(-10, 0), metric()); });
+    compare::add("obj_draft_ext_scalar_up", [] { return ExtensionLine(Edge::make_line({0, 0}, {40, 0}), -10, metric()); });
+    compare::add("obj_draft_ext_vector_infers", [] { return ExtensionLine(Edge::make_line({0, 0}, {10, 10}), Vector(0, 5), metric()); });
+    compare::add("obj_draft_ext_vector_measure", [] {
+        return ExtensionLine(Edge::make_line({0, 0}, {10, 10}), Vector(0, 5), metric(), {.measurement_direction = Vector(1, 0, 0)});
+    });
+    compare::add("obj_draft_ext_vector_parallel", [] {
+        return ExtensionLine(Edge::make_line({0, 0}, {10, 10}), Vector(5, 0), metric(), {.measurement_direction = Vector(1, 0, 0)});
+    });
+    compare::add("obj_draft_ext_vector_zero", [] { return ExtensionLine(Edge::make_line({0, 0}, {40, 0}), Vector(0, 0, 0), metric()); });
+    compare::add("obj_draft_ext_vector_out_of_plane", [] {
+        return ExtensionLine(Edge::make_line({0, 0}, {40, 0}), Vector(0, 10, 0.1), metric());
+    });
+    compare::add("obj_draft_ext_direction_out_of_plane", [] {
+        return ExtensionLine(Edge::make_line({0, 0}, {40, 40}), Vector(0, 10), metric(), {.measurement_direction = Vector(1, 0, 0.1)});
+    });
+    compare::add("obj_draft_ext_direction_zero", [] {
+        return ExtensionLine(Edge::make_line({0, 0}, {40, 40}), 10, metric(), {.measurement_direction = Vector(0, 0, 0)});
+    });
+    compare::add("obj_draft_ext_same_ends", [] { return ExtensionLine(Edge::make_circle(5), 3, metric()); });
+    compare::add("obj_draft_ext_points_label", [] {
+        return ExtensionLine({{0, 0}, {20, 0}, {20, 15}}, 8, metric(), {.label = "W", .arrows = {true, false}});
+    });
+    compare::add("obj_draft_ext_tolerance", [] {
+        return ExtensionLine({{0, 0}, {60, 0}}, -12, metric(), {.tolerance = {0.1, 0.05}});
+    });
+    compare::add_value("obj_draft_dimension_values", [=] {
+        const Draft d = metric();
+        return V::list({DimensionLine({{0, 0, 0}, {100, 0, 0}}, d).dimension, DimensionLine({{0, 0, 0}, {15, 0, 0}}, d).dimension,
+                        DimensionLine(Edge::make_circle(20, Plane::XY, 0, 75), d, {.label_angle = true}).dimension,
+                        ExtensionLine(diagonal(), -10, d, {.measurement_direction = Vector(0, 1, 0)}).dimension,
+                        ExtensionLine(diagonal(), 10, d, {.measurement_direction = Vector(1, 1, 0)}).dimension,
+                        ExtensionLine(Edge::make_circle(50, Plane::XY, 0, 180), -10, d, {.measurement_direction = Vector(1, 0, 0)})
+                            .dimension,
+                        ExtensionLine(Edge::make_line({0, 0}, {10, 10}), Vector(0, 5), d).dimension});
+    });
+    compare::add("obj_draft_drawing_a4", [] { return TechnicalDrawing({.design_date = Date(2024, 3, 15)}); });
+    compare::add("obj_draft_drawing_a3", [] {
+        return TechnicalDrawing({.designed_by = "me", .design_date = Date(2023, 11, 9), .page_size = PageSize::A3,
+                                 .title = "Bracket", .sub_title = "Left side", .drawing_number = "B-7", .sheet_number = 2,
+                                 .drawing_scale = 0.5, .nominal_text_size = 8, .line_width = 0.35});
+    });
+    compare::add("obj_draft_drawing_letter", [] {
+        return TechnicalDrawing({.design_date = Date(2020, 1, 2), .page_size = PageSize::LETTER, .sheet_number = 12});
+    });
+    compare::add_value("obj_draft_date", [] {
+        return V::list({Date(2024, 3, 15).isoformat(), Date(1, 1, 1).isoformat(), Date(2024, 2, 29).isoformat()});
+    });
+    compare::add_value("obj_draft_bad_date", [] { return V(Date(2023, 2, 29).isoformat()); });
+    compare::add_value("obj_draft_today", [] { return V(Date::today().isoformat()); });
+
+    // ---- text and fonts (the cases that change the font database last)
+    compare::add_value("obj_text_available_fonts", [] { return font_info_values(available_fonts()); });
+    compare::add_value("obj_text_font_info_repr", [] {
+        return V::list({FontInfo{"Arial", {FontStyle::REGULAR, FontStyle::BOLD, FontStyle::ITALIC, FontStyle::BOLDITALIC}}.repr(),
+                        FontInfo{"O'Neil", {FontStyle::BOLD}}.repr(), FontInfo{"Say \"hi\"", {}}.repr(),
+                        FontInfo{"Tab\tFont", {FontStyle::ITALIC, FontStyle::REGULAR}}.repr()});
+    });
+    compare::add_value("obj_text_resolve", [] {
+        const std::vector<std::pair<std::string, FontStyle>> requests{
+            {"Arial", FontStyle::REGULAR},       {"Arial", FontStyle::BOLD},
+            {"Arial", FontStyle::ITALIC},        {"Arial", FontStyle::BOLDITALIC},
+            {"singleline", FontStyle::REGULAR},  {"singleline", FontStyle::ITALIC},
+            {"Relief SingleLine CAD", FontStyle::REGULAR}, {"DejaVu Sans Mono", FontStyle::BOLDITALIC},
+            {"Liberation Serif", FontStyle::ITALIC}, {"nonexistent", FontStyle::REGULAR}};
+        std::vector<V> out;
+        for (const auto& [font, style] : requests) {
+            const auto [name, path, system_font] = Compound::resolve_font(font, "", style);
+            out.push_back(V::list({name, font_path_value(path)}));
+        }
+        return V::list(out);
+    });
+    compare::add("obj_text_singleline", [] { return Text("Hello", 10, {.font = "singleline"}); });
+    compare::add("obj_text_singleline_width", [] {
+        return Text("build123d", 6, {.font = "singleline", .single_line_width = 0.25});
+    });
+    compare::add("obj_text_singleline_bold", [] {
+        return Text("Ab", 6, {.font = "singleline", .font_style = FontStyle::BOLD});
+    });
+    compare::add("obj_text_singleline_wires", [] { return Compound::make_text("Hello World", 10, "singleline"); });
+    compare::add_value("obj_text_singleline_wire_types", [] {
+        return top_level_values(Compound::make_text("Hello World", 10, "singleline"));
+    });
+    compare::add("obj_text_singleline_triad_x", [] {
+        return Compound::make_text("X", 2.5, "singleline", "", FontStyle::REGULAR, {TextAlign::CENTER, TextAlign::CENTER},
+                                   Align2(Align::MIN, Align::CENTER));
+    });
+    compare::add("obj_text_singleline_triad_z", [] {
+        return Compound::make_text("Z", 2.5, "singleline", "", FontStyle::REGULAR, {TextAlign::CENTER, TextAlign::CENTER},
+                                   Align2(Align::CENTER, Align::MIN));
+    });
+    compare::add("obj_text_singleline_joint", [] {
+        return Compound::make_text("Y", 0.4, "singleline", "", FontStyle::REGULAR, {TextAlign::CENTER, TextAlign::CENTER},
+                                   Align2(Align::CENTER, Align::CENTER));
+    });
+    compare::add("obj_text_singleline_outline", [] {
+        return Compound::make_text("Wire", 8, "singleline", "", FontStyle::REGULAR, {TextAlign::CENTER, TextAlign::CENTER},
+                                   std::nullopt, 0.0, std::nullopt, 0.5);
+    });
+    compare::add("obj_text_singleline_path", [] {
+        return Text("Curved", 4, {.font = "singleline", .path = Wire(CenterArc({0, 0}, 20, 30, 120)), .position_on_path = 0.1});
+    });
+    compare::add("obj_text_path_edge", [] {
+        return Text("Curved", 4, {.path = CenterArc({0, 0}, 20, 30, 120), .position_on_path = 0.1});
+    });
+    compare::add("obj_text_path_wire", [] {
+        return Text("Curved", 4, {.path = Wire(CenterArc({0, 0}, 20, 30, 120)), .position_on_path = 0.1});
+    });
+    compare::add("obj_text_path_spline_edge", [] {
+        return Text("Spline path", 3, {.path = Spline({{0, 0}, {10, 5}, {20, -3}, {30, 0}}), .position_on_path = 0.05});
+    });
+    compare::add("obj_text_path_polyline", [] {
+        return Compound::make_text("Along", 3, "Arial", "", FontStyle::REGULAR, {TextAlign::CENTER, TextAlign::CENTER},
+                                   std::nullopt, 0.2, Polyline({{0, 0}, {10, 0}, {15, 8}}));
+    });
+    compare::add("obj_text_singleline_wide", [] { return Text("Hi", 5, {.font = "singleline", .single_line_width = 3}); });
+    compare::add("obj_text_singleline_too_wide", [] {
+        return Text("ii", 5, {.font = "singleline", .single_line_width = 20});
+    });
+    compare::add("obj_text_bad_width", [] { return Text("Hi", 5, {.single_line_width = 0}); });
+    compare::add("obj_text_bad_width_negative", [] {
+        return Text("Hi", 5, {.font = "singleline", .single_line_width = -1.5});
+    });
+    compare::add("obj_text_italic", [] { return Text("Hi", 10, {.font_style = FontStyle::ITALIC}); });
+    compare::add("obj_text_bolditalic", [] { return Text("Hi", 10, {.font_style = FontStyle::BOLDITALIC}); });
+    compare::add("obj_text_mono_bolditalic", [] {
+        return Text("Mono", 7, {.font = "DejaVu Sans Mono", .font_style = FontStyle::BOLDITALIC});
+    });
+    compare::add_value("obj_text_attrs", [] {
+        const Text t("Hi", 8, {.font_style = FontStyle::BOLD, .text_align = {TextAlign::LEFT, TextAlign::BOTTOM},
+                               .align = Align2(Align::MIN, Align::MAX), .position_on_path = 0.25, .rotation = 15});
+        const Text s("Hey", 5, {.font = "singleline", .single_line_width = 0.3});
+        return V::obj({{"txt", t.txt},
+                       {"font_size", t.font_size},
+                       {"font", t.font},
+                       {"font_path", font_path_value(t.font_path)},
+                       {"font_style", "BOLD"},
+                       {"text_align", V::list({"LEFT", "BOTTOM"})},
+                       {"align", align_values(*t.align)},
+                       {"position_on_path", t.position_on_path},
+                       {"single_line_width", t.single_line_width},
+                       {"rotation", t.rotation},
+                       {"singleline", V::list({s.font, font_path_value(s.font_path), s.single_line_width})}});
+    });
+    compare::add_value("obj_text_styles_attrs", [] {
+        std::vector<V> out;
+        for (const std::string font : {"Arial", "DejaVu Sans Mono", "singleline"}) {
+            for (const auto style : {FontStyle::REGULAR, FontStyle::BOLD, FontStyle::ITALIC, FontStyle::BOLDITALIC}) {
+                const Text t("Ab", 4, {.font = font, .font_style = style});
+                out.push_back(V::list({t.font, font_path_value(t.font_path)}));
+            }
+        }
+        return V::list(out);
+    });
+    compare::add("obj_text_align_error_h", [] {
+        return Compound::make_text("x", 5, "Arial", "", FontStyle::REGULAR, {TextAlign::TOP, TextAlign::CENTER});
+    });
+    compare::add("obj_text_align_error_v", [] {
+        return Compound::make_text("x", 5, "Arial", "", FontStyle::REGULAR, {TextAlign::LEFT, TextAlign::RIGHT});
+    });
+    compare::add("obj_text_font_path", [] { return Text("Hi", 10, {.font_path = kDejaVu + "DejaVuSans-Bold.ttf"}); });
+    compare::add_value("obj_text_font_path_attrs", [] {
+        const Text a("Hi", 6, {.font_path = kDejaVu + "DejaVuSans-Bold.ttf"});
+        const Text b("Hi", 6, {.font = "DejaVu Sans Mono", .font_path = kDejaVu + "DejaVuSansMono.ttf"});
+        const Text c("Hi", 6, {.font = "nothing", .font_path = kDejaVu + "DejaVuSerif.ttf", .font_style = FontStyle::BOLD});
+        return V::list({V::list({a.font, a.font_path}), V::list({b.font, b.font_path}), V::list({c.font, c.font_path})});
+    });
+    compare::add_value("obj_text_check_find", [] {
+        FontManager manager;
+        const auto good = manager.check_font(bundled_font());
+        const auto bad = manager.check_font("reliefsingleline/ReliefSingleLineCAD-Regular.ttf");
+        const auto found = manager.find_font("Relief SingleLine CAD", FontStyle::REGULAR);
+        const auto other = manager.find_font("build123d", FontStyle::REGULAR);
+        return V::list({font_path_value(good->FontPath(Font_FA_Regular).ToCString()), bad.IsNull(),
+                        std::string(found->FontName().ToCString()), found->IsSingleStrokeFont(),
+                        std::string(other->FontName().ToCString()) != "build123d"});
+    });
+    compare::add_value("obj_text_register_fonts", [] {
+        FontManager manager;
+        std::vector<V> out;
+        for (const auto& path : {bundled_font(), kDejaVu + "DejaVuSans-Bold.ttf",
+                                 std::string("/usr/share/fonts/truetype/ubuntu/Ubuntu[wdth,wght].ttf"),
+                                 std::string("/usr/share/fonts/truetype/ubuntu/UbuntuMono-Italic[wght].ttf"),
+                                 std::string("/usr/share/fonts/opentype/urw-base35/URWBookman-DemiItalic.otf")}) {
+            out.push_back(V::list_of(manager.register_font(path)));
+        }
+        out.push_back(system_font_values(manager.find_font("Ubuntu Condensed", FontStyle::BOLD), FontStyle::BOLD));
+        out.push_back(system_font_values(manager.find_font("Ubuntu Mono Medium", FontStyle::ITALIC), FontStyle::ITALIC));
+        return V::list(out);
+    });
+    compare::add_value("obj_text_register_single_stroke", [] {
+        FontManager manager;
+        const auto names = manager.register_font(kDejaVu + "DejaVuSansMono-Bold.ttf", true, true);
+        const auto font = manager.find_font(names.at(0), FontStyle::BOLD);
+        const V result = V::list({V::list_of(names), font->IsSingleStrokeFont(),
+                                  Compound::make_text("A", 5, names.at(0), "", FontStyle::BOLD).edges().size()});
+        manager.register_font(kDejaVu + "DejaVuSansMono-Bold.ttf", true, false);
+        return result;
+    });
+    compare::add_value("obj_text_register_folder", [] {
+        auto names = FontManager().register_folder(kDejaVu);
+        std::sort(names.begin(), names.end());
+        return V::list_of(names);
+    });
+    compare::add_value("obj_text_register_corrupt", [] {
+        const std::string path = temp_file("build123d_corrupt.ttf");
+        std::ofstream(path, std::ios::binary) << "not a font";
+        return V::list_of(FontManager().register_font(path));
+    });
+    compare::add_value("obj_text_register_missing", [] {
+        return V::list_of(FontManager().register_font("/tmp/build123d_missing_font.ttf"));
+    });
+    compare::add_value("obj_text_register_collection_as_ttf", [] {
+        const std::string path = temp_file("build123d_collection_as.ttf");
+        write_collection({bundled_font(), kDejaVu + "DejaVuSans-Bold.ttf"}, path);
+        return V::list_of(FontManager().register_font(path));
+    });
+    compare::add_value("obj_text_available_fonts_after", [] { return font_info_values(available_fonts()); });
+    compare::add_value("obj_text_system_fonts_rebuilt", [] {
+        // As upstream test_register_system_fonts: the database rebuilt from build123d's own reading
+        FontManager manager;
+        manager.manager->RemoveFontAlias(TCollection_AsciiString("singleline"), TCollection_AsciiString("Relief SingleLine CAD"));
+        manager.manager->ClearFontDataBase();
+        manager.register_system_fonts();
+        return font_info_values(FontManager().available_fonts());
+    });
 }

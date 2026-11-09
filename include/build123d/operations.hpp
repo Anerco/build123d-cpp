@@ -33,12 +33,24 @@ Part extrude(const std::vector<Face>& to_extrude, double amount,
 /// Extrude until a surface of `target` (Until::NEXT, LAST, PREVIOUS or FIRST).
 Part extrude(const Shape& to_extrude, Until until, const Shape& target,
              const ExtrudeOptions& options = {});
+Part extrude(const std::vector<Face>& to_extrude, Until until, const Shape& target,
+             const ExtrudeOptions& options = {});
 
 /// Revolve the faces of a Face/Sketch about an axis by `revolution_arc` degrees.
 Part revolve(const Shape& profiles, const Axis& axis = Axis::Z, double revolution_arc = 360.0,
              bool clean = true);
 Part revolve(const std::vector<Face>& profiles, const Axis& axis = Axis::Z,
              double revolution_arc = 360.0, bool clean = true);
+/// Revolve the faces of several Faces/Sketches.
+Part revolve(const std::vector<Shape>& profiles, const Axis& axis = Axis::Z,
+             double revolution_arc = 360.0, bool clean = true);
+template <class S, std::enable_if_t<std::is_base_of_v<Shape, S> && !std::is_same_v<S, Shape> &&
+                                        !std::is_same_v<S, Face>,
+                                    int> = 0>
+Part revolve(const std::vector<S>& profiles, const Axis& axis = Axis::Z, double revolution_arc = 360.0,
+             bool clean = true) {
+    return revolve(std::vector<Shape>(profiles.begin(), profiles.end()), axis, revolution_arc, clean);
+}
 
 /// Loft through Faces/Sketches (holes are lofted too); a Vertex may start or end.
 Part loft(const std::vector<Shape>& sections, bool ruled = false, bool clean = true);
@@ -59,9 +71,13 @@ Sketch section(const Shape& obj, const std::vector<Plane>& section_by, double he
 Part thicken(const Shape& to_thicken, double amount,
              std::optional<Vector> normal_override = std::nullopt, bool both = false,
              bool clean = true);
+Part thicken(const std::vector<Face>& to_thicken, double amount,
+             std::optional<Vector> normal_override = std::nullopt, bool both = false,
+             bool clean = true);
 
 /// Draft angle (degrees) applied to faces of a single solid.
 Part draft(const std::vector<Face>& faces, const Plane& neutral_plane, double angle);
+Part draft(const Face& faces, const Plane& neutral_plane, double angle);
 
 /// Workplane at `distance` along projection_dir with a projected x direction.
 Plane project_workplane(const Vector& origin, const Vector& x_dir, const Vector& projection_dir,
@@ -85,6 +101,14 @@ Part make_brake_formed(double thickness, const std::vector<double>& station_widt
 /// Face from edges that combine into a single closed wire.
 Sketch make_face(const Shape& edges);
 Sketch make_face(const std::vector<Edge>& edges);
+/// Face from the edges of several Edges, Wires and Curves.
+Sketch make_face(const std::vector<Shape>& edges);
+template <class S, std::enable_if_t<std::is_base_of_v<Shape, S> && !std::is_same_v<S, Shape> &&
+                                        !std::is_same_v<S, Edge>,
+                                    int> = 0>
+Sketch make_face(const std::vector<S>& edges) {
+    return make_face(std::vector<Shape>(edges.begin(), edges.end()));
+}
 /// Face from the convex hull of the edges.
 Sketch make_hull(const Shape& edges);
 Sketch make_hull(const std::vector<Edge>& edges);
@@ -95,6 +119,14 @@ Sketch full_round(const Edge& edge, bool invert = false, int voronoi_point_count
 /// Faces made by sweeping a line of `line_width` along the curves.
 Sketch trace(const Shape& lines, double line_width = 1.0);
 Sketch trace(const std::vector<Edge>& lines, double line_width = 1.0);
+/// Trace several Edges, Wires and Curves.
+Sketch trace(const std::vector<Shape>& lines, double line_width = 1.0);
+template <class S, std::enable_if_t<std::is_base_of_v<Shape, S> && !std::is_same_v<S, Shape> &&
+                                        !std::is_same_v<S, Edge>,
+                                    int> = 0>
+Sketch trace(const std::vector<S>& lines, double line_width = 1.0) {
+    return trace(std::vector<Shape>(lines.begin(), lines.end()), line_width);
+}
 
 // ---------------------------------------------------------------------------
 // Generic operations
@@ -172,7 +204,7 @@ algebra_t<T> mirror(const std::vector<T>& objs, const Plane& about = Plane::XZ) 
 
 /// Scale objects (uniformly or per axis) about `about`, or each object's location.
 template <class T, std::enable_if_t<detail::is_shape_v<T>, int> = 0>
-algebra_t<T> scale(const T& obj, double by, std::optional<Vector> about = std::nullopt) {
+algebra_t<T> scale(const T& obj, double by = 1, std::optional<Vector> about = std::nullopt) {
     return detail::wrap_result<algebra_t<T>>(detail::scale_impl(detail::one(obj), by, about));
 }
 template <class T, std::enable_if_t<detail::is_shape_v<T>, int> = 0>
@@ -180,7 +212,12 @@ algebra_t<T> scale(const T& obj, const Vector& by, std::optional<Vector> about =
     return detail::wrap_result<algebra_t<T>>(detail::scale_impl(detail::one(obj), by, about));
 }
 template <class T, std::enable_if_t<detail::is_shape_v<T>, int> = 0>
-algebra_t<T> scale(const std::vector<T>& objs, double by,
+algebra_t<T> scale(const std::vector<T>& objs, double by = 1,
+                   std::optional<Vector> about = std::nullopt) {
+    return detail::wrap_result<algebra_t<T>>(detail::scale_impl(detail::shape_ptrs(objs), by, about));
+}
+template <class T, std::enable_if_t<detail::is_shape_v<T>, int> = 0>
+algebra_t<T> scale(const std::vector<T>& objs, const Vector& by,
                    std::optional<Vector> about = std::nullopt) {
     return detail::wrap_result<algebra_t<T>>(detail::scale_impl(detail::shape_ptrs(objs), by, about));
 }
@@ -201,20 +238,29 @@ algebra_t<T> split(const std::vector<T>& objs, const Plane& bisect_by = Plane::X
     return detail::wrap_result<algebra_t<T>>(
         detail::split_impl(detail::shape_ptrs(objs), bisect_by, keep));
 }
+template <class T, std::enable_if_t<detail::is_shape_v<T>, int> = 0>
+algebra_t<T> split(const std::vector<T>& objs, const Shape& bisect_by, Keep keep = Keep::TOP) {
+    return detail::wrap_result<algebra_t<T>>(
+        detail::split_impl(detail::shape_ptrs(objs), bisect_by, keep));
+}
 
 /// Offset edges/wires (2D), faces (2D) or solids (3D, hollowing with openings).
 template <class T, std::enable_if_t<detail::is_shape_v<T>, int> = 0>
-algebra_t<T> offset(const T& obj, double amount, const OffsetOptions& options = {}) {
+algebra_t<T> offset(const T& obj, double amount = 0, const OffsetOptions& options = {}) {
     return detail::wrap_result<algebra_t<T>>(detail::offset_impl(detail::one(obj), amount, options));
 }
 template <class T, std::enable_if_t<detail::is_shape_v<T>, int> = 0>
-algebra_t<T> offset(const std::vector<T>& objs, double amount, const OffsetOptions& options = {}) {
+algebra_t<T> offset(const std::vector<T>& objs, double amount = 0, const OffsetOptions& options = {}) {
     return detail::wrap_result<algebra_t<T>>(
         detail::offset_impl(detail::shape_ptrs(objs), amount, options));
 }
 
+/// Sketch for 2D objects, Part otherwise; a Compound (rectangles or boxes, decided when it runs,
+/// as in build123d) for a Shape or Compound.
 template <class T>
-using bounding_box_t = std::conditional_t<std::decay_t<T>::kDim == 2, Sketch, Part>;
+using bounding_box_t =
+    std::conditional_t<std::decay_t<T>::kDim == 2, Sketch,
+                       std::conditional_t<(std::decay_t<T>::kDim < 0), Compound, Part>>;
 
 /// Bounding rectangle (2D objects) or box (otherwise) of objects.
 template <class T, std::enable_if_t<detail::is_shape_v<T>, int> = 0>
@@ -242,6 +288,10 @@ struct SweepOptions {
 namespace detail {
 TopoDS_Shape sweep_impl(const std::vector<const Shape*>& sections, const Shape& path,
                         const SweepOptions& options);
+/// One sections argument: a Compound's children are the sections, as in build123d.
+TopoDS_Shape sweep_one_impl(const Shape& sections, const Shape& path, const SweepOptions& options);
+/// The wire of a path given as edges ("Unable to build path from edges").
+Wire sweep_path_wire(const std::vector<Edge>& path);
 }  // namespace detail
 
 // ---------------------------------------------------------------------------
@@ -302,13 +352,23 @@ using sweep_t = std::conditional_t<
 /// Sweep faces (-> Part) or curves (-> Sketch) along a path (Edge, Wire or Curve).
 template <class S, std::enable_if_t<detail::is_shape_v<S>, int> = 0>
 sweep_t<S> sweep(const S& sections, const Shape& path, const SweepOptions& options = {}) {
-    return detail::wrap_result<sweep_t<S>>(detail::sweep_impl(detail::one(sections), path, options));
+    return detail::wrap_result<sweep_t<S>>(detail::sweep_one_impl(sections, path, options));
 }
 template <class S, std::enable_if_t<detail::is_shape_v<S>, int> = 0>
 sweep_t<S> sweep(const std::vector<S>& sections, const Shape& path,
                  const SweepOptions& options = {}) {
     return detail::wrap_result<sweep_t<S>>(
         detail::sweep_impl(detail::shape_ptrs(sections), path, options));
+}
+/// Sweep along a path given as edges.
+template <class S, std::enable_if_t<detail::is_shape_v<S>, int> = 0>
+sweep_t<S> sweep(const S& sections, const std::vector<Edge>& path, const SweepOptions& options = {}) {
+    return sweep(sections, detail::sweep_path_wire(path), options);
+}
+template <class S, std::enable_if_t<detail::is_shape_v<S>, int> = 0>
+sweep_t<S> sweep(const std::vector<S>& sections, const std::vector<Edge>& path,
+                 const SweepOptions& options = {}) {
+    return sweep(sections, detail::sweep_path_wire(path), options);
 }
 
 }  // namespace build123d

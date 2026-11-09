@@ -114,7 +114,7 @@ Part finish_extrusion(std::vector<Solid> solids, bool both, bool clean) {
 }  // namespace
 
 Part extrude(const std::vector<Face>& faces, double amount, const ExtrudeOptions& options) {
-    if (faces.empty()) throw std::invalid_argument("A face or sketch must be provided");
+    // As build123d: no faces (an empty Sketch or list) give an empty Part
     const auto planes = face_planes(faces, options.dir);
     std::vector<Solid> solids;
     for (std::size_t i = 0; i < faces.size(); ++i) {
@@ -128,25 +128,24 @@ Part extrude(const std::vector<Face>& faces, double amount, const ExtrudeOptions
 }
 
 Part extrude(const Shape& to_extrude, Until until, const Shape& target, const ExtrudeOptions& options) {
-    const auto faces = as_faces(to_extrude);
-    if (faces.empty()) throw std::invalid_argument("A face or sketch must be provided");
-    if (target.is_null()) throw std::invalid_argument("A target object must be provided");
+    return extrude(as_faces(to_extrude), until, target, options);
+}
+
+Part extrude(const std::vector<Face>& faces, Until until, const Shape& target, const ExtrudeOptions& options) {
     const auto planes = face_planes(faces, options.dir);
     std::vector<Solid> solids;
     for (std::size_t i = 0; i < faces.size(); ++i) {
         for (double direction : options.both ? std::vector<double>{1, -1} : std::vector<double>{1}) {
+            if (target.is_null()) throw std::invalid_argument("A target object must be provided");
             solids.push_back(Solid::extrude_until(faces[i], target, planes[i].z_dir * direction, until));
         }
     }
     return finish_extrusion(solids, options.both, options.clean);
 }
 
-Part revolve(const Shape& profiles, const Axis& axis, double revolution_arc, bool clean) {
-    return revolve(as_faces(profiles), axis, revolution_arc, clean);
-}
+namespace {
 
-Part revolve(const std::vector<Face>& profiles, const Axis& axis, double revolution_arc, bool clean) {
-    if (profiles.empty()) throw std::invalid_argument("No profiles provided");
+Part revolve_faces(const std::vector<Face>& profiles, const Axis& axis, double revolution_arc, bool clean) {
     const double sign = revolution_arc >= 0 ? 1.0 : -1.0;
     double angle = std::fmod(revolution_arc, sign * 360.0);
     if (angle == 0.0) angle = sign * 360.0;
@@ -155,6 +154,27 @@ Part revolve(const std::vector<Face>& profiles, const Axis& axis, double revolut
     TopoDS_Shape result = make_compound(solids);
     if (clean) result = clean_shape(result);
     return Part(result);
+}
+
+}  // namespace
+
+// As build123d: an empty list raises, an empty Sketch gives an empty Part
+Part revolve(const Shape& profiles, const Axis& axis, double revolution_arc, bool clean) {
+    return revolve_faces(as_faces(profiles), axis, revolution_arc, clean);
+}
+
+Part revolve(const std::vector<Face>& profiles, const Axis& axis, double revolution_arc, bool clean) {
+    if (profiles.empty()) throw std::invalid_argument("No profiles provided");
+    return revolve_faces(profiles, axis, revolution_arc, clean);
+}
+
+Part revolve(const std::vector<Shape>& profiles, const Axis& axis, double revolution_arc, bool clean) {
+    if (profiles.empty()) throw std::invalid_argument("No profiles provided");
+    std::vector<Face> faces;
+    for (const auto& p : profiles) {
+        for (const auto& f : as_faces(p)) faces.push_back(f);
+    }
+    return revolve_faces(faces, axis, revolution_arc, clean);
 }
 
 Part loft(const std::vector<Shape>& sections, bool ruled, bool clean) {
@@ -268,8 +288,12 @@ Sketch section(const Shape& obj, const std::vector<Plane>& section_by, double he
 }
 
 Part thicken(const Shape& to_thicken, double amount, std::optional<Vector> normal_override, bool both, bool clean) {
-    const auto faces = as_faces(to_thicken);
-    if (faces.empty()) throw std::invalid_argument("A face or sketch must be provided");
+    return thicken(as_faces(to_thicken), amount, normal_override, both, clean);
+}
+
+Part thicken(const std::vector<Face>& faces, double amount, std::optional<Vector> normal_override, bool both,
+             bool clean) {
+    // As build123d: no faces (an empty Sketch or list) give an empty Part
     std::vector<TopoDS_Shape> solids;
     for (const auto& face : faces) {
         const Vector normal = normal_override ? *normal_override : face.normal_at();
@@ -341,10 +365,19 @@ Plane project_workplane(const Vector& origin, const Vector& x_dir_in, const Vect
 Sketch make_face(const Shape& edges) { return make_face(std::vector<Edge>(edges.edges())); }
 
 Sketch make_face(const std::vector<Edge>& edges) {
-    if (edges.empty()) throw std::invalid_argument("No objects to create a face");
+    // (build123d's message for an empty list)
+    if (edges.empty()) throw std::invalid_argument("No objects to create a hull");
     Face face(Wire::combine(edges).at(0));
     if (face.normal_at().Z < 0) face = -face;
     return Sketch(face);
+}
+
+Sketch make_face(const std::vector<Shape>& edges) {
+    std::vector<Edge> outer_edges;
+    for (const auto& item : edges) {
+        for (const auto& e : item.edges()) outer_edges.push_back(e);
+    }
+    return make_face(outer_edges);
 }
 
 Sketch make_hull(const Shape& edges) { return make_hull(std::vector<Edge>(edges.edges())); }
@@ -359,7 +392,8 @@ Sketch make_hull(const std::vector<Edge>& edges) {
 Sketch trace(const Shape& lines, double line_width) { return trace(std::vector<Edge>(lines.edges()), line_width); }
 
 Sketch trace(const std::vector<Edge>& lines, double line_width) {
-    if (lines.empty()) throw std::invalid_argument("No objects to trace");
+    // build123d indexes the (empty) list of traced faces
+    if (lines.empty()) throw std::out_of_range("list index out of range");
     std::vector<TopoDS_Shape> faces;
     for (const auto& wire : Wire::combine(lines)) {
         const Edge pen = wire.perpendicular_line(line_width, 0);
@@ -370,6 +404,14 @@ Sketch trace(const std::vector<Edge>& lines, double line_width) {
         return Sketch(bool_op(BoolOp::FUSE, {faces[0]}, tools));
     }
     return Sketch(make_compound(faces));
+}
+
+Sketch trace(const std::vector<Shape>& lines, double line_width) {
+    std::vector<Edge> trace_edges;
+    for (const auto& l : lines) {
+        for (const auto& e : l.edges()) trace_edges.push_back(e);
+    }
+    return trace(trace_edges, line_width);
 }
 
 // ---------------------------------------------------------------------------
@@ -555,19 +597,31 @@ TopoDS_Shape offset_impl(const std::vector<const Shape*>& objs, double amount, c
         if (o->is_null()) continue;
         const TopoDS_Shape& s = o->wrapped();
         switch (s.ShapeType()) {
-            case TopAbs_COMPOUND:
+            case TopAbs_COMPOUND: {
+                // Compound.get_type: the children of that type of the child compounds and of the
+                // compound itself (Compound.compounds()); the edges first, then those of the wires
+                std::vector<TopoDS_Shape> compounds;
                 for (const auto& child : children(s)) {
-                    switch (child.ShapeType()) {
-                        case TopAbs_EDGE: edges.emplace_back(child); break;
-                        case TopAbs_WIRE:
-                            for (const auto& e : Wire(child).edges()) edges.push_back(e);
-                            break;
-                        case TopAbs_FACE: faces.emplace_back(child); break;
-                        case TopAbs_SOLID: solids.emplace_back(child); break;
-                        default: break;
-                    }
+                    if (child.ShapeType() == TopAbs_COMPOUND) compounds.push_back(child);
                 }
+                compounds.push_back(s);
+                const auto of_type = [&](TopAbs_ShapeEnum type) {
+                    std::vector<TopoDS_Shape> out;
+                    for (const auto& comp : compounds) {
+                        for (const auto& child : children(comp)) {
+                            if (child.ShapeType() == type) out.push_back(child);
+                        }
+                    }
+                    return out;
+                };
+                for (const auto& e : of_type(TopAbs_EDGE)) edges.emplace_back(e);
+                for (const auto& w : of_type(TopAbs_WIRE)) {
+                    for (const auto& e : Wire(w).edges()) edges.push_back(e);
+                }
+                for (const auto& f : of_type(TopAbs_FACE)) faces.emplace_back(f);
+                for (const auto& so : of_type(TopAbs_SOLID)) solids.emplace_back(so);
                 break;
+            }
             case TopAbs_SOLID: solids.emplace_back(s); break;
             case TopAbs_FACE: faces.emplace_back(s); break;
             case TopAbs_EDGE: edges.emplace_back(s); break;
@@ -581,23 +635,29 @@ TopoDS_Shape offset_impl(const std::vector<const Shape*>& objs, double amount, c
     for (const auto& face : faces) {
         Wire outer = face.outer_wire().offset_2d(amount, opt.kind);
         if (opt.min_edge_length) outer = outer.fix_degenerate_edges(*opt.min_edge_length);
-        std::vector<TopoDS_Shape> inner_faces;
+        std::vector<Wire> inner_wires;
         for (const auto& inner : face.inner_wires()) {
+            // build123d skips the holes whose offset fails in OCCT (not its ValueErrors)
             try {
                 Wire w = inner.offset_2d(-amount, opt.kind);
                 if (opt.min_edge_length) w = w.fix_degenerate_edges(*opt.min_edge_length);
-                inner_faces.push_back(Face(w).wrapped());
-            } catch (const std::exception&) {
+                inner_wires.push_back(w);
+            } catch (const std::runtime_error&) {
             }
         }
         Face new_face(outer);
         if ((new_face.normal_at() - face.normal_at()).length() > 0.001) new_face = -new_face;
-        if (inner_faces.empty()) {
+        if (inner_wires.empty()) {
             results.push_back(new_face.wrapped());
         } else {
-            for (const auto& f : entities(bool_op(BoolOp::CUT, {new_face.wrapped()}, inner_faces), TopAbs_FACE)) {
-                results.push_back(f);
+            std::vector<TopoDS_Shape> inner_faces;
+            for (const auto& w : inner_wires) inner_faces.push_back(Face(w).wrapped());
+            const TopoDS_Shape subtraction = bool_op(BoolOp::CUT, {new_face.wrapped()}, inner_faces);
+            // build123d fails (calling Face.unwrap) when the holes leave other than one face
+            if (subtraction.ShapeType() == TopAbs_COMPOUND) {
+                throw std::invalid_argument("'Face' object has no attribute 'unwrap'");
             }
+            results.push_back(subtraction);
         }
     }
     if (!edges.empty()) {
@@ -644,11 +704,39 @@ TopoDS_Shape bounding_box_impl(const std::vector<const Shape*>& objs) {
     return make_compound(out);
 }
 
+Wire sweep_path_wire(const std::vector<Edge>& path) {
+    try {
+        return Wire(path);
+    } catch (const std::invalid_argument&) {
+        throw std::invalid_argument("Unable to build path from edges");
+    }
+}
+
+TopoDS_Shape sweep_one_impl(const Shape& sections, const Shape& path, const SweepOptions& options) {
+    // build123d iterates a Compound (Curve, Sketch, Part) given as the sections: its children
+    // are the sections
+    std::vector<Shape> section_list;
+    if (!sections.is_null() && sections.wrapped().ShapeType() == TopAbs_COMPOUND) {
+        for (const auto& child : children(sections.wrapped())) section_list.emplace_back(child);
+    } else {
+        section_list.push_back(sections);
+    }
+    std::vector<const Shape*> ptrs;
+    for (const auto& s : section_list) ptrs.push_back(&s);
+    return sweep_impl(ptrs, path, options);
+}
+
 TopoDS_Shape sweep_impl(const std::vector<const Shape*>& sections, const Shape& path, const SweepOptions& opt) {
-    if (sections.empty()) throw std::invalid_argument("No sections provided");
     if (path.is_null()) throw std::invalid_argument("path must be provided");
-    const Wire path_wire = path.wrapped().ShapeType() == TopAbs_WIRE ? Wire(path.wrapped())
-                                                                     : Wire(std::vector<Edge>(path.edges()));
+    Wire path_wire;
+    if (path.wrapped().ShapeType() == TopAbs_WIRE) {
+        path_wire = Wire(path.wrapped());
+    } else if (path.wrapped().ShapeType() == TopAbs_COMPOUND) {
+        path_wire = sweep_path_wire(path.edges());  // build123d's Wire(curve) of an iterable path
+    } else {
+        path_wire = Wire(std::vector<Edge>(path.edges()));
+    }
+    if (sections.empty()) throw std::invalid_argument("No sections provided");
     std::vector<const Shape*> curve_sections;
     std::vector<Face> face_list;
     for (const Shape* s : sections) {
@@ -674,9 +762,12 @@ TopoDS_Shape sweep_impl(const std::vector<const Shape*>& sections, const Shape& 
             }
         }
     }
+    // With curves among the sections build123d sweeps every section (faces too) into a shell
     std::vector<TopoDS_Shape> faces;
-    for (const Shape* s : curve_sections) {
-        for (const auto& f : Shell::sweep(*s, path_wire, opt.transition).faces()) faces.push_back(f.wrapped());
+    if (!curve_sections.empty()) {
+        for (const Shape* s : sections) {
+            for (const auto& f : Shell::sweep(*s, path_wire, opt.transition).faces()) faces.push_back(f.wrapped());
+        }
     }
     if (opt.clean) {
         for (auto& s : solids) s = clean_shape(s);

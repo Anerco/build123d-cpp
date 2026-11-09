@@ -25,6 +25,8 @@
 #include "build123d/geometry.hpp"
 #include "build123d/materials.hpp"
 
+class Font_SystemFont;
+
 namespace build123d {
 
 class Shape;
@@ -1149,7 +1151,8 @@ public:
     Shape unwrap(bool fully = true) const;
     double volume() const;
 
-    /// Text as faces. See Text in objects.hpp for the full set of options.
+    /// Text as faces. See Text in objects.hpp for the full set of options. A single-line
+    /// font gives wires, outlined into faces `single_line_width` wide when it is above 0.
     static Compound make_text(const std::string& txt, double font_size,
                               const std::string& font = "Arial", const std::string& font_path = "",
                               FontStyle font_style = FontStyle::REGULAR,
@@ -1157,7 +1160,13 @@ public:
                                                                             TextAlign::CENTER},
                               std::optional<Align2> align = std::nullopt,
                               double position_on_path = 0.0,
-                              const std::optional<Wire>& text_path = std::nullopt);
+                              const std::optional<Mixin1D>& text_path = std::nullopt,
+                              double single_line_width = 0.0);
+    /// The font that a font name (or file) and style resolve to: its name, its file for that
+    /// style (empty if the font lacks the style) and OCCT's font (include build123d/text.hpp).
+    static std::tuple<std::string, std::string, opencascade::handle<Font_SystemFont>> resolve_font(
+        const std::string& font = "Arial", const std::string& font_path = "",
+        FontStyle font_style = FontStyle::REGULAR);
 
     BUILD123D_TYPED_OPS(Compound)
     BUILD123D_3D_OPS(Compound)
