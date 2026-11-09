@@ -880,4 +880,124 @@ COMPARE_CASES {
         return bbox_values(pack(std::vector<Box>{Box(2, 2, 2), Box(2, 2, 2), Box(3, 1, 1)}, -1.5));
     });
     compare::add_value("obj_pack_empty_part", [] { return bbox_values(pack(std::vector<Part>{Part()}, 1)); });
+
+    // ---- operation signatures and inputs (lists, empty inputs)
+    const auto z5 = [] { return Edge::make_line({0, 0, 0}, {0, 0, 5}); };
+    compare::add("obj_ops_extrude_empty_sketch", [] { return extrude(Sketch(), 1); });
+    compare::add("obj_ops_extrude_empty_list", [] { return extrude(std::vector<Face>{}, 1); });
+    compare::add("obj_ops_extrude_tuple_both", [] {
+        return extrude(std::vector<Face>{Face::make_rect(1, 1), Pos(3, 0) * Face::make_rect(1, 1)}, 1, {.both = true});
+    });
+    compare::add("obj_ops_extrude_list_until", [] {
+        return extrude(std::vector<Face>{Face::make_rect(2, 2), Pos(5, 0) * Face::make_rect(1, 1)}, Until::NEXT,
+                       Pos(0, 0, 5) * Box(20, 20, 1));
+    });
+    compare::add("obj_ops_extrude_list_until_last", [] {
+        return extrude(std::vector<Face>{Face::make_rect(2, 2), Pos(5, 0) * Face::make_rect(1, 1)}, Until::LAST,
+                       Pos(0, 0, 5) * Box(20, 20, 1) + Pos(0, 0, 9) * Box(20, 20, 1));
+    });
+    compare::add("obj_ops_extrude_empty_until", [] { return extrude(Sketch(), Until::NEXT, Shape()); });
+    compare::add("obj_ops_extrude_until_no_target", [] {
+        return extrude(Face::make_rect(1, 1), Until::NEXT, Shape());
+    });
+    compare::add("obj_ops_revolve_sketches", [] {
+        return revolve(std::vector<Sketch>{Plane::XZ * (Pos(3, 0) * Rectangle(1, 1)), Plane::XZ * (Pos(6, 0) * Circle(0.5))});
+    });
+    compare::add("obj_ops_revolve_mixed", [] {
+        return revolve(std::vector<Shape>{Plane::XZ * (Pos(3, 0) * Rectangle(1, 1)), (Plane::XZ * (Pos(6, 0) * Circle(0.5))).face()},
+                       Axis::Z, 90);
+    });
+    compare::add("obj_ops_revolve_empty_sketch", [] { return revolve(Sketch()); });
+    compare::add("obj_ops_revolve_empty_list", [] { return revolve(std::vector<Face>{}); });
+    compare::add("obj_ops_thicken_list", [] {
+        return thicken(std::vector<Face>{Face::make_rect(1, 1), Pos(3, 0) * Face::make_rect(1, 1)}, 1);
+    });
+    compare::add("obj_ops_thicken_list_both", [] {
+        return thicken(std::vector<Face>{Face::make_rect(1, 1), Pos(3, 0) * Face::make_rect(1, 1)}, 0.5, std::nullopt, true);
+    });
+    compare::add("obj_ops_thicken_empty_sketch", [] { return thicken(Sketch(), 1); });
+    compare::add("obj_ops_thicken_empty_list", [] { return thicken(std::vector<Face>{}, 1); });
+    compare::add("obj_ops_draft_single_face", [] {
+        return draft(Box(10, 10, 10).faces().filter_by(Axis::Z, true)[0], Plane::XY.offset(-5), 5);
+    });
+    compare::add("obj_ops_make_face_mixed", [] {
+        return make_face(std::vector<Shape>{Wire::make_polygon({{0, 0}, {3, 0}, {3, 2}}, false), Curve() + Line({3, 2}, {0, 0})});
+    });
+    compare::add("obj_ops_make_face_curves", [] {
+        return make_face(std::vector<Curve>{Curve() + Polyline({{0, 0}, {3, 0}, {3, 2}, {0, 0}})});
+    });
+    compare::add("obj_ops_make_face_wires", [] {
+        return make_face(std::vector<Wire>{Wire::make_polygon({{0, 0}, {4, 0}}, false),
+                                           Wire::make_polygon({{4, 0}, {2, 3}, {0, 0}}, false)});
+    });
+    compare::add("obj_ops_make_face_empty", [] { return make_face(std::vector<Edge>{}); });
+    compare::add("obj_ops_trace_mixed", [] {
+        return trace(std::vector<Shape>{Wire::make_polygon({{0, 0}, {3, 0}, {3, 2}}, false), Curve() + Line({5, 5}, {8, 5})}, 0.5);
+    });
+    compare::add("obj_ops_trace_wires", [] { return trace(std::vector<Wire>{Wire::make_polygon({{0, 0}, {3, 0}, {3, 2}}, false)}); });
+    compare::add("obj_ops_trace_empty", [] { return trace(std::vector<Edge>{}); });
+    compare::add("obj_ops_offset_default", [] { return offset(Rectangle(2, 2)); });
+    compare::add("obj_ops_offset_hole_splits", [] { return offset(Rectangle(10, 2) - Circle(0.8), -0.3); });
+    compare::add("obj_ops_offset_hole_grows", [] { return offset(Rectangle(10, 4) - Circle(0.8), -0.3); });
+    compare::add("obj_ops_offset_hole_vanishes", [] { return offset(Rectangle(10, 4) - Circle(0.8), 1); });
+    compare::add("obj_ops_offset_nested_compound", [] {
+        return offset(Compound(std::vector<Shape>{Compound(std::vector<Shape>{Edge::make_line({0, 0}, {4, 0})}),
+                                                  Edge::make_line({4, 0}, {4, 3})}),
+                      0.5);
+    });
+    compare::add("obj_ops_offset_compound_wire_edge", [] {
+        return offset(Compound(std::vector<Shape>{Wire::make_polygon({{0, 0}, {5, 0}, {5, 5}}, false),
+                                                  Edge::make_line({5, 5}, {0, 5})}),
+                      0.5);
+    });
+    compare::add("obj_ops_scale_default", [] { return scale(Box(2, 2, 2)); });
+    compare::add("obj_ops_scale_list_vector", [] {
+        return scale(std::vector<Part>{Box(2, 2, 2), Pos(5, 0, 0) * Box(2, 2, 2)}, Vector(1, 2, 3));
+    });
+    compare::add("obj_ops_scale_list_vector_about", [] {
+        return scale(std::vector<Part>{Box(2, 2, 2), Pos(5, 0, 0) * Sphere(1)}, Vector(1, 2, 3), Vector(1, 1, 1));
+    });
+    compare::add("obj_ops_split_list_face", [] {
+        return split(std::vector<Part>{Box(2, 2, 2), Pos(5, 0, 0) * Box(2, 2, 2)}, Face::make_rect(20, 20, Plane::XY.offset(0.5)));
+    });
+    compare::add("obj_ops_split_list_face_both", [] {
+        return split(std::vector<Part>{Box(2, 2, 2), Pos(5, 0, 0) * Sphere(1)}, Face::make_rect(20, 20, Plane::XY.offset(0.25)),
+                     Keep::BOTH);
+    });
+    compare::add("obj_ops_sweep_curve_children", [=] {
+        return sweep(Curve() + std::vector<Edge>{Line({0, 0}, {1, 0}), Line({0, 2}, {1, 2})}, z5());
+    });
+    compare::add("obj_ops_sweep_curve_connected", [=] {
+        return sweep(Curve() + std::vector<Edge>{Line({0, 0}, {1, 0}), Line({1, 0}, {1, 1})}, z5());
+    });
+    compare::add("obj_ops_sweep_path_edges", [] {
+        return sweep(Circle(1), std::vector<Edge>{Edge::make_line({0, 0, 0}, {0, 0, 5}), Edge::make_line({0, 0, 5}, {3, 0, 8})});
+    });
+    compare::add("obj_ops_sweep_path_edges_list", [] {
+        return sweep(std::vector<Sketch>{Circle(1), Pos(0, 0, 0) * Rectangle(0.5, 0.5)},
+                     std::vector<Edge>{Edge::make_line({0, 0, 0}, {0, 0, 5}), Edge::make_line({0, 0, 5}, {3, 0, 8})});
+    });
+    compare::add("obj_ops_sweep_path_edges_bad", [] {
+        return sweep(Circle(1), std::vector<Edge>{Edge::make_line({0, 0, 0}, {0, 0, 5}), Edge::make_line({0, 1, 6}, {3, 0, 8})});
+    });
+    compare::add("obj_ops_sweep_path_curve_bad", [] {
+        return sweep(Circle(1), Curve() + std::vector<Edge>{Line({0, 0, 0}, {0, 0, 5}), Line({1, 1, 6}, {3, 0, 8})});
+    });
+    compare::add("obj_ops_sweep_mixed", [] {
+        return sweep(std::vector<Shape>{Face::make_rect(1, 1), Edge::make_line({3, 0}, {4, 0})},
+                     Edge::make_line({0, 0, 0}, {0, 0, 4}));
+    });
+    compare::add("obj_ops_sweep_mixed_holed", [] {
+        return sweep(std::vector<Shape>{Rectangle(4, 4) - Circle(1), Edge::make_line({3, 0}, {4, 0})},
+                     Edge::make_line({0, 0, 0}, {0, 0, 4}));
+    });
+    compare::add("obj_ops_sweep_compound_faces", [] {
+        return sweep(Compound(std::vector<Shape>{Face::make_rect(1, 1), Pos(3, 0, 0) * Face::make_rect(1, 1)}),
+                     Edge::make_line({0, 0, 0}, {0, 0, 4}));
+    });
+    compare::add("obj_ops_sweep_binormal_edge", [] {
+        return sweep(Pos(5, 0, 0) * Rectangle(1, 1), Edge::make_helix(5, 10, 5),
+                     {.binormal = Wire(Edge::make_line({0, 0, 0}, {0, 0, 10}))});
+    });
+    compare::add("obj_ops_sweep_empty_list", [=] { return sweep(std::vector<Face>{}, z5()); });
 }

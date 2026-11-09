@@ -895,4 +895,103 @@ CASES = {
     "obj_pack_empty": lambda: bbox_values(pack([], 1)),
     "obj_pack_overlap": lambda: bbox_values(pack([Box(2, 2, 2), Box(2, 2, 2), Box(3, 1, 1)], -1.5)),
     "obj_pack_empty_part": lambda: bbox_values(pack([Part()], 1)),
+    # operation signatures and inputs (lists, empty inputs)
+    "obj_ops_extrude_empty_sketch": lambda: extrude(Sketch(), 1),
+    "obj_ops_extrude_empty_list": lambda: extrude([], 1),
+    "obj_ops_extrude_tuple_both": lambda: extrude(
+        (Face.make_rect(1, 1), Pos(3, 0) * Face.make_rect(1, 1)), 1, both=True
+    ),
+    "obj_ops_extrude_list_until": lambda: extrude(
+        [Face.make_rect(2, 2), Pos(5, 0) * Face.make_rect(1, 1)], until=Until.NEXT, target=Pos(0, 0, 5) * Box(20, 20, 1)
+    ),
+    "obj_ops_extrude_list_until_last": lambda: extrude(
+        [Face.make_rect(2, 2), Pos(5, 0) * Face.make_rect(1, 1)],
+        until=Until.LAST,
+        target=Pos(0, 0, 5) * Box(20, 20, 1) + Pos(0, 0, 9) * Box(20, 20, 1),
+    ),
+    "obj_ops_extrude_empty_until": lambda: extrude(Sketch(), until=Until.NEXT),
+    "obj_ops_extrude_until_no_target": lambda: extrude(Face.make_rect(1, 1), until=Until.NEXT),
+    "obj_ops_revolve_sketches": lambda: revolve(
+        [Plane.XZ * (Pos(3, 0) * Rectangle(1, 1)), Plane.XZ * (Pos(6, 0) * Circle(0.5))]
+    ),
+    "obj_ops_revolve_mixed": lambda: revolve(
+        [Plane.XZ * (Pos(3, 0) * Rectangle(1, 1)), (Plane.XZ * (Pos(6, 0) * Circle(0.5))).face()], Axis.Z, 90
+    ),
+    "obj_ops_revolve_empty_sketch": lambda: revolve(Sketch()),
+    "obj_ops_revolve_empty_list": lambda: revolve([]),
+    "obj_ops_thicken_list": lambda: thicken([Face.make_rect(1, 1), Pos(3, 0) * Face.make_rect(1, 1)], 1),
+    "obj_ops_thicken_list_both": lambda: thicken(
+        [Face.make_rect(1, 1), Pos(3, 0) * Face.make_rect(1, 1)], 0.5, both=True
+    ),
+    "obj_ops_thicken_empty_sketch": lambda: thicken(Sketch(), 1),
+    "obj_ops_thicken_empty_list": lambda: thicken([], 1),
+    "obj_ops_draft_single_face": lambda: draft(
+        Box(10, 10, 10).faces().filter_by(Axis.Z, reverse=True)[0], Plane.XY.offset(-5), 5
+    ),
+    "obj_ops_make_face_mixed": lambda: make_face(
+        [Wire.make_polygon([(0, 0), (3, 0), (3, 2)], close=False), Curve() + Line((3, 2), (0, 0))]
+    ),
+    "obj_ops_make_face_curves": lambda: make_face([Curve() + Polyline((0, 0), (3, 0), (3, 2), (0, 0))]),
+    "obj_ops_make_face_wires": lambda: make_face(
+        [Wire.make_polygon([(0, 0), (4, 0)], close=False), Wire.make_polygon([(4, 0), (2, 3), (0, 0)], close=False)]
+    ),
+    "obj_ops_make_face_empty": lambda: make_face([]),
+    "obj_ops_trace_mixed": lambda: trace(
+        [Wire.make_polygon([(0, 0), (3, 0), (3, 2)], close=False), Curve() + Line((5, 5), (8, 5))], 0.5
+    ),
+    "obj_ops_trace_wires": lambda: trace([Wire.make_polygon([(0, 0), (3, 0), (3, 2)], close=False)]),
+    "obj_ops_trace_empty": lambda: trace([]),
+    "obj_ops_offset_default": lambda: offset(Rectangle(2, 2)),
+    "obj_ops_offset_hole_splits": lambda: offset(Rectangle(10, 2) - Circle(0.8), -0.3),
+    "obj_ops_offset_hole_grows": lambda: offset(Rectangle(10, 4) - Circle(0.8), -0.3),
+    "obj_ops_offset_hole_vanishes": lambda: offset(Rectangle(10, 4) - Circle(0.8), 1),
+    "obj_ops_offset_nested_compound": lambda: offset(
+        Compound([Compound([Edge.make_line((0, 0), (4, 0))]), Edge.make_line((4, 0), (4, 3))]), 0.5
+    ),
+    "obj_ops_offset_compound_wire_edge": lambda: offset(
+        Compound([Wire.make_polygon([(0, 0), (5, 0), (5, 5)], close=False), Edge.make_line((5, 5), (0, 5))]), 0.5
+    ),
+    "obj_ops_scale_default": lambda: scale(Box(2, 2, 2)),
+    "obj_ops_scale_list_vector": lambda: scale([Box(2, 2, 2), Pos(5, 0, 0) * Box(2, 2, 2)], (1, 2, 3)),
+    "obj_ops_scale_list_vector_about": lambda: scale(
+        [Box(2, 2, 2), Pos(5, 0, 0) * Sphere(1)], (1, 2, 3), about=(1, 1, 1)
+    ),
+    "obj_ops_split_list_face": lambda: split(
+        [Box(2, 2, 2), Pos(5, 0, 0) * Box(2, 2, 2)], Face.make_rect(20, 20, Plane.XY.offset(0.5))
+    ),
+    "obj_ops_split_list_face_both": lambda: split(
+        [Box(2, 2, 2), Pos(5, 0, 0) * Sphere(1)], Face.make_rect(20, 20, Plane.XY.offset(0.25)), Keep.BOTH
+    ),
+    "obj_ops_sweep_curve_children": lambda: sweep(
+        Curve() + [Line((0, 0), (1, 0)), Line((0, 2), (1, 2))], Edge.make_line((0, 0, 0), (0, 0, 5))
+    ),
+    "obj_ops_sweep_curve_connected": lambda: sweep(
+        Curve() + [Line((0, 0), (1, 0)), Line((1, 0), (1, 1))], Edge.make_line((0, 0, 0), (0, 0, 5))
+    ),
+    "obj_ops_sweep_path_edges": lambda: sweep(
+        Circle(1), [Edge.make_line((0, 0, 0), (0, 0, 5)), Edge.make_line((0, 0, 5), (3, 0, 8))]
+    ),
+    "obj_ops_sweep_path_edges_list": lambda: sweep(
+        [Circle(1), Pos(0, 0, 0) * Rectangle(0.5, 0.5)],
+        [Edge.make_line((0, 0, 0), (0, 0, 5)), Edge.make_line((0, 0, 5), (3, 0, 8))],
+    ),
+    "obj_ops_sweep_path_edges_bad": lambda: sweep(
+        Circle(1), [Edge.make_line((0, 0, 0), (0, 0, 5)), Edge.make_line((0, 1, 6), (3, 0, 8))]
+    ),
+    "obj_ops_sweep_path_curve_bad": lambda: sweep(
+        Circle(1), Curve() + [Line((0, 0, 0), (0, 0, 5)), Line((1, 1, 6), (3, 0, 8))]
+    ),
+    "obj_ops_sweep_mixed": lambda: sweep(
+        [Face.make_rect(1, 1), Edge.make_line((3, 0), (4, 0))], Edge.make_line((0, 0, 0), (0, 0, 4))
+    ),
+    "obj_ops_sweep_mixed_holed": lambda: sweep(
+        [Rectangle(4, 4) - Circle(1), Edge.make_line((3, 0), (4, 0))], Edge.make_line((0, 0, 0), (0, 0, 4))
+    ),
+    "obj_ops_sweep_compound_faces": lambda: sweep(
+        Compound([Face.make_rect(1, 1), Pos(3, 0, 0) * Face.make_rect(1, 1)]), Edge.make_line((0, 0, 0), (0, 0, 4))
+    ),
+    "obj_ops_sweep_binormal_edge": lambda: sweep(
+        Pos(5, 0, 0) * Rectangle(1, 1), Edge.make_helix(5, 10, 5), binormal=Edge.make_line((0, 0, 0), (0, 0, 10))
+    ),
+    "obj_ops_sweep_empty_list": lambda: sweep([], Edge.make_line((0, 0, 0), (0, 0, 5))),
 }

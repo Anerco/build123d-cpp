@@ -228,3 +228,39 @@ TEST(objects_pack) {
     const auto positions = detail::pack2d({{2, 10}, {3, 2}});
     CHECK(positions == (std::vector<std::pair<double, double>>{{0, 0}, {2, 0}}));
 }
+
+// ---------------------------------------------------------------------------
+// Operation overloads (lists wherever build123d takes them)
+// ---------------------------------------------------------------------------
+
+static_assert(std::is_same_v<decltype(extrude(std::vector<Face>{}, Until::NEXT, Part())), Part>);
+static_assert(std::is_same_v<decltype(revolve(std::vector<Sketch>{})), Part>);
+static_assert(std::is_same_v<decltype(revolve(std::vector<Shape>{})), Part>);
+static_assert(std::is_same_v<decltype(thicken(std::vector<Face>{}, 1.0)), Part>);
+static_assert(std::is_same_v<decltype(draft(Face(), Plane::XY, 5.0)), Part>);
+static_assert(std::is_same_v<decltype(make_face(std::vector<Wire>{})), Sketch>);
+static_assert(std::is_same_v<decltype(make_face(std::vector<Shape>{})), Sketch>);
+static_assert(std::is_same_v<decltype(trace(std::vector<Curve>{})), Sketch>);
+static_assert(std::is_same_v<decltype(scale(std::vector<Part>{}, Vector(1, 2, 3))), Part>);
+static_assert(std::is_same_v<decltype(scale(Box(1, 1, 1))), Part>);
+static_assert(std::is_same_v<decltype(split(std::vector<Part>{}, Face())), Part>);
+static_assert(std::is_same_v<decltype(offset(Rectangle(1, 1))), Sketch>);
+static_assert(std::is_same_v<decltype(sweep(Circle(1), std::vector<Edge>{})), Part>);
+static_assert(std::is_same_v<decltype(sweep(std::vector<Edge>{}, std::vector<Edge>{})), Sketch>);
+
+TEST(objects_operation_overloads) {
+    // Empty inputs behave as in build123d: an empty Sketch gives an empty Part, an empty list of
+    // profiles raises
+    CHECK(extrude(Sketch(), 1).solids().empty());
+    CHECK(revolve(Sketch()).solids().empty());
+    CHECK_THROWS(revolve(std::vector<Face>{}), std::invalid_argument);
+    CHECK(thicken(std::vector<Face>{}, 1).solids().empty());
+    CHECK_THROWS(trace(std::vector<Edge>{}), std::out_of_range);
+    const std::vector<Edge> path{Edge::make_line({0, 0, 0}, {0, 0, 5}), Edge::make_line({0, 0, 5}, {3, 0, 8})};
+    CHECK(sweep(Circle(1), path).solids().size() == 1);
+    CHECK(sweep(Circle(1), {path[0], path[1]}).solids().size() == 1);
+    const std::vector<Edge> broken{Edge::make_line({0, 0, 0}, {0, 0, 5}), Edge::make_line({0, 1, 6}, {3, 0, 8})};
+    CHECK_THROWS(sweep(Circle(1), broken), std::invalid_argument);
+    CHECK_THROWS(offset(Rectangle(10, 2) - Circle(0.8), -0.3), std::invalid_argument);
+    CHECK_NEAR(scale(std::vector<Part>{Box(2, 2, 2)}, Vector(1, 2, 3)).volume(), 48, 1e-9);
+}
