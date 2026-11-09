@@ -1,6 +1,6 @@
 // Import/export, hidden-line views, meshes, serialization and viewers, compared with
-// cases_io_py.py. Files are written to /tmp/opencode/scratch-io/compare/cpp (the Python
-// side writes to .../py), and each case reports what both sides read back.
+// cases_io_py.py. Files are written to build123d_compare_io/cpp in the system's temporary
+// directory (the Python side writes to .../py), and each case reports what both sides read back.
 #include "case_registry.hpp"
 
 #include <algorithm>
