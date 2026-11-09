@@ -408,6 +408,103 @@ def oriented_bound_box():
               box.volume, box.center()])
 
 
+def hash_sets():
+    box = Box(1, 2, 3)
+    edges = set(box.edges()) | {e.reversed() for e in box.edges()}
+    faces = set(box.faces()) | set(box.faces())
+    vectors = {Vector(1, 2, 3), Vector(1.000001, 2, 3), Vector(1.0001, 2, 3)}
+    locations = {Location((1, 2, 3)), Location((1, 2, 3), (0, 0, 360)), Pos(1, 2, 3), Location((1, 2, 3), (0, 0, 90))}
+    planes = {Plane.XY, Plane.XY.offset(0), Plane.XZ}
+    axes = {Axis.X, Axis((0, 0, 0), (2, 0, 0)), Axis.Y}
+    e = box.edges()[0]
+    return V([len(edges), len(faces), len(vectors), len(locations), len(planes), len(axes),
+              hash(e) == hash(e.reversed()), e == e.reversed(), hash(box) == hash(box.moved(Location())),
+              hash(box) == hash(box.moved(Pos(1, 0, 0))), box == box.moved(Pos(1, 0, 0)), hash(Shape()) == 0])
+
+
+def to_splines_types():
+    types = ["GeomType." + f.geom_type.name for f in Cylinder(1, 2).to_splines().faces()]
+    edge_types = ["GeomType." + e.geom_type.name for e in Edge.make_circle(1).to_splines(nurbs=True).edges()]
+    try:
+        Solid().to_splines()
+        empty_error = False
+    except ValueError:
+        empty_error = True
+    return V([types, edge_types, empty_error])
+
+
+def uv_summary(s, atlas, gutter):
+    vertices, triangles, normals, uvs = s.tessellate_with_uvs(0.1, 0.1, atlas, gutter)
+    us = [uv[0] for uv in uvs]
+    vs = [uv[1] for uv in uvs]
+    n_sum = sum(n.X + 2 * n.Y + 3 * n.Z for n in normals)
+    index_sum = sum(t[0] + 2 * t[1] + 3 * t[2] for t in triangles)
+    return [len(vertices), len(triangles), len(normals), len(uvs), rnd(min(us), 6), rnd(max(us), 6), rnd(min(vs), 6),
+            rnd(max(vs), 6), rnd(sum(us), 3), rnd(sum(vs), 3), rnd(n_sum, 3), float(index_sum)]
+
+
+def tessellate_with_uvs_case():
+    box = Box(1, 2, 3)
+    cyl = Cylinder(1, 2)
+    return V([uv_summary(box, True, 0.0), uv_summary(box, False, 0.0), uv_summary(box, True, 0.01),
+              uv_summary(cyl, True, 0.0), uv_summary(Pos(1, 2, 3) * Sphere(1), True, 0.0)])
+
+
+def show_topology_case():
+    import re
+
+    def strip(s):
+        return re.sub(r"at 0x[0-9a-f]+", "at X", s)
+
+    def strip_class(s):
+        return re.sub(r"\S+ +at 0x[0-9a-f]+", "at X", s)
+
+    box = Box(1, 2, 3)
+    child1 = Pos(1, 0, 0) * Box(1, 1, 1)
+    sub = Compound(label="sub", children=[Sphere(1)])
+    assy = Compound(label="assy", children=[child1, sub])
+    return V([strip(box.show_topology("Face")), strip(box.solids()[0].show_topology("Edge", show_center=False)),
+              strip(Face.make_rect(1, 1).show_topology()), strip_class(assy.show_topology()),
+              strip_class(assy.show_topology(show_center=True))])
+
+
+def as_list(x):
+    return [] if x is None else (list(x) if isinstance(x, list) else [x])
+
+
+def split_both():
+    box = Box(2, 2, 2)
+    top, bottom = box.split(Plane.XY.offset(0.5), Keep.BOTH)
+    u_shape = Box(6, 2, 4) - Pos(0, 0, 1) * Box(2, 2, 2)
+    p_top, p_bottom = u_shape.split(Plane.XY, Keep.BOTH)
+    none_below = box.split(Plane.XY.offset(-5), Keep.BOTTOM)
+    all_pieces = u_shape.split(Plane.XY, Keep.ALL)
+    op_both = split(u_shape, Plane.XY, Keep.BOTH)
+    op_bottom = split(u_shape, Plane.XY, Keep.BOTTOM)
+    return V([describe(as_list(top)), describe(as_list(bottom)), describe(as_list(p_top)), describe(as_list(p_bottom)),
+              len(as_list(p_top)) + len(as_list(p_bottom)), len(as_list(none_below)), len(all_pieces),
+              describe(op_both.solids()), describe(op_bottom.solids())])
+
+
+def face_wire_warning():
+    import warnings
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        holed = Rectangle(4, 4) - Circle(1)
+        with_holes = holed.faces()[0].wire().length
+        plain = Face.make_rect(2, 2).wire().length
+    return V([[str(w.message) for w in caught], with_holes, plain])
+
+
+def transform_keeps_location():
+    moved = Box(1, 2, 3).translate((1, 2, 3))
+    regenerated = Box(1, 2, 3).translate((1, 2, 3), transform=True)
+    rotated = Box(1, 2, 3).rotate(Axis.Z, 30, transform=True)
+    return V([moved.location.position, regenerated.location.position, rotated.location.orientation,
+              regenerated.center(), rotated.faces()[0].normal_at()])
+
+
 CASES = {
     # 1a
     "core_and_list_part": lambda: Box(4, 4, 4) & [Pos(1, 0, 0) * Box(4, 4, 4), Sphere(2.5)],
@@ -483,4 +580,16 @@ CASES = {
     "core_transform_geometry": transform_geometry_case,
     "core_transform_shape_matrix": transform_shape_matrix,
     "core_oriented_bound_box": oriented_bound_box,
+    # 8: Shape misc
+    "core_hash_sets": hash_sets,
+    "core_to_splines_box": lambda: Box(2, 3, 4).to_splines(),
+    "core_to_splines_cylinder": lambda: Cylinder(1, 2).to_splines(5, 1e-4),
+    "core_to_splines_types": to_splines_types,
+    "core_tessellate_with_uvs": tessellate_with_uvs_case,
+    "core_show_topology": show_topology_case,
+    "core_split_both": split_both,
+    "core_face_wire_warning": face_wire_warning,
+    "core_rotate_transform": lambda: Box(1, 2, 3).rotate(Axis.Z, 30, transform=True),
+    "core_translate_transform": lambda: Box(1, 2, 3).translate((1, 2, 3), transform=True),
+    "core_transform_keeps_location": transform_keeps_location,
 }

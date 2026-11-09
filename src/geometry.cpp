@@ -55,6 +55,17 @@ std::array<double, 4> quaternion_key(const gp_Quaternion& q) {
     return c;
 }
 
+std::size_t hash_combine(std::size_t seed, double value) {
+    if (value == 0.0) value = 0.0;  // -0.0 == 0.0, so they must hash alike
+    return seed ^ (std::hash<double>{}(value) + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2));
+}
+
+template <class C>
+std::size_t hash_values(std::size_t seed, const C& values) {
+    for (double v : values) seed = hash_combine(seed, v);
+    return seed;
+}
+
 Vector round14(const Vector& v) {
     return {py_round(v.X, 14), py_round(v.Y, 14), py_round(v.Z, 14)};
 }
@@ -116,6 +127,8 @@ Vector Vector::transform(const gp_Trsf& trsf, bool is_direction) const {
 }
 
 bool Vector::operator==(const Vector& o) const { return rounded_key(*this) == rounded_key(o); }
+
+std::size_t Vector::hash() const { return hash_values(0, rounded_key(*this)); }
 
 std::string Vector::to_string() const {
     return "Vector(" + fmt(X) + ", " + fmt(Y) + ", " + fmt(Z) + ")";
@@ -285,6 +298,8 @@ std::optional<Vector> Vector::intersect(const Location& location) const { return
 std::optional<Vector> Vector::intersect(const Axis& axis) const { return axis.intersect(*this); }
 std::optional<Vector> Vector::intersect(const Plane& plane) const { return plane.intersect(*this); }
 
+std::size_t Axis::hash() const { return hash_values(hash_values(1, rounded_key(position)), rounded_key(direction)); }
+
 bool Axis::operator==(const Axis& o) const {
     return position == o.position && direction == o.direction;
 }
@@ -402,6 +417,10 @@ std::optional<std::variant<Vector, Location>> Location::intersect(const Axis& ax
 
 std::optional<std::variant<Vector, Location>> Location::intersect(const Plane& plane) const {
     return plane.intersect(*this);
+}
+
+std::size_t Location::hash() const {
+    return hash_values(hash_values(2, rounded_key(position())), quaternion_key(trsf_.GetRotation()));
 }
 
 bool Location::operator==(const Location& o) const {
@@ -653,6 +672,10 @@ std::optional<std::variant<Vector, Location>> Plane::intersect(const Location& l
     if (!contains(location_plane.origin)) return std::nullopt;
     if (z_dir == location_plane.z_dir) return location;
     return location_plane.origin;
+}
+
+std::size_t Plane::hash() const {
+    return hash_values(hash_values(hash_values(3, rounded_key(origin)), rounded_key(x_dir)), rounded_key(z_dir));
 }
 
 bool Plane::operator==(const Plane& o) const {
@@ -933,6 +956,8 @@ Color::Color(const std::string& name_in, double a) : alpha(a) {
     }
     throw std::invalid_argument("Unknown color name '" + name_in + "'");
 }
+
+std::size_t Color::hash() const { return hash_values(4, std::array<double, 4>{red, green, blue, alpha}); }
 
 Color Color::from_hex(std::uint32_t rgb, double a) {
     return Color(((rgb >> 16) & 0xff) / 255.0, ((rgb >> 8) & 0xff) / 255.0, (rgb & 0xff) / 255.0, a);

@@ -3,6 +3,8 @@
 #include <build123d/build123d.hpp>
 
 #include <type_traits>
+#include <unordered_map>
+#include <unordered_set>
 #include <variant>
 
 #include "test_framework.hpp"
@@ -93,4 +95,38 @@ TEST(core_geometry_intersections) {
     const auto location = Plane::XY & Location(Vector(1, 1, 0));
     CHECK(location && std::holds_alternative<Location>(*location));
     CHECK_THROWS(Plane::XY.shift_origin(Axis::X), std::invalid_argument);
+}
+
+TEST(core_hash_containers) {
+    // Shapes and geometry objects work as keys of the standard hash containers, with
+    // build123d's equality (is_same for shapes, rounded values for geometry)
+    const Part box = Box(1, 2, 3);
+    std::unordered_set<Edge> edges;
+    for (const auto& e : box.edges()) {
+        edges.insert(e);
+        edges.insert(e.reversed());
+    }
+    CHECK(edges.size() == 12);
+    std::unordered_map<Vector, int> counts;
+    for (const auto& v : box.vertices()) ++counts[Vector(v)];
+    CHECK(counts.size() == 8);
+    const std::unordered_set<Location> locations{Pos(1, 2, 3), Location(Vector(1, 2, 3)),
+                                                 Location(Vector(1, 2, 3), Vector(0, 0, 360))};
+    CHECK(locations.size() == 1);
+    CHECK(std::hash<Shape>{}(box) == box.hash());
+    CHECK(Color(1, 0, 0) == Color("red"));
+}
+
+TEST(core_split_unpacks) {
+    const Part box = Box(2, 2, 2);
+    const auto [top, bottom] = box.split(Plane::XY.offset(0.5), Keep::BOTH);
+    CHECK(top.size() == 1 && bottom.size() == 1);
+    CHECK_NEAR(top[0].volume(), 2.0, 1e-9);
+    CHECK_NEAR(bottom[0].volume(), 6.0, 1e-9);
+    const SplitResult kept = box.split(Plane::XY.offset(0.5), Keep::BOTH);
+    CHECK(kept.size() == 2);  // tops then bottoms
+    CHECK(box.split(Plane::XY.offset(0.5)).bottom.empty());
+    CHECK(box.split(Plane::XY.offset(-5), Keep::TOP).size() == 1);
+    CHECK(box.split(Plane::XY.offset(-5), Keep::BOTTOM).empty());  // build123d's None
+    CHECK_THROWS(box.split(Plane::XY, Keep::INSIDE), std::invalid_argument);
 }

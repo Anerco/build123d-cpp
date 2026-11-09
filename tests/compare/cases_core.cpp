@@ -1,6 +1,8 @@
 // Core (geometry/topology) cases compared with cases_core_py.py.
 #include <algorithm>
+#include <regex>
 #include <tuple>
+#include <unordered_set>
 
 #include "case_registry.hpp"
 
@@ -485,6 +487,115 @@ COMPARE_CASES {
                         V(obb.is_completely_inside(small)), V(small.is_completely_inside(obb)),
                         V(obb.is_outside(Vector(0, 0, 0))), V(obb.is_outside(Vector(10, 10, 10))),
                         V(box.volume()), V(box.center())});
+    });
+
+    // ---- 8: Shape and geometry misc
+    add_value("core_hash_sets", [] {
+        const Part box = Box(1, 2, 3);
+        std::unordered_set<Edge> edges;
+        for (const auto& e : box.edges()) edges.insert(e);
+        for (const auto& e : box.edges()) edges.insert(e.reversed());
+        const auto box_faces = box.faces();
+        std::unordered_set<Face> faces(box_faces.begin(), box_faces.end());
+        for (const auto& f : box.faces()) faces.insert(f);
+        const std::unordered_set<Vector> vectors{Vector(1, 2, 3), Vector(1.000001, 2, 3), Vector(1.0001, 2, 3)};
+        const std::unordered_set<Location> locations{Location(Vector(1, 2, 3)), Location(Vector(1, 2, 3), Vector(0, 0, 360)),
+                                                     Pos(1, 2, 3), Location(Vector(1, 2, 3), Vector(0, 0, 90))};
+        const std::unordered_set<Plane> planes{Plane::XY, Plane::XY.offset(0), Plane::XZ};
+        const std::unordered_set<Axis> axes{Axis::X, Axis({0, 0, 0}, {2, 0, 0}), Axis::Y};
+        const Edge e = box.edges()[0];
+        return V::list({V(edges.size()), V(faces.size()), V(vectors.size()), V(locations.size()), V(planes.size()),
+                        V(axes.size()), V(e.hash() == e.reversed().hash()), V(e == e.reversed()),
+                        V(box.hash() == box.moved(Location()).hash()), V(box.hash() == box.moved(Pos(1, 0, 0)).hash()),
+                        V(box == box.moved(Pos(1, 0, 0))), V(Shape().hash() == 0)});
+    });
+    add("core_to_splines_box", [] { return Box(2, 3, 4).to_splines(); });
+    add("core_to_splines_cylinder", [] { return Cylinder(1, 2).to_splines(5, 1e-4); });
+    add_value("core_to_splines_types", [] {
+        std::vector<V> types;
+        for (const auto& f : Cylinder(1, 2).to_splines().faces()) types.emplace_back(to_string(f.geom_type()));
+        std::vector<V> edge_types;
+        for (const auto& e : Edge::make_circle(1).to_splines(3, 1e-3, true).edges()) {
+            edge_types.emplace_back(to_string(e.geom_type()));
+        }
+        bool empty_error = false;
+        try {
+            (void)Solid().to_splines();
+        } catch (const std::invalid_argument&) {
+            empty_error = true;
+        }
+        return V::list({V::list(types), V::list(edge_types), V(empty_error)});
+    });
+    add_value("core_tessellate_with_uvs", [] {
+        const auto summary = [](const Shape& s, bool atlas, double gutter) {
+            const auto [vertices, triangles, normals, uvs] = s.tessellate_with_uvs(0.1, 0.1, atlas, gutter);
+            double u_min = 1e300, u_max = -1e300, v_min = 1e300, v_max = -1e300, u_sum = 0, v_sum = 0;
+            for (const auto& uv : uvs) {
+                u_min = std::min(u_min, uv[0]);
+                u_max = std::max(u_max, uv[0]);
+                v_min = std::min(v_min, uv[1]);
+                v_max = std::max(v_max, uv[1]);
+                u_sum += uv[0];
+                v_sum += uv[1];
+            }
+            double n_sum = 0;
+            for (const auto& n : normals) n_sum += n.X + 2 * n.Y + 3 * n.Z;
+            long index_sum = 0;
+            for (const auto& t : triangles) index_sum += t[0] + 2L * t[1] + 3L * t[2];
+            return V::list({V(vertices.size()), V(triangles.size()), V(normals.size()), V(uvs.size()), V(rnd(u_min, 6)),
+                            V(rnd(u_max, 6)), V(rnd(v_min, 6)), V(rnd(v_max, 6)), V(rnd(u_sum, 3)), V(rnd(v_sum, 3)),
+                            V(rnd(n_sum, 3)), V(static_cast<double>(index_sum))});
+        };
+        const Part box = Box(1, 2, 3);
+        const Part cyl = Cylinder(1, 2);
+        return V::list({summary(box, true, 0.0), summary(box, false, 0.0), summary(box, true, 0.01),
+                        summary(cyl, true, 0.0), summary(Pos(1, 2, 3) * Sphere(1), true, 0.0)});
+    });
+    add_value("core_show_topology", [] {
+        const auto strip = [](const std::string& s) {
+            return std::regex_replace(s, std::regex("at 0x[0-9a-f]+"), "at X");
+        };
+        const auto strip_class = [](const std::string& s) {
+            return std::regex_replace(s, std::regex("\\S+ +at 0x[0-9a-f]+"), "at X");
+        };
+        const Part box = Box(1, 2, 3);
+        Shape child1 = Pos(1, 0, 0) * Box(1, 1, 1);
+        Compound sub = Compound::make_assembly({Sphere(1)}, "sub");
+        const Compound assy = Compound::make_assembly({child1, sub}, "assy");
+        return V::list({V(strip(box.show_topology(ShapeType::FACE))),
+                        V(strip(box.solids()[0].show_topology(ShapeType::EDGE, false))),
+                        V(strip(Face::make_rect(1, 1).show_topology())), V(strip_class(assy.show_topology())),
+                        V(strip_class(assy.show_topology(ShapeType::VERTEX, true)))});
+    });
+    add_value("core_split_both", [] {
+        const Part box = Box(2, 2, 2);
+        const auto [top, bottom] = box.split(Plane::XY.offset(0.5), Keep::BOTH);
+        const Part u_shape = Box(6, 2, 4) - Pos(0, 0, 1) * Box(2, 2, 2);
+        const SplitResult prongs = u_shape.split(Plane::XY, Keep::BOTH);
+        const SplitResult none_below = box.split(Plane::XY.offset(-5), Keep::BOTTOM);
+        const SplitResult all = u_shape.split(Plane::XY, Keep::ALL);
+        const Part op_both = split(u_shape, Plane::XY, Keep::BOTH);
+        const Part op_bottom = split(u_shape, Plane::XY, Keep::BOTTOM);
+        return V::list({describe(top), describe(bottom), describe(prongs.top), describe(prongs.bottom), V(prongs.size()),
+                        V(none_below.size()), V(all.size()), describe(op_both.solids()), describe(op_bottom.solids())});
+    });
+    add_value("core_face_wire_warning", [] {
+        std::vector<V> messages;
+        const auto previous = set_warning_handler([&](const std::string& m) { messages.emplace_back(m); });
+        const Sketch holed = Rectangle(4, 4) - Circle(1);
+        const double with_holes = holed.faces()[0].wire().length();
+        const double plain = Face::make_rect(2, 2).wire().length();
+        set_warning_handler(previous);
+        return V::list({V::list(messages), V(with_holes), V(plain)});
+    });
+    add("core_rotate_transform", [] { return Box(1, 2, 3).rotate(Axis::Z, 30, true); });
+    add("core_translate_transform", [] { return Box(1, 2, 3).translate(Vector(1, 2, 3), true); });
+    add_value("core_transform_keeps_location", [] {
+        const Part moved = Box(1, 2, 3).translate(Vector(1, 2, 3));
+        const Part regenerated = Box(1, 2, 3).translate(Vector(1, 2, 3), true);
+        const Part rotated = Box(1, 2, 3).rotate(Axis::Z, 30, true);
+        return V::list({V(moved.location().position()), V(regenerated.location().position()),
+                        V(rotated.location().orientation()), V(regenerated.center()), V(rotated.faces()[0].normal_at())});
     });
 
     add_value("core_geom_with_shape", [] {

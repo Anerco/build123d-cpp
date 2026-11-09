@@ -475,8 +475,8 @@ Shape Shape::cut(const std::vector<Shape>& to_cut) const {
 
 namespace {
 
-ShapeList<Shape> split_shape(const Shape& self, const TopoDS_Shape& tool,
-                             const std::optional<Plane>& plane, Keep keep) {
+SplitResult split_shape(const Shape& self, const TopoDS_Shape& tool,
+                        const std::optional<Plane>& plane, Keep keep) {
     if (self.is_null() || tool.IsNull()) throw std::invalid_argument("Can't split an empty shape/tool");
     if (keep == Keep::INSIDE || keep == Keep::OUTSIDE) {
         throw std::invalid_argument("Keep.INSIDE/OUTSIDE are invalid for split");
@@ -488,7 +488,7 @@ ShapeList<Shape> split_shape(const Shape& self, const TopoDS_Shape& tool,
         splitter.Build();
         const TopoDS_Shape result = unwrap(splitter.Shape(), true);
 
-        ShapeList<Shape> out;
+        SplitResult out;
         if (keep == Keep::ALL) {
             for (const auto& s : top_level(result)) out.emplace_back(s);
             return out;
@@ -526,19 +526,25 @@ ShapeList<Shape> split_shape(const Shape& self, const TopoDS_Shape& tool,
             }
             (is_up ? tops : bottoms).push_back(sub);
         }
-        if (keep == Keep::TOP) return tops;
-        if (keep == Keep::BOTTOM) return bottoms;
-        return tops + bottoms;
+        if (keep == Keep::TOP || keep == Keep::BOTH) {
+            out.insert(out.end(), tops.begin(), tops.end());
+            out.top = tops;
+        }
+        if (keep == Keep::BOTTOM || keep == Keep::BOTH) {
+            out.insert(out.end(), bottoms.begin(), bottoms.end());
+            out.bottom = bottoms;
+        }
+        return out;
     });
 }
 
 }  // namespace
 
-ShapeList<Shape> Shape::split(const Plane& tool, Keep keep) const {
+SplitResult Shape::split(const Plane& tool, Keep keep) const {
     return split_shape(*this, BRepBuilderAPI_MakeFace(tool.wrapped()).Face(), tool, keep);
 }
 
-ShapeList<Shape> Shape::split(const Shape& tool, Keep keep) const {
+SplitResult Shape::split(const Shape& tool, Keep keep) const {
     if (!tool.is_null() && tool.wrapped().ShapeType() != TopAbs_FACE &&
         tool.wrapped().ShapeType() != TopAbs_SHELL) {
         // A compound holding a single face or shell is accepted too.
@@ -597,38 +603,6 @@ std::pair<std::vector<Vector>, std::vector<std::array<int, 3>>> Shape::tessellat
         offset += poly->NbNodes();
     }
     return {vertices, triangles};
-}
-
-namespace {
-
-void topology_lines(const TopoDS_Shape& shape, const std::string& prefix, bool last, bool root,
-                    std::ostringstream& out, int depth, int limit) {
-    const Shape s(shape);
-    char buf[160];
-    Vector c(0, 0, 0);
-    try {
-        c = s.center();
-    } catch (...) {
-    }
-    std::snprintf(buf, sizeof(buf), "%-10s Center(%.4g, %.4g, %.4g)",
-                  to_string(s.shape_type()).c_str(), c.X, c.Y, c.Z);
-    out << prefix << (root ? "" : (last ? "└── " : "├── ")) << buf << "\n";
-    if (depth >= limit) return;
-    std::vector<TopoDS_Shape> kids;
-    for (TopoDS_Iterator it(shape); it.More(); it.Next()) kids.push_back(it.Value());
-    const std::string child_prefix = prefix + (root ? "" : (last ? "    " : "│   "));
-    for (std::size_t i = 0; i < kids.size(); ++i) {
-        topology_lines(kids[i], child_prefix, i + 1 == kids.size(), false, out, depth + 1, limit);
-    }
-}
-
-}  // namespace
-
-std::string Shape::show_topology() const {
-    if (obj_.IsNull()) return "<empty>\n";
-    std::ostringstream out;
-    topology_lines(obj_, "", true, true, out, 0, obj_.ShapeType() == TopAbs_COMPOUND ? 2 : 3);
-    return out.str();
 }
 
 std::string Shape::to_string() const {

@@ -130,6 +130,8 @@ public:
     /// Equality after rounding to 5 decimal places, like build123d.
     bool operator==(const Vector& o) const;
     bool operator!=(const Vector& o) const { return !(*this == o); }
+    /// Hash of the rounded coordinates (consistent with ==, as build123d's __hash__).
+    std::size_t hash() const;
 
     std::string to_string() const;
 };
@@ -187,6 +189,7 @@ public:
 
     bool operator==(const Axis& o) const;
     bool operator!=(const Axis& o) const { return !(*this == o); }
+    std::size_t hash() const;
     std::string to_string() const;
 
 private:
@@ -251,6 +254,8 @@ public:
 
     bool operator==(const Location& o) const;
     bool operator!=(const Location& o) const { return !(*this == o); }
+    /// Hash of the rounded position and canonical quaternion (consistent with ==).
+    std::size_t hash() const;
     std::string to_string() const;
 
 protected:
@@ -371,6 +376,7 @@ public:
 
     bool operator==(const Plane& o) const;
     bool operator!=(const Plane& o) const { return !(*this == o); }
+    std::size_t hash() const;
     std::string to_string() const;
 
 private:
@@ -573,8 +579,28 @@ public:
     Quantity_ColorRGBA wrapped() const;
     std::array<double, 4> to_tuple() const { return {red, green, blue, alpha}; }
     std::string to_string() const;
+    /// Component-wise equality (build123d compares Colors by identity; C++ Colors are values).
+    bool operator==(const Color& o) const {
+        return red == o.red && green == o.green && blue == o.blue && alpha == o.alpha;
+    }
+    bool operator!=(const Color& o) const { return !(*this == o); }
+    std::size_t hash() const;
 };
 
 std::ostream& operator<<(std::ostream& os, const Color& c);
 
 }  // namespace build123d
+
+#define BUILD123D_GEOMETRY_HASH(T)                                               \
+    template <>                                                                  \
+    struct std::hash<build123d::T> {                                             \
+        std::size_t operator()(const build123d::T& v) const { return v.hash(); } \
+    };
+BUILD123D_GEOMETRY_HASH(Vector)
+BUILD123D_GEOMETRY_HASH(Axis)
+BUILD123D_GEOMETRY_HASH(Location)
+BUILD123D_GEOMETRY_HASH(Rotation)
+BUILD123D_GEOMETRY_HASH(Pos)
+BUILD123D_GEOMETRY_HASH(Plane)
+BUILD123D_GEOMETRY_HASH(Color)
+#undef BUILD123D_GEOMETRY_HASH

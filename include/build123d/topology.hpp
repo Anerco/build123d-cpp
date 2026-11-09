@@ -42,6 +42,8 @@ class ShapeHistory;
 template <class T>
 class ShapeList;
 
+class SplitResult;
+
 /// An operand of Shape::intersect: a shape or a geometry object (Vector and Location
 /// act as a Vertex, Axis as an infinite Edge, Plane as an infinite Face).
 using IntersectArg = std::variant<Shape, Vector, Location, Axis, Plane>;
@@ -115,7 +117,11 @@ public:                                                                         
     /** Repair an invalid shape (no-op if valid). */                                           \
     T fix() const { return derive<T>(fix_topods()); }                                         \
     /** Deep copy (geometry duplicated). */                                                    \
-    T copy() const { return derive<T>(copy_topods()); }
+    T copy() const { return derive<T>(copy_topods()); }                                       \
+    /** All geometry approximated by B-splines (ShapeCustom::BSplineRestriction). */           \
+    T to_splines(int degree = 3, double tolerance = 1e-3, bool nurbs = false) const {          \
+        return T(to_splines_topods(degree, tolerance, nurbs));                                 \
+    }
 
 // ---------------------------------------------------------------------------
 // Shape
@@ -270,9 +276,12 @@ public:
                                bool include_touched = false) const;
     /// Boundary contacts with another shape (vertices, edges, faces) without interior overlap.
     ShapeList<Shape> touch(const Shape& other, double tolerance = 1e-6) const;
-    /// Split by a plane, face or shell. Keep::BOTH returns tops followed by bottoms.
-    ShapeList<Shape> split(const Plane& tool, Keep keep = Keep::TOP) const;
-    ShapeList<Shape> split(const Shape& tool, Keep keep = Keep::TOP) const;
+    /// Split by a plane, face or shell, keeping Keep::TOP, BOTTOM, BOTH or ALL. The result
+    /// is the list of kept pieces (tops then bottoms for BOTH); `.top` and `.bottom` hold
+    /// each side, and `auto [top, bottom] = s.split(tool, Keep::BOTH);` unpacks them like
+    /// build123d's tuple (an empty list stands for None).
+    SplitResult split(const Plane& tool, Keep keep = Keep::TOP) const;
+    SplitResult split(const Shape& tool, Keep keep = Keep::TOP) const;
 
     /// In-place relative move / absolute placement.
     void move(const Location& loc);
@@ -281,9 +290,22 @@ public:
     void mesh(double tolerance, double angular_tolerance = 0.1) const;
     std::pair<std::vector<Vector>, std::vector<std::array<int, 3>>> tessellate(
         double tolerance, double angular_tolerance = 0.1) const;
+    /// Triangles with per-vertex normals and UVs: (vertices, triangles, normals, uvs). The
+    /// face UVs are normalized to [0, 1] and, with `atlas_packing`, packed into one atlas
+    /// (each island inset by `atlas_gutter`).
+    std::tuple<std::vector<Vector>, std::vector<std::array<int, 3>>, std::vector<Vector>,
+               std::vector<std::array<double, 2>>>
+    tessellate_with_uvs(double tolerance, double angular_tolerance = 0.1, bool atlas_packing = true,
+                        double atlas_gutter = 0.0) const;
 
-    std::string show_topology() const;
+    /// The internal structure as a tree, down to `limit_class`. `show_center` defaults to
+    /// the location for assemblies (compounds with children) and the bounding box center
+    /// otherwise. (The addresses printed are those of the C++ objects.)
+    std::string show_topology(ShapeType limit_class = ShapeType::VERTEX,
+                              std::optional<bool> show_center = std::nullopt) const;
     std::string to_string() const;
+    /// build123d's __hash__: the OCCT shape (TShape and location); see std::hash<Shape>.
+    std::size_t hash() const;
 
     BUILD123D_TYPED_OPS(Shape)
 
@@ -330,6 +352,7 @@ protected:
     TopoDS_Shape clean_topods(std::shared_ptr<ShapeHistory>* history = nullptr) const;
     TopoDS_Shape fix_topods() const;
     TopoDS_Shape copy_topods() const;
+    TopoDS_Shape to_splines_topods(int degree, double tolerance, bool nurbs) const;
 
     template <class T>
     friend class ShapeList;
@@ -627,6 +650,8 @@ public:
     Location center_location() const;
     Wire outer_wire() const;
     ShapeList<Wire> inner_wires() const;
+    /// The outer wire; warns when the face has holes (build123d's Face.wire).
+    Wire wire() const;
     /// Does the face curve away from the material behind it (convexity() == CONVEX)?
     bool is_circular_convex() const;
     /// Does the face curve into the material behind it (convexity() == CONCAVE)?
@@ -1258,6 +1283,28 @@ private:
     }
 };
 
+/// The result of Shape::split: the kept pieces, with each side apart (build123d returns
+/// `(top, bottom)` for Keep.BOTH; here `auto [top, bottom] = shape.split(tool, Keep::BOTH)`).
+class SplitResult : public ShapeList<Shape> {
+public:
+    using ShapeList<Shape>::ShapeList;
+    SplitResult() = default;
+    /// The pieces above the tool (none for Keep::BOTTOM and Keep::ALL).
+    ShapeList<Shape> top;
+    /// The pieces below the tool (none for Keep::TOP and Keep::ALL).
+    ShapeList<Shape> bottom;
+};
+
+template <std::size_t I>
+const ShapeList<Shape>& get(const SplitResult& r) {
+    static_assert(I < 2, "SplitResult unpacks into (top, bottom)");
+    if constexpr (I == 0) {
+        return r.top;
+    } else {
+        return r.bottom;
+    }
+}
+
 template <class T>
 ShapeList<T> operator>(const ShapeList<T>& l, const Axis& axis) { return l.sort_by(axis); }
 template <class T>
@@ -1590,3 +1637,36 @@ ShapeList<typename T::topo_type> operator*(const Plane& plane, const std::vector
 }
 
 }  // namespace build123d
+
+// ---------------------------------------------------------------------------
+// std::hash and tuple-like support (build123d's __hash__ and tuple results)
+// ---------------------------------------------------------------------------
+
+template <>
+struct std::tuple_size<build123d::SplitResult> : std::integral_constant<std::size_t, 2> {};
+template <std::size_t I>
+struct std::tuple_element<I, build123d::SplitResult> {
+    using type = const build123d::ShapeList<build123d::Shape>;
+};
+
+/// Shapes hash like build123d (TShape and location); equality is is_same().
+#define BUILD123D_SHAPE_HASH(T)                                                  \
+    template <>                                                                  \
+    struct std::hash<build123d::T> {                                             \
+        std::size_t operator()(const build123d::T& s) const { return s.hash(); } \
+    };
+BUILD123D_SHAPE_HASH(Shape)
+BUILD123D_SHAPE_HASH(Vertex)
+BUILD123D_SHAPE_HASH(Mixin1D)
+BUILD123D_SHAPE_HASH(Edge)
+BUILD123D_SHAPE_HASH(Wire)
+BUILD123D_SHAPE_HASH(Mixin2D)
+BUILD123D_SHAPE_HASH(Face)
+BUILD123D_SHAPE_HASH(Shell)
+BUILD123D_SHAPE_HASH(Mixin3D)
+BUILD123D_SHAPE_HASH(Solid)
+BUILD123D_SHAPE_HASH(Compound)
+BUILD123D_SHAPE_HASH(Curve)
+BUILD123D_SHAPE_HASH(Sketch)
+BUILD123D_SHAPE_HASH(Part)
+#undef BUILD123D_SHAPE_HASH
