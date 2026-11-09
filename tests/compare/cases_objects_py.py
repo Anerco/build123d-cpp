@@ -1377,6 +1377,20 @@ CASES = {
     "obj_edge_rect_rounded_big": lambda: RectangleRounded(4, 2, 1),
     "obj_edge_circle_half": lambda: Circle(2, arc_size=180),
     "obj_edge_convex_3": lambda: ConvexPolyhedron([(0, 0, 0), (1, 0, 0), (0, 1, 0)]),
+    "obj_convex_cube": lambda: ConvexPolyhedron([(x, y, z) for x in (0, 2) for y in (0, 3) for z in (0, 1)]),
+    "obj_convex_interior": lambda: ConvexPolyhedron(
+        [(0, 0, 0), (4, 0, 0), (0, 4, 0), (0, 0, 4), (1, 1, 1), (0.5, 0.2, 0.3), (2, 0, 0), (0, 2, 2)]
+    ),
+    "obj_convex_icosahedron": lambda: ConvexPolyhedron(
+        [(0, s1, s2 * p) for s1 in (-1, 1) for s2 in (-1, 1) for p in [1.618033988749895]]
+        + [(s1, s2 * 1.618033988749895, 0) for s1 in (-1, 1) for s2 in (-1, 1)]
+        + [(s2 * 1.618033988749895, 0, s1) for s1 in (-1, 1) for s2 in (-1, 1)]
+    ),
+    "obj_convex_duplicates": lambda: ConvexPolyhedron([(0, 0, 0), (0, 0, 0), (3, 0, 0), (0, 3, 0), (0, 0, 3), (3, 0, 0)]),
+    "obj_convex_flat": lambda: ConvexPolyhedron([(0, 0, 0), (1, 0, 0), (0, 1, 0), (1, 1, 0)]),
+    "obj_convex_aligned": lambda: ConvexPolyhedron(
+        [(1, 2, 3), (4, 1, 2), (2, 5, 1), (3, 3, 4), (0, 1, 1), (5, 4, 3)], rotation=(10, 20, 30), align=Align.MIN
+    ),
     "obj_edge_cylinder_arc": lambda: Cylinder(2, 5, arc_size=90),
     "obj_edge_sphere_parts": lambda: Sphere(3, -45, 30, 200),
     "obj_edge_torus_partial": lambda: Torus(5, 1, 30, 270, 180),

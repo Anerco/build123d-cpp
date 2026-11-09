@@ -1192,6 +1192,29 @@ COMPARE_CASES {
     compare::add("obj_edge_rect_rounded_big", [] { return RectangleRounded(4, 2, 1); });
     compare::add("obj_edge_circle_half", [] { return Circle(2, 180); });
     compare::add("obj_edge_convex_3", [] { return ConvexPolyhedron({{0, 0, 0}, {1, 0, 0}, {0, 1, 0}}); });
+    compare::add("obj_convex_cube", [] {
+        std::vector<Vector> pts;
+        for (double x : {0, 2}) for (double y : {0, 3}) for (double z : {0, 1}) pts.emplace_back(x, y, z);
+        return ConvexPolyhedron(pts);
+    });
+    compare::add("obj_convex_interior", [] {
+        return ConvexPolyhedron({{0, 0, 0}, {4, 0, 0}, {0, 4, 0}, {0, 0, 4}, {1, 1, 1}, {0.5, 0.2, 0.3}, {2, 0, 0}, {0, 2, 2}});
+    });
+    compare::add("obj_convex_icosahedron", [] {
+        const double p = 1.618033988749895;
+        std::vector<Vector> pts;
+        for (double s1 : {-1, 1}) for (double s2 : {-1, 1}) pts.emplace_back(0, s1, s2 * p);
+        for (double s1 : {-1, 1}) for (double s2 : {-1, 1}) pts.emplace_back(s1, s2 * p, 0);
+        for (double s1 : {-1, 1}) for (double s2 : {-1, 1}) pts.emplace_back(s2 * p, 0, s1);
+        return ConvexPolyhedron(pts);
+    });
+    compare::add("obj_convex_duplicates", [] {
+        return ConvexPolyhedron({{0, 0, 0}, {0, 0, 0}, {3, 0, 0}, {0, 3, 0}, {0, 0, 3}, {3, 0, 0}});
+    });
+    compare::add("obj_convex_flat", [] { return ConvexPolyhedron({{0, 0, 0}, {1, 0, 0}, {0, 1, 0}, {1, 1, 0}}); });
+    compare::add("obj_convex_aligned", [] {
+        return ConvexPolyhedron({{1, 2, 3}, {4, 1, 2}, {2, 5, 1}, {3, 3, 4}, {0, 1, 1}, {5, 4, 3}}, Rotation(10, 20, 30), Align::MIN);
+    });
     compare::add("obj_edge_cylinder_arc", [] { return Cylinder(2, 5, 90); });
     compare::add("obj_edge_sphere_parts", [] { return Sphere(3, -45, 30, 200); });
     compare::add("obj_edge_torus_partial", [] { return Torus(5, 1, 30, 270, 180); });
