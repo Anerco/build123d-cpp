@@ -28,6 +28,10 @@
 
 class Font_SystemFont;
 
+class BRepAdaptor_Curve;
+class BRepAdaptor_CompCurve;
+class Geom_Surface;
+
 namespace build123d {
 
 class Shape;
@@ -714,6 +718,8 @@ public:
     explicit Edge(const TopoDS_Shape& obj);
     /// Infinite line along the axis.
     explicit Edge(const Axis& axis);
+    /// The OCCT adaptor of the edge's curve (include BRepAdaptor_Curve.hxx to use it).
+    opencascade::handle<BRepAdaptor_Curve> geom_adaptor() const;
 
     static Edge make_line(const Vector& point1, const Vector& point2);
     static Edge make_circle(double radius, const Plane& plane = Plane::XY,
@@ -832,6 +838,8 @@ public:
     Wire() = default;
     explicit Wire(const TopoDS_Shape& obj);
     explicit Wire(const Edge& edge);
+    /// The OCCT adaptor of the wire as one curve (include BRepAdaptor_CompCurve.hxx to use it).
+    opencascade::handle<BRepAdaptor_CompCurve> geom_adaptor() const;
     /// Wire from (possibly unsorted) connected edges.
     explicit Wire(const std::vector<Edge>& edges, bool sequenced = false);
     explicit Wire(const Curve& curve);
@@ -963,6 +971,8 @@ public:
 
     Face() = default;
     explicit Face(const TopoDS_Shape& obj);
+    /// The face's OCCT surface (include Geom_Surface.hxx to use it).
+    opencascade::handle<Geom_Surface> geom_adaptor() const;
     /// Planar face from a closed outer wire and optional hole wires.
     explicit Face(const Wire& outer_wire, const std::vector<Wire>& inner_wires = {});
 

@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <iosfwd>
 #include <map>
+#include <set>
 #include <memory>
 #include <optional>
 #include <string>
@@ -241,6 +242,8 @@ public:
     static constexpr const char* DXF2010 = "AC1024";
     static constexpr const char* DXF2013 = "AC1027";
     static constexpr const char* DXF2018 = "AC1032";
+    /// The units ExportDXF writes as metric.
+    static inline const std::set<Unit> METRIC_UNITS{Unit::MM, Unit::CM, Unit::M};
 
     using LayerOptions = DxfLayerOptions;
 
