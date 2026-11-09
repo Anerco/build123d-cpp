@@ -11,15 +11,6 @@ using namespace detail;
 
 namespace {
 
-/// BaseSketchObject: align by bounding box, rotate about Z and collect the faces.
-TopoDS_Shape base_sketch(Shape obj, double rotation, std::optional<Align2> align) {
-    if (align) obj.move(Location(obj.bounding_box().to_align_offset(*align)));
-    const ShapeList<Face> faces = rotation != 0.0 ? obj.moved(Rotation(0, 0, rotation)).faces() : obj.faces();
-    std::vector<TopoDS_Shape> topods;
-    for (const auto& f : faces) topods.push_back(f.wrapped());
-    return make_compound(topods);
-}
-
 Face slot_face(double half_length, double height) {
     const Wire spine(std::vector<Edge>{Edge::make_line(Vector(-half_length, 0, 0), Vector(0, 0, 0)),
                                        Edge::make_line(Vector(0, 0, 0), Vector(half_length, 0, 0))});
@@ -105,22 +96,26 @@ Tri solve_triangle(const TriangleParams& p) {
 
 }  // namespace
 
-Circle::Circle(double r, double arc, Align2 align)
-    : Sketch(base_sketch(arc == 360.0 ? circle_face(r)
-                                      : Face::revolve(Edge::make_line(Vector(r, 0), Vector(0, 0)), arc, Axis::Z),
-                         0.0, align)),
+Circle::Circle(double r, double arc, Align2 align_in)
+    : BaseSketchObject(arc == 360.0 ? circle_face(r)
+                                    : Face::revolve(Edge::make_line(Vector(r, 0), Vector(0, 0)), arc, Axis::Z),
+                       0.0, align_in),
       radius(r),
-      arc_size(arc) {}
+      arc_size(arc),
+      align(align_in) {}
 
 Circle::Circle(double r, Align2 align) : Circle(r, 360.0, align) {}
 
-Ellipse::Ellipse(double xr, double yr, double rotation, Align2 align)
-    : Sketch(base_sketch(Face(Wire::make_ellipse(xr, yr)), rotation, align)), x_radius(xr), y_radius(yr) {}
+Ellipse::Ellipse(double xr, double yr, double rotation, Align2 align_in)
+    : BaseSketchObject(Face(Wire::make_ellipse(xr, yr)), rotation, align_in),
+      x_radius(xr),
+      y_radius(yr),
+      align(align_in) {}
 
 Ellipse::Ellipse(double xr, double yr, Align2 align) : Ellipse(xr, yr, 0.0, align) {}
 
-Rectangle::Rectangle(double w, double h, double rotation, Align2 align)
-    : Sketch(base_sketch(Face::make_rect(w, h), rotation, align)), width(w), rectangle_height(h) {}
+Rectangle::Rectangle(double w, double h, double rotation, Align2 align_in)
+    : BaseSketchObject(Face::make_rect(w, h), rotation, align_in), width(w), rectangle_height(h), align(align_in) {}
 
 Rectangle::Rectangle(double w, double h, Align2 align) : Rectangle(w, h, 0.0, align) {}
 
@@ -133,14 +128,18 @@ Face rounded_rect(double w, double h, double r) {
 }
 }  // namespace
 
-RectangleRounded::RectangleRounded(double w, double h, double r, double rotation, Align2 align)
-    : Sketch(base_sketch(rounded_rect(w, h, r), rotation, align)), width(w), rectangle_height(h), radius(r) {}
+RectangleRounded::RectangleRounded(double w, double h, double r, double rotation, Align2 align_in)
+    : BaseSketchObject(rounded_rect(w, h, r), rotation, align_in),
+      width(w),
+      rectangle_height(h),
+      radius(r),
+      align(align_in) {}
 
 RectangleRounded::RectangleRounded(double w, double h, double r, Align2 align)
     : RectangleRounded(w, h, r, 0.0, align) {}
 
-Polygon::Polygon(const std::vector<Vector>& pts, double rotation, Align2 align)
-    : Sketch(base_sketch(Face(Wire::make_polygon(pts)), rotation, align)) {}
+Polygon::Polygon(const std::vector<Vector>& pts_in, double rotation, Align2 align_in)
+    : BaseSketchObject(Face(Wire::make_polygon(pts_in)), rotation, align_in), pts(pts_in), align(align_in) {}
 
 Polygon::Polygon(const std::vector<Vector>& pts, Align2 align) : Polygon(pts, 0.0, align) {}
 
@@ -165,13 +164,13 @@ Face regular_polygon(double rad, int side_count, double rotation, Align2 align) 
 }
 }  // namespace
 
-RegularPolygon::RegularPolygon(double r, int sides, bool major_radius, double rotation, Align2 align)
-    : Sketch() {
+RegularPolygon::RegularPolygon(double r, int sides, bool major_radius, double rotation, Align2 align_in)
+    : align(align_in) {
     if (sides < 3) throw std::invalid_argument("RegularPolygon must have at least three sides, not " + std::to_string(sides));
     radius = major_radius ? r : r / std::cos(PI / sides);
     apothem = radius * std::cos(PI / sides);
     side_count = sides;
-    obj_ = base_sketch(regular_polygon(radius, sides, rotation, align), 0.0, std::nullopt);
+    assign(regular_polygon(radius, sides, rotation, align_in), 0.0, std::nullopt);
 }
 
 RegularPolygon::RegularPolygon(double r, int sides, Align2 align) : RegularPolygon(r, sides, true, 0.0, align) {}
@@ -200,14 +199,19 @@ Face trapezoid(double width, double height, double left, std::optional<double> r
 }
 }  // namespace
 
-Trapezoid::Trapezoid(double width, double height, double left_side_angle, std::optional<double> right_side_angle,
-                     double rotation, Align2 align)
-    : Sketch(base_sketch(trapezoid(width, height, left_side_angle, right_side_angle), rotation, align)) {}
+Trapezoid::Trapezoid(double width_in, double height, double left, std::optional<double> right, double rotation,
+                     Align2 align_in)
+    : BaseSketchObject(trapezoid(width_in, height, left, right), rotation, align_in),
+      width(width_in),
+      trapezoid_height(height),
+      left_side_angle(left),
+      right_side_angle((right && *right != 0.0) ? *right : left),
+      align(align_in) {}
 
 Trapezoid::Trapezoid(double width, double height, double left_side_angle, Align2 align)
     : Trapezoid(width, height, left_side_angle, std::nullopt, 0.0, align) {}
 
-Triangle::Triangle(const TriangleParams& params, Align2 align, double rotation) : Sketch() {
+Triangle::Triangle(const TriangleParams& params, Align2 align, double rotation) {
     const Tri t = solve_triangle(params);
     a = t.a;
     b = t.b;
@@ -220,7 +224,7 @@ Triangle::Triangle(const TriangleParams& params, Align2 align, double rotation) 
     for (const auto& v : triangle.vertices()) centroid += Vector(v);
     triangle.move(Location(-(centroid / 3.0)));
     const bool has_align = !(align.x == Align::NONE && align.y == Align::NONE);
-    obj_ = base_sketch(triangle, rotation, has_align ? std::optional<Align2>(align) : std::nullopt);
+    assign(triangle, rotation, has_align ? std::optional<Align2>(align) : std::nullopt);
 
     const auto es = edges();
     auto find_edge = [&](double len, const std::vector<Edge>& exclude) {
@@ -246,8 +250,10 @@ Triangle::Triangle(const TriangleParams& params, Align2 align, double rotation) 
     vertex_C = common_vertex(edge_a, edge_b);
 }
 
-SlotArc::SlotArc(const Shape& arc, double height, double rotation)
-    : Sketch(base_sketch(Face(as_wire(arc).offset_2d(height / 2)), rotation, std::nullopt)) {}
+SlotArc::SlotArc(const Shape& arc_in, double height, double rotation)
+    : BaseSketchObject(Face(as_wire(arc_in).offset_2d(height / 2)), rotation, std::nullopt),
+      arc(arc_in),
+      slot_height(height) {}
 
 namespace {
 Face slot_center_point(const Vector& center, const Vector& point, double height) {
@@ -261,14 +267,26 @@ Face slot_center_point(const Vector& center, const Vector& point, double height)
 }
 }  // namespace
 
-SlotCenterPoint::SlotCenterPoint(const Vector& center, const Vector& point, double height, double rotation)
-    : Sketch(base_sketch(slot_center_point(center, point, height), rotation, std::nullopt)) {}
+SlotCenterPoint::SlotCenterPoint(const Vector& center, const Vector& point_in, double height, double rotation)
+    : BaseSketchObject(slot_center_point(center, point_in, height), rotation, std::nullopt),
+      slot_center(center),
+      point(point_in),
+      slot_height(height) {}
 
-SlotCenterToCenter::SlotCenterToCenter(double center_separation, double height, double rotation)
-    : Sketch(base_sketch(center_separation > 0 ? slot_face(center_separation / 2, height) : circle_face(height / 2),
-                         rotation, std::nullopt)) {
-    if (center_separation < 0) throw std::invalid_argument("Requires center_separation > 0");
+namespace {
+Face slot_center_to_center(double center_separation, double height) {
+    if (center_separation < 0) {
+        throw std::invalid_argument("Requires center_separation > 0. Got: center_separation=" +
+                                    std::to_string(center_separation));
+    }
+    return center_separation > 0 ? slot_face(center_separation / 2, height) : circle_face(height / 2);
 }
+}  // namespace
+
+SlotCenterToCenter::SlotCenterToCenter(double separation, double height, double rotation)
+    : BaseSketchObject(slot_center_to_center(separation, height), rotation, std::nullopt),
+      center_separation(separation),
+      slot_height(height) {}
 
 namespace {
 Face slot_overall(double width, double height) {
@@ -277,8 +295,8 @@ Face slot_overall(double width, double height) {
 }
 }  // namespace
 
-SlotOverall::SlotOverall(double width, double height, double rotation, Align2 align)
-    : Sketch(base_sketch(slot_overall(width, height), rotation, align)) {}
+SlotOverall::SlotOverall(double width_in, double height, double rotation, Align2 align)
+    : BaseSketchObject(slot_overall(width_in, height), rotation, align), width(width_in), slot_height(height) {}
 
 SlotOverall::SlotOverall(double width, double height, Align2 align) : SlotOverall(width, height, 0.0, align) {}
 
@@ -307,14 +325,27 @@ Face superellipse(double width, double height, double order, int point_count) {
 }
 }  // namespace
 
-Superellipse::Superellipse(double width, double height, double order, int point_count, double rotation, Align2 align)
-    : Sketch(base_sketch(superellipse(width, height, order, point_count), rotation, align)) {}
+Superellipse::Superellipse(double width_in, double height, double order_in, int point_count_in, double rotation,
+                           Align2 align_in)
+    : BaseSketchObject(superellipse(width_in, height, order_in, point_count_in), rotation, align_in),
+      width(width_in),
+      height_(height),
+      order(order_in),
+      point_count(point_count_in),
+      align(align_in) {}
 
 Text::Text(const std::string& text, double size, const TextOptions& o)
-    : Sketch(base_sketch(Compound::make_text(text, size, o.font, o.font_path, o.font_style, o.text_align, o.align,
-                                             o.position_on_path, o.path),
-                         o.rotation, std::nullopt)),
+    : BaseSketchObject(Compound::make_text(text, size, o.font, o.font_path, o.font_style, o.text_align, o.align,
+                                           o.position_on_path, o.path),
+                       o.rotation, std::nullopt),
       txt(text),
-      font_size(size) {}
+      font_size(size),
+      font(o.font),
+      font_path(o.font_path),
+      font_style(o.font_style),
+      text_align(o.text_align),
+      align(o.align),
+      text_path(o.path),
+      position_on_path(o.position_on_path) {}
 
 }  // namespace build123d

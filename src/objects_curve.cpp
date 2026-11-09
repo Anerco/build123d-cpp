@@ -20,14 +20,19 @@ double py_mod(double a, double b) {
     return r;
 }
 
-Edge jern_arc(const Vector& start, const Vector& tangent, double radius, double arc_size) {
-    const Vector start_tangent = tangent.normalized();
+Vector jern_arc_normal(const Vector& start_tangent) {
     Vector arc_normal(0, 0, 1);
     if (std::abs(start_tangent.dot(arc_normal)) > TOLERANCE) {
         arc_normal = start_tangent.cross(arc_normal);
         if (arc_normal.length() <= TOLERANCE) arc_normal = start_tangent.cross(Vector(1, 0, 0));
         arc_normal = arc_normal.normalized();
     }
+    return arc_normal;
+}
+
+Edge jern_arc(const Vector& start, const Vector& tangent, double radius, double arc_size) {
+    const Vector start_tangent = tangent.normalized();
+    const Vector arc_normal = jern_arc_normal(start_tangent);
     const double direction = std::copysign(1.0, arc_size);
     const Axis axis(start, arc_normal);
     const Vector center = start + start_tangent.rotate(axis, direction * 90) * std::abs(radius);
@@ -36,6 +41,71 @@ Edge jern_arc(const Vector& start, const Vector& tangent, double radius, double 
         return Edge::make_circle(radius, Plane(center, start - center, arc_normal));
     }
     return Edge::make_tangent_arc(start, start_tangent, end_of_arc);
+}
+
+/// The shorter of two candidate arcs trimmed where they first meet the limit.
+Edge shortest_limited(const Edge& arc, const Edge& arc2, const Limit& limit, const std::string& name) {
+    const auto trimmed_arc = limit.trim(arc);
+    const auto trimmed_arc2 = limit.trim(arc2);
+    if (!trimmed_arc && !trimmed_arc2) {
+        throw std::invalid_argument(name + " doesn't intersect arc limit " + limit.to_string());
+    }
+    std::vector<Edge> arcs;
+    if (trimmed_arc) arcs.push_back(*trimmed_arc);
+    if (trimmed_arc2) arcs.push_back(*trimmed_arc2);
+    std::stable_sort(arcs.begin(), arcs.end(), [](const Edge& a, const Edge& b) { return a.length() < b.length(); });
+    return arcs[0];
+}
+
+/// JernArc limited by an object: the two full circles tangent at the start, trimmed.
+Edge jern_arc(const Vector& start, const Vector& tangent, double radius, const Limit& arc_size) {
+    const Vector start_tangent = tangent.normalized();
+    const Vector arc_normal = jern_arc_normal(start_tangent);
+    const Axis axis(start, arc_normal);
+    const Vector center_point = start + start_tangent.rotate(axis, 1 * 90.0) * std::abs(radius);
+    const Edge arc = Edge::make_circle(radius, Plane(center_point, start - center_point, arc_normal));
+    const Vector center_point2 = start + start_tangent.rotate(axis, -1 * 90.0) * std::abs(radius);
+    Edge arc2 = Edge::make_circle(radius, Plane(center_point2, start - center_point2, arc_normal));
+    if (arc2.tangent_at(0.0).dot(start_tangent) < 0) arc2 = arc2.reversed(true);
+    return shortest_limited(arc, arc2, arc_size, "JernArc");
+}
+
+/// The point of an Axis.intersect result; build123d accepts a contact only when it is a Vector.
+template <class... Ts>
+std::optional<Vector> point_of(const std::optional<std::variant<Ts...>>& contact) {
+    if (contact && std::holds_alternative<Vector>(*contact)) return std::get<Vector>(*contact);
+    return std::nullopt;
+}
+
+/// PolarLine running from `start` until it meets the limit.
+Edge polar_line(const Vector& start, const Limit& length, const Vector& direction_localized) {
+    struct Visitor {
+        const Vector& start;
+        const Vector& dir;
+        const Limit& limit;
+        [[noreturn]] void fail() const {
+            throw std::invalid_argument("Polar line doesn't intersect length limit " + limit.to_string());
+        }
+        Edge to_contact(const std::optional<Vector>& contact) const {
+            // Check for a contact point and ensure it isn't behind the start point
+            if (contact && (*contact - start).dot(dir) > TOLERANCE) return Edge::make_line(start, *contact);
+            fail();
+        }
+        Edge operator()(const Shape& shape) const {
+            const double max_length = shape.bounding_box().add(start).diagonal();
+            const Edge long_edge = Edge::make_line(start, start + dir * max_length);
+            const auto trimmed_edge = long_edge.trim_to_other(shape);
+            if (!trimmed_edge) fail();
+            return *trimmed_edge;
+        }
+        Edge operator()(const Axis& axis) const { return to_contact(point_of(Axis(start, dir).intersect(axis))); }
+        Edge operator()(const Plane& plane) const { return to_contact(point_of(Axis(start, dir).intersect(plane))); }
+        Edge operator()(const Vector& point) const { return to_contact(Axis(start, dir).intersect(point)); }
+        Edge operator()(const Location& location) const {
+            return to_contact(point_of(Axis(start, dir).intersect(location)));
+        }
+    };
+    return std::visit(Visitor{start, direction_localized, length}, length.value);
 }
 
 Edge sagitta_arc(const Vector& start, const Vector& end, double sagitta) {
@@ -137,7 +207,7 @@ Wire fillet_polyline(std::vector<Vector> points, const std::vector<double>* radi
 
 }  // namespace
 
-Line::Line(const Vector& start, const Vector& end) : Edge(Edge::make_line(start, end)) {}
+Line::Line(const Vector& start, const Vector& end) : BaseEdgeObject(Edge::make_line(start, end)) {}
 
 Line::Line(const std::vector<Vector>& pts)
     : Line(require_count(pts, 2, "Line requires two pts")[0], pts[1]) {}
@@ -166,7 +236,7 @@ Spline::Spline(const std::vector<Vector>& pts, const std::vector<Vector>& tangen
 }
 
 Bezier::Bezier(const std::vector<Vector>& cntl_pnts, const std::vector<double>& weights)
-    : Edge(Edge::make_bezier(cntl_pnts, weights)) {}
+    : BaseEdgeObject(Edge::make_bezier(cntl_pnts, weights)) {}
 
 CenterArc::CenterArc(const Vector& center, double radius, double start_angle, double arc_size) {
     const AngularDirection direction =
@@ -177,8 +247,17 @@ CenterArc::CenterArc(const Vector& center, double radius, double start_angle, do
     obj_ = Edge::make_circle(radius, Plane(center), start, end_angle, direction).wrapped();
 }
 
+CenterArc::CenterArc(const Vector& center, double radius, double start_angle, const Limit& arc_size) {
+    const Vector start_radius_vector = Vector(1, 0, 0).rotate(Axis::Z, start_angle) * radius;
+    Plane circle_plane(center);
+    circle_plane.set_x_dir(start_radius_vector);
+    const Edge arc = Edge::make_circle(radius, circle_plane);
+    const Edge arc2 = arc.reversed(true);
+    obj_ = shortest_limited(arc, arc2, arc_size, "CenterArc").wrapped();
+}
+
 ThreePointArc::ThreePointArc(const Vector& point1, const Vector& point2, const Vector& point3)
-    : Edge(Edge::make_three_point_arc(point1, point2, point3)) {}
+    : BaseEdgeObject(Edge::make_three_point_arc(point1, point2, point3)) {}
 
 ThreePointArc::ThreePointArc(const std::vector<Vector>& pts)
     : ThreePointArc(require_count(pts, 3, "ThreePointArc requires three points")[0], pts[1], pts[2]) {}
@@ -193,10 +272,10 @@ RadiusArc::RadiusArc(const Vector& start_point, const Vector& end_point, double 
 }
 
 SagittaArc::SagittaArc(const Vector& start_point, const Vector& end_point, double sagitta)
-    : Edge(sagitta_arc(start_point, end_point, sagitta)) {}
+    : BaseEdgeObject(sagitta_arc(start_point, end_point, sagitta)) {}
 
 TangentArc::TangentArc(const Vector& start, const Vector& end, const Vector& tangent, bool tangent_from_first)
-    : Edge(tangent_from_first ? Edge::make_tangent_arc(start, tangent.normalized(), end)
+    : BaseEdgeObject(tangent_from_first ? Edge::make_tangent_arc(start, tangent.normalized(), end)
                               : Edge::make_tangent_arc(end, tangent.normalized(), start)) {}
 
 TangentArc::TangentArc(const std::vector<Vector>& pts, const Vector& tangent, bool tangent_from_first)
@@ -204,7 +283,13 @@ TangentArc::TangentArc(const std::vector<Vector>& pts, const Vector& tangent, bo
                  tangent_from_first) {}
 
 JernArc::JernArc(const Vector& start_in, const Vector& tangent, double radius, double arc_size)
-    : Edge(jern_arc(start_in, tangent, radius, arc_size)), start(start_in) {
+    : BaseEdgeObject(jern_arc(start_in, tangent, radius, arc_size)), start(start_in) {
+    center_point = arc_center();
+    end_of_arc = position_at(1);
+}
+
+JernArc::JernArc(const Vector& start_in, const Vector& tangent, double radius, const Limit& arc_size)
+    : BaseEdgeObject(jern_arc(start_in, tangent, radius, arc_size)), start(start_in) {
     center_point = arc_center();
     end_of_arc = position_at(1);
 }
@@ -219,9 +304,15 @@ EllipticalCenterArc::EllipticalCenterArc(const Vector& center, double x_radius, 
                .wrapped();
 }
 
+EllipticalCenterArc::EllipticalCenterArc(const Vector& center, double x_radius, double y_radius, double,
+                                         const Limit& arc_size, double rotation) {
+    const Edge curve = Edge::make_ellipse(x_radius, y_radius).rotate(Axis::Z, rotation).translate(center);
+    obj_ = shortest_limited(curve, curve.reversed(true), arc_size, "EllipticalCenterArc").wrapped();
+}
+
 BSpline::BSpline(const std::vector<Vector>& control_points, const std::vector<double>& knots, int degree,
                  const std::vector<double>& weights, bool periodic)
-    : Edge(Edge::make_bspline(control_points, knots, degree, weights, periodic)) {}
+    : BaseEdgeObject(Edge::make_bspline(control_points, knots, degree, weights, periodic)) {}
 
 EllipticalStartArc::EllipticalStartArc(const Vector& start_pnt, const Vector& start_tangent, double x_radius,
                                        double y_radius, double arc_size, std::optional<double> start_angle,
@@ -273,6 +364,24 @@ ParabolicCenterArc::ParabolicCenterArc(const Vector& vertex, double focal_length
                .wrapped();
 }
 
+ParabolicCenterArc::ParabolicCenterArc(const Vector& vertex, double focal_length, double start_angle,
+                                       const Limit& arc_size, double rotation) {
+    const Edge curve = Edge::make_parabola(focal_length, Plane::XY, start_angle, start_angle + 180.0,
+                                           AngularDirection::COUNTER_CLOCKWISE)
+                           .rotate(Axis::Z, rotation)
+                           .translate(vertex);
+    obj_ = shortest_limited(curve, curve.reversed(true), arc_size, "ParabolicCenterArc").wrapped();
+}
+
+HyperbolicCenterArc::HyperbolicCenterArc(const Vector& center, double x_radius, double y_radius,
+                                         double start_angle, const Limit& arc_size, double rotation) {
+    const Edge curve = Edge::make_hyperbola(x_radius, y_radius, Plane::XY, start_angle, start_angle + 180.0,
+                                            AngularDirection::COUNTER_CLOCKWISE)
+                           .rotate(Axis::Z, rotation)
+                           .translate(center);
+    obj_ = shortest_limited(curve, curve.reversed(true), arc_size, "HyperbolicCenterArc").wrapped();
+}
+
 HyperbolicCenterArc::HyperbolicCenterArc(const Vector& center, double x_radius, double y_radius,
                                          double start_angle, double arc_size, double rotation) {
     const AngularDirection direction =
@@ -285,20 +394,26 @@ HyperbolicCenterArc::HyperbolicCenterArc(const Vector& center, double x_radius, 
 
 Helix::Helix(double pitch, double height, double radius, const Vector& center, const Vector& direction,
              double cone_angle, bool lefthand)
-    : Edge(Edge::make_helix(pitch, height, radius, center, direction, cone_angle, lefthand)) {}
+    : BaseEdgeObject(Edge::make_helix(pitch, height, radius, center, direction, cone_angle, lefthand)) {}
 
 PolarLine::PolarLine(const Vector& start, double length, double angle, LengthMode length_mode)
-    : Edge(polar_line(start, length, angle, Vector(1, 0, 0).rotate(Axis::Z, angle), length_mode)) {}
+    : BaseEdgeObject(polar_line(start, length, angle, Vector(1, 0, 0).rotate(Axis::Z, angle), length_mode)) {}
 
 PolarLine::PolarLine(const Vector& start, double length, const Vector& direction, LengthMode length_mode)
-    : Edge(polar_line(start, length, Vector(1, 0, 0).get_angle(direction.normalized()), direction.normalized(),
+    : BaseEdgeObject(polar_line(start, length, Vector(1, 0, 0).get_angle(direction.normalized()), direction.normalized(),
                       length_mode)) {}
 
+PolarLine::PolarLine(const Vector& start, const Limit& length, double angle, LengthMode)
+    : BaseEdgeObject(polar_line(start, length, Vector(1, 0, 0).rotate(Axis::Z, angle))) {}
+
+PolarLine::PolarLine(const Vector& start, const Limit& length, const Vector& direction, LengthMode)
+    : BaseEdgeObject(polar_line(start, length, direction.normalized())) {}
+
 FilletPolyline::FilletPolyline(const std::vector<Vector>& pts, double radius, bool close)
-    : Wire(fillet_polyline(pts, nullptr, radius, close)) {}
+    : BaseLineObject(fillet_polyline(pts, nullptr, radius, close)) {}
 
 FilletPolyline::FilletPolyline(const std::vector<Vector>& pts, const std::vector<double>& radius, bool close)
-    : Wire(fillet_polyline(pts, &radius, 0.0, close)) {}
+    : BaseLineObject(fillet_polyline(pts, &radius, 0.0, close)) {}
 
 IntersectingLine::IntersectingLine(const Vector& start, const Vector& direction, const Shape& other) {
     const Vector dir = direction.normalized();

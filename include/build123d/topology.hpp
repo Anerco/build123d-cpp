@@ -50,6 +50,9 @@ class SplitResult;
 using IntersectArg = std::variant<Shape, Vector, Location, Axis, Plane>;
 template <class T>
 class GroupBy;
+class TangencyTarget;
+struct ConstrainedArcOptions;
+struct ConstrainedLineOptions;
 class Joint;
 namespace detail {
 struct JointState;
@@ -650,8 +653,13 @@ public:
                    bool closed = true) const;
     /// Line in `plane` perpendicular to this curve at `u_value`, centered on it.
     Edge perpendicular_line(double length, double u_value, const Plane& plane = Plane::XY) const;
-    /// Project onto a target shape along `direction`.
+    /// Project onto a target shape along `direction` (the edges of Edge/Wire::project_to_shape).
     ShapeList<Edge> project_to_shape(const Shape& target, const Vector& direction) const;
+    /// Project onto a face along `direction`: the projection closest to this curve (an Edge or
+    /// a Wire; check shape_type()).
+    Mixin1D project(const Face& face, const Vector& direction) const;
+    /// All the projections onto the face (closest = false), or just the closest one.
+    ShapeList<Mixin1D> project(const Face& face, const Vector& direction, bool closest) const;
 };
 
 /// Tangent at a position, build123d's `%` operator.
@@ -707,6 +715,28 @@ public:
     static Edge make_tangent_arc(const Vector& start, const Vector& tangent, const Vector& end);
     static Edge make_mid_way(const Edge& first, const Edge& second, double middle = 0.5);
     static Edge extrude(const Vertex& obj, const Vector& direction);
+    /// Arcs (or circles) on Plane::XY tangent to curves or through points: two targets with a
+    /// radius or a center_on locus, three targets, or one target with a center or with a
+    /// radius and center_on (see ConstrainedArcOptions and constrained_lines.py).
+    static ShapeList<Edge> make_constrained_arcs(const TangencyTarget& tangency_one,
+                                                 const ConstrainedArcOptions& options);
+    static ShapeList<Edge> make_constrained_arcs(const TangencyTarget& tangency_one,
+                                                 const TangencyTarget& tangency_two,
+                                                 const ConstrainedArcOptions& options);
+    static ShapeList<Edge> make_constrained_arcs(const TangencyTarget& tangency_one,
+                                                 const TangencyTarget& tangency_two,
+                                                 const TangencyTarget& tangency_three);
+    static ShapeList<Edge> make_constrained_arcs(const TangencyTarget& tangency_one,
+                                                 const TangencyTarget& tangency_two,
+                                                 const TangencyTarget& tangency_three,
+                                                 const ConstrainedArcOptions& options);
+    /// Lines on Plane::XY tangent to two curves, to a curve and through a point, or tangent
+    /// to a curve at an angle (or direction) to a reference Axis.
+    static ShapeList<Edge> make_constrained_lines(const TangencyTarget& tangency_one,
+                                                  const TangencyTarget& tangency_two);
+    static ShapeList<Edge> make_constrained_lines(const TangencyTarget& tangency_one,
+                                                  const TangencyTarget& tangency_two,
+                                                  const ConstrainedLineOptions& options);
 
     /// Center of an underlying circle or ellipse.
     Vector arc_center() const;
@@ -715,6 +745,16 @@ public:
     Edge trim(double start, double end) const;
     Edge trim(const Vector& start, const Vector& end) const;
     Edge trim_to_length(double start, double length) const;
+    /// The shortest part of this edge from its start to where it meets `other` (a Shape, Axis,
+    /// Location, Plane or point), or nothing when they don't meet.
+    std::optional<Edge> trim_to_other(const Shape& other) const;
+    std::optional<Edge> trim_to_other(const Axis& other) const;
+    std::optional<Edge> trim_to_other(const Location& other) const;
+    std::optional<Edge> trim_to_other(const Plane& other) const;
+    std::optional<Edge> trim_to_other(const Vector& other) const;
+    /// An infinite line trimmed to `half_length` on each side of its center; other edges are
+    /// returned unchanged.
+    Edge trim_infinite(double half_length) const;
     /// OCCT curve parameter at a normalized arc-length position.
     double param_at(double position) const;
     Wire close() const;
@@ -727,6 +767,10 @@ public:
                                                  double tolerance = TOLERANCE) const;
     std::vector<Vector> find_intersection_points(const Axis& axis,
                                                  double tolerance = TOLERANCE) const;
+    /// Project onto a shape along `direction` (parallel) or from `center` (conical); exactly
+    /// one of them must be given. The edges of the projected wires.
+    ShapeList<Edge> project_to_shape(const Shape& target_object, std::optional<Vector> direction = std::nullopt,
+                                     std::optional<Vector> center = std::nullopt) const;
 
     BUILD123D_TYPED_OPS(Edge)
 };
@@ -767,8 +811,65 @@ public:
     Wire fix_degenerate_edges(double precision) const;
     Wire stitch(const Wire& other) const;
     Wire trim(double start, double end) const;
+    /// Project onto a shape along `direction` (parallel) or from `center` (conical); exactly
+    /// one of them must be given. The wires keep this wire's orientation and are sorted by
+    /// distance (from this wire, or from the center).
+    ShapeList<Wire> project_to_shape(const Shape& target_object, std::optional<Vector> direction = std::nullopt,
+                                     std::optional<Vector> center = std::nullopt) const;
 
     BUILD123D_TYPED_OPS(Wire)
+};
+
+/// A target of Edge::make_constrained_arcs/lines, ConstrainedArcs and ConstrainedLines: a
+/// curve the result is tangent to (an Edge or an Axis, optionally qualified with a Tangency,
+/// Python's `(edge, Tangency.ENCLOSING)` tuple) or a point it passes through (a Vector, a
+/// Vertex or {x, y}).
+class TangencyTarget {
+public:
+    enum class Kind { EDGE, AXIS, VERTEX, POINT };
+
+    TangencyTarget(const Edge& edge);  // NOLINT(google-explicit-constructor)
+    TangencyTarget(const Edge& edge, Tangency tangency);
+    TangencyTarget(const Axis& axis);  // NOLINT
+    TangencyTarget(const Axis& axis, Tangency tangency);
+    TangencyTarget(const Vertex& vertex);  // NOLINT
+    TangencyTarget(const Vector& point);   // NOLINT
+    TangencyTarget(double x, double y, double z = 0.0);
+
+    Kind kind() const { return kind_; }
+    /// True when given with a Tangency (a tuple in Python).
+    bool qualified() const { return qualified_; }
+    Tangency tangency() const { return tangency_; }
+    const Edge& edge() const;
+    const Axis& axis() const;
+    const Vertex& vertex() const;
+    const Vector& point() const;
+
+private:
+    Kind kind_;
+    bool qualified_ = false;
+    Tangency tangency_ = Tangency::UNQUALIFIED;
+    std::optional<Edge> edge_;
+    std::optional<Axis> axis_;
+    std::optional<Vertex> vertex_;
+    Vector point_;
+};
+
+/// The keyword arguments of Edge::make_constrained_arcs (and ConstrainedArcs).
+struct ConstrainedArcOptions {
+    std::optional<double> radius;
+    /// The locus the arc's center lies on (an Edge or Axis).
+    std::optional<TangencyTarget> center_on;
+    /// The fixed center (a point).
+    std::optional<TangencyTarget> center;
+    Sagitta sagitta = Sagitta::SHORT;
+};
+
+/// The keyword arguments of Edge::make_constrained_lines (and ConstrainedLines): the line's
+/// angle in degrees from the reference Axis, or its direction.
+struct ConstrainedLineOptions {
+    std::optional<double> angle;
+    std::optional<Vector> direction;
 };
 
 // ---------------------------------------------------------------------------

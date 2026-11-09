@@ -656,20 +656,6 @@ Edge Mixin1D::perpendicular_line(double length, double u_value, const Plane& pla
     return Edge::make_line(start + local.y_dir * (length / 2), start - local.y_dir * (length / 2));
 }
 
-ShapeList<Edge> Mixin1D::project_to_shape(const Shape& target, const Vector& direction) const {
-    require_not_null("Can't project an empty edge/wire");
-    const Wire w = obj_.ShapeType() == TopAbs_WIRE ? Wire(obj_) : Wire(Edge(obj_));
-    ShapeList<Edge> out;
-    occt("project_to_shape", [&] {
-        BRepProj_Projection proj(w.wrapped(), target.wrapped(), direction.to_dir());
-        for (; proj.More(); proj.Next()) {
-            for (const auto& e : entities(proj.Current(), TopAbs_EDGE)) out.push_back(Edge(e));
-        }
-        return 0;
-    });
-    return out;
-}
-
 Axis::Axis(const Edge& edge) {
     if (edge.is_null()) throw std::invalid_argument("Invalid edge argument");
     const TopoDS_Edge& e = TopoDS::Edge(edge.wrapped());
