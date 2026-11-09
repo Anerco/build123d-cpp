@@ -750,6 +750,13 @@ public:
     static Face make_surface_patch(
         const std::vector<std::tuple<Edge, Face, ContinuityLevel>>& edge_face_constraints = {},
         const std::vector<Edge>& edge_constraints = {}, const std::vector<Vector>& point_constraints = {});
+    /// A Gordon surface through a network of profile and guide curves (build123d's
+    /// make_gordon_surface): each a point or an Edge, only the first or last may be a point;
+    /// every profile must cross every guide within `tolerance`.
+    static Face make_gordon_surface(const std::vector<std::variant<Vector, Edge>>& profiles,
+                                    const std::vector<std::variant<Vector, Edge>>& guides, double tolerance = 3e-4);
+    static Face make_gordon_surface(const std::vector<Edge>& profiles, const std::vector<Edge>& guides,
+                                    double tolerance = 3e-4);
     /// Wrap a planar (XY) Edge, Wire or Face onto this surface starting at `surface_loc`.
     Edge wrap(const Edge& planar_shape, const Location& surface_loc, double tolerance = 0.001,
               double extension_factor = 0.1) const;
