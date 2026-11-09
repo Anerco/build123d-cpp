@@ -75,6 +75,8 @@ public:
     /// json.dumps(value, indent=indent): Python's separators, float repr, and ASCII-only
     /// output (other characters as \uXXXX escapes).
     std::string dump(std::optional<int> indent = std::nullopt) const;
+    /// json.dumps(value, separators=(",", ":")): the compact form.
+    std::string dump_compact() const;
     /// json.loads(text); NaN, Infinity and -Infinity are accepted as in Python.
     /// Raises std::invalid_argument on malformed input.
     static Json parse(const std::string& text);

@@ -53,6 +53,7 @@
 #endif
 
 #include "build123d/io.hpp"
+#include "build123d/pbr.hpp"
 #include "internal.hpp"
 #include "io_internal.hpp"
 #include "pyformat.hpp"
@@ -260,7 +261,7 @@ bool export_gltf(const Shape& to_export, const std::string& file_path, Unit unit
     // Map from OCCT's +Z up to glTF's +Y up
     Shape rotated = to_export;
     rotated.set_location(to_export.location() * Location(Vector(0, 0, 0), Vector(1, 0, 0), -90.0));
-    return occt("export_gltf", [&] {
+    const bool status = occt("export_gltf", [&] {
         // Tessellate the object(s)
         preorder(rotated, [&](const Shape& node) {
             if (!node.is_null()) node.mesh(linear_deflection, angular_deflection);
@@ -283,6 +284,17 @@ bool export_gltf(const Shape& to_export, const std::string& file_path, Unit unit
         BRepTools::Clean(rotated.wrapped());
         return status;
     });
+    if (!status) return status;
+    // Inject full PBR materials where nodes have a material (node.material, which falls back
+    // to the nearest ancestor's), and normalize the UVs of the looks with normalize_uvs
+    std::vector<std::pair<int, std::shared_ptr<const PbrProperties>>> node_pbrs;
+    int index = 0;
+    preorder(to_export, [&](const Shape& node) {
+        if (node.material) node_pbrs.emplace_back(index, node.material->pbr_ptr());
+        ++index;
+    });
+    if (!node_pbrs.empty()) inject_materials(file_path, node_pbrs);
+    return status;
 }
 
 // ---------------------------------------------------------------------------

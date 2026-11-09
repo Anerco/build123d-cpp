@@ -673,3 +673,325 @@ COMPARE_CASES {
         });
     });
 }
+
+// ---- glTF / GLB with materials ----------------------------------------------------------
+
+namespace {
+
+std::string pbr_dir(const std::string& side) {
+    const fs::path path = fs::temp_directory_path() / "build123d_compare_pbr" / side;
+    fs::create_directories(path);
+    return path.string();
+}
+
+std::uint32_t le32(const pil::Bytes& data, std::size_t at) {
+    return static_cast<std::uint32_t>(data.at(at)) | (static_cast<std::uint32_t>(data.at(at + 1)) << 8) |
+           (static_cast<std::uint32_t>(data.at(at + 2)) << 16) | (static_cast<std::uint32_t>(data.at(at + 3)) << 24);
+}
+
+std::vector<double> accessor_values(const Json& doc, const pil::Bytes& blob, std::size_t index) {
+    const Json& acc = doc["accessors"].at(index);
+    const Json& bv = doc["bufferViews"].at(static_cast<std::size_t>(acc["bufferView"].as_int()));
+    const int type = static_cast<int>(acc["componentType"].as_int());
+    static const std::map<std::string, std::size_t> counts = {{"SCALAR", 1}, {"VEC2", 2}, {"VEC3", 3}, {"VEC4", 4}, {"MAT4", 16}};
+    const std::size_t n = counts.at(acc["type"].as_string());
+    const std::size_t size = type == 5120 || type == 5121 ? 1 : type == 5122 || type == 5123 ? 2 : 4;
+    const std::size_t stride = bv.contains("byteStride") ? static_cast<std::size_t>(bv["byteStride"].as_int()) : size * n;
+    const std::size_t offset = static_cast<std::size_t>((bv.contains("byteOffset") ? bv["byteOffset"].as_int() : 0) +
+                                                        (acc.contains("byteOffset") ? acc["byteOffset"].as_int() : 0));
+    std::vector<double> out;
+    for (std::int64_t i = 0; i < acc["count"].as_int(); ++i) {
+        for (std::size_t c = 0; c < n; ++c) {
+            const std::uint8_t* p = blob.data() + offset + static_cast<std::size_t>(i) * stride + c * size;
+            switch (type) {
+                case 5120: out.push_back(static_cast<std::int8_t>(p[0])); break;
+                case 5121: out.push_back(p[0]); break;
+                case 5122: {
+                    std::int16_t x;
+                    std::memcpy(&x, p, 2);
+                    out.push_back(x);
+                    break;
+                }
+                case 5123: {
+                    std::uint16_t x;
+                    std::memcpy(&x, p, 2);
+                    out.push_back(x);
+                    break;
+                }
+                case 5125: {
+                    std::uint32_t x;
+                    std::memcpy(&x, p, 4);
+                    out.push_back(x);
+                    break;
+                }
+                default: {
+                    float x;
+                    std::memcpy(&x, p, 4);
+                    out.push_back(x);
+                }
+            }
+        }
+    }
+    return out;
+}
+
+/// cases_pbr_py.py key_orders
+void key_orders(const Json& value, std::vector<V>& out) {
+    if (value.is_object()) {
+        std::vector<V> keys;
+        for (const auto& [k, v] : value.as_object()) keys.emplace_back(k);
+        out.push_back(V::list(keys));
+        for (const auto& [k, v] : value.as_object()) key_orders(v, out);
+    } else if (value.is_array()) {
+        for (const Json& v : value.as_array()) key_orders(v, out);
+    }
+}
+
+std::vector<double> triangle_set(const std::vector<double>& values) {
+    std::vector<std::array<double, 3>> tris;
+    for (std::size_t i = 0; i + 2 < values.size(); i += 3) {
+        std::array<double, 3> t = {values[i], values[i + 1], values[i + 2]};
+        const auto first = static_cast<std::size_t>(std::min_element(t.begin(), t.end()) - t.begin());
+        std::rotate(t.begin(), t.begin() + static_cast<std::ptrdiff_t>(first), t.end());
+        tris.push_back(t);
+    }
+    std::sort(tris.begin(), tris.end());
+    std::vector<double> out;
+    for (const auto& t : tris) out.insert(out.end(), t.begin(), t.end());
+    return out;
+}
+
+void erase_key(Json& object, const std::string& key) {
+    auto& o = object.as_object();
+    o.erase(std::remove_if(o.begin(), o.end(), [&key](const auto& e) { return e.first == key; }), o.end());
+}
+
+/// cases_pbr_py.py gltf_file_summary
+V gltf_file_summary(const std::string& path) {
+    const pil::Bytes data = pil::read_file(path);
+    const fs::path base = fs::path(path).parent_path();
+    const bool glb = path.size() > 4 && path.compare(path.size() - 4, 4, ".glb") == 0;
+    Json doc;
+    pil::Bytes blob;
+    std::vector<V> header;
+    if (glb) {
+        const std::size_t json_len = le32(data, 12);
+        doc = Json::parse(std::string(data.begin() + 20, data.begin() + 20 + static_cast<std::ptrdiff_t>(json_len)));
+        const std::size_t start = 20 + json_len;
+        const std::size_t bin_len = le32(data, start);
+        blob.assign(data.begin() + static_cast<std::ptrdiff_t>(start + 8),
+                    data.begin() + static_cast<std::ptrdiff_t>(start + 8 + bin_len));
+        const char last = static_cast<char>(data.at(20 + json_len - 1));
+        header = {std::string(data.begin(), data.begin() + 4), static_cast<double>(le32(data, 4)),
+                  le32(data, 8) == data.size(), static_cast<double>(json_len % 4),
+                  std::memcmp(data.data() + start + 4, "BIN\0", 4) == 0, static_cast<double>(bin_len % 4),
+                  last == ' ' || last == '}'};
+    } else {
+        doc = Json::parse(std::string(data.begin(), data.end()));
+        blob = pil::read_file((base / doc["buffers"].at(0)["uri"].as_string()).string());
+        header = {doc["buffers"].at(0)["byteLength"].as_int() == static_cast<std::int64_t>(blob.size()),
+                  std::string(data.begin(), data.begin() + 3), std::string(1, static_cast<char>(data.back()))};
+    }
+    std::vector<V> images;
+    std::set<std::int64_t> image_views;
+    if (doc.contains("images")) {
+        for (const Json& img : doc["images"].as_array()) {
+            pil::Bytes raw;
+            if (img.contains("bufferView")) {
+                const Json& bv = doc["bufferViews"].at(static_cast<std::size_t>(img["bufferView"].as_int()));
+                const auto off = static_cast<std::ptrdiff_t>(bv.contains("byteOffset") ? bv["byteOffset"].as_int() : 0);
+                raw.assign(blob.begin() + off, blob.begin() + off + static_cast<std::ptrdiff_t>(bv["byteLength"].as_int()));
+                image_views.insert(img["bufferView"].as_int());
+            } else {
+                raw = pil::read_file((base / img["uri"].as_string()).string());
+            }
+            images.push_back(fingerprint(pil::open_png(raw)));
+        }
+    }
+    bool packed = true;
+    if (glb) {
+        std::int64_t offset = 0;
+        for (const Json& bv : doc["bufferViews"].as_array()) {
+            packed = packed && (bv.contains("byteOffset") ? bv["byteOffset"].as_int() : 0) == offset;
+            const std::int64_t len = bv["byteLength"].as_int();
+            offset += len + (4 - len % 4) % 4;
+        }
+        packed = packed && offset == static_cast<std::int64_t>(blob.size());
+    }
+    std::vector<V> orders;
+    key_orders(doc, orders);
+    // triangles as a set (OCCT builds order the triangles of some meshes differently)
+    std::set<std::int64_t> index_accessors;
+    if (doc.contains("meshes")) {
+        for (const Json& m : doc["meshes"].as_array()) {
+            for (const Json& p : m["primitives"].as_array()) {
+                if (p.contains("indices")) index_accessors.insert(p["indices"].as_int());
+            }
+        }
+    }
+    std::vector<V> accessors;
+    if (doc.contains("accessors")) {
+        for (std::size_t i = 0; i < doc["accessors"].size(); ++i) {
+            std::vector<double> values = accessor_values(doc, blob, i);
+            if (index_accessors.count(static_cast<std::int64_t>(i))) values = triangle_set(values);
+            accessors.push_back(V::list_of(values));
+        }
+    }
+    if (doc.contains("bufferViews")) {
+        auto& views = doc["bufferViews"].as_array();
+        for (std::size_t i = 0; i < views.size(); ++i) {
+            if (glb) erase_key(views[i], "byteOffset");
+            if (image_views.count(static_cast<std::int64_t>(i))) erase_key(views[i], "byteLength");
+        }
+    }
+    if (glb && doc.contains("buffers")) {
+        for (Json& b : doc["buffers"].as_array()) erase_key(b, "byteLength");
+    }
+    return V::obj({{"json", jv(doc)},
+                   {"images", V::list(images)},
+                   {"accessors", V::list(accessors)},
+                   {"header", V::list(header)},
+                   {"packed", packed},
+                   {"key_orders", V::list(orders)}});
+}
+
+V export_summaries(const Shape& shape, const std::string& name, double linear = 1e-3, double angular = 0.1) {
+    std::vector<V> out;
+    for (const auto& [ext, binary] : {std::pair<const char*, bool>{".gltf", false}, {".glb", true}}) {
+        const std::string path = (fs::path(pbr_dir("cpp")) / (name + ext)).string();
+        export_gltf(shape, path, Unit::MM, binary, linear, angular);
+        out.push_back(gltf_file_summary(path));
+    }
+    return V::list(out);
+}
+
+/// Python's Shape.material setter: the material, and the color of its look.
+void assign(Shape& shape, const FinishedMaterial& material) {
+    shape.material.set_raw(material);
+    shape.color = material.pbr().interpolated_color();
+}
+
+}  // namespace
+
+COMPARE_CASES {
+    compare::add_value("pbr_gltf_metal", [] {
+        Part box = Box(10, 20, 30);
+        assign(box, metals::aluminum());
+        return export_summaries(box, "metal");
+    });
+    compare::add_value("pbr_gltf_plastic", [] {
+        Part part = Cylinder(5, 10) - Box(2, 2, 10);
+        part.label = "plastic part";
+        assign(part, plastics::pla({.color = "orange"}));
+        return export_summaries(part, "plastic", 0.1, 0.5);
+    });
+    compare::add_value("pbr_gltf_glass", [] {
+        Part part = Sphere(5);
+        assign(part, glass::soda_lime({.color = "#ccffcc", .thickness_mm = 2.0, .opacity = 0.3}));
+        return export_summaries(part, "glass", 0.1, 0.5);
+    });
+    compare::add_value("pbr_gltf_wood", [] {
+        Part box = Box(30, 20, 10);
+        assign(box, wood::oak({.scale = {2.0, 2.0}, .rotation = 30.0}));
+        return export_summaries(box, "wood");
+    });
+    compare::add_value("pbr_gltf_textured", [] {
+        std::vector<V> out;
+        const std::vector<std::pair<const char*, FinishedMaterial>> materials = {
+            {"carbon", plastics::cfrp()},
+            {"fdm", plastics::pla({.color = "red", .process = proc::fdm()})},
+            {"brushed", metals::stainless({.finish = fin::brushed({2.0, 2.0}, 45.0)})},
+            {"rough", plastics::abs_({.color = "blue", .process = proc::sls()})}};
+        for (const auto& [name, material] : materials) {
+            Part box = Box(20, 10, 5);
+            assign(box, material);
+            out.push_back(export_summaries(box, name));
+        }
+        return V::list(out);
+    });
+    compare::add_value("pbr_gltf_assembly", [] {
+        const auto look = shared_preset("wood", "oak");
+        const FinishedMaterial shared(metals::aluminum().material, {.pbr = look});
+        Part a = Box(10, 10, 10);
+        a.label = "a";
+        assign(a, metals::aluminum({.finish = fin::brushed()}));
+        Part b = Pos(20, 0, 0) * Box(5, 5, 10);
+        b.label = "b";
+        assign(b, plastics::pla({.color = "red"}));
+        Part c = Pos(40, 0, 0) * Box(8, 8, 8);
+        c.label = "c";
+        assign(c, shared);
+        Part d = Pos(60, 0, 0) * Box(6, 6, 6);
+        d.label = "d";
+        assign(d, shared);
+        Part e = Pos(80, 0, 0) * Box(5, 5, 5);
+        e.label = "e";
+        assign(e, FinishedMaterial(plastics::pla().material, {.pbr = look}));
+        Part f = Pos(0, 20, 0) * Box(4, 4, 4);
+        f.label = "f";
+        assign(f, *a.material);
+        Part g = Pos(0, 40, 0) * Box(3, 3, 3);
+        g.label = "g";
+        return export_summaries(Compound::make_assembly({a, b, c, d, e, f, g}, "asm"), "assembly");
+    });
+    compare::add_value("pbr_gltf_inherited", [] {
+        Part a = Box(10, 10, 10);
+        a.label = "a";
+        Part b = Pos(20, 0, 0) * Box(5, 5, 5);
+        b.label = "b";
+        const Compound inner = Compound::make_assembly({Pos(0, 20, 0) * Box(3, 3, 3)}, "inner");
+        Compound assembly = Compound::make_assembly({a, b, inner}, "asm");
+        assign(assembly, plastics::pla({.color = "blue"}));
+        return export_summaries(assembly, "inherited");
+    });
+    compare::add_value("pbr_gltf_extensions", [] {
+        const std::string tex = *pbr_preset("wood", "oak").maps_dir;
+        const std::string rough = *pbr_preset("metal", "steel_matte").maps_dir;
+        Json data = Json::parse(R"({"id": "x", "name": "everything", "source": "test",
+            "values": {"color": [0.8, 0.2, 0.1], "metalness": 0.3, "roughness": 0.6, "ior": 1.6, "transmission": 0.4,
+                       "thickness": 2.0, "attenuationColor": [0.9, 0.8, 0.7], "attenuationDistance": 5.0,
+                       "clearcoat": 0.7, "clearcoatRoughness": 0.2, "sheen": 0.5, "sheenColor": [0.1, 0.2, 0.3],
+                       "sheenRoughness": 0.4, "iridescence": 0.6, "iridescenceIOR": 1.3,
+                       "iridescenceThicknessRange": [100.0, 400.0], "anisotropy": 0.5, "anisotropyRotation": 0.7,
+                       "specularIntensity": 0.8, "specularColor": [1.0, 0.9, 0.8], "emissive": [0.1, 0.0, 0.0],
+                       "emissiveIntensity": 2.0, "dispersion": 0.3, "normalScale": [0.5, 0.5], "side": 2,
+                       "alphaTest": 0.25},
+            "textures": {"color": "color.png", "normal": "normal.png", "roughness": "roughness.png",
+                         "ao": "roughness.png", "emissive": "color.png", "transmission": "roughness.png",
+                         "clearcoat": "roughness.png", "clearcoatNormal": "normal.png", "sheenColor": "color.png",
+                         "specularColor": "color.png", "thickness": "roughness.png"},
+            "texture_repeat": [1.0, 1.0]})");
+        data["maps_dir"] = Json(tex);
+        Json blend = Json::parse(R"({"id": "b", "name": "", "source": "test",
+            "values": {"color": [0.5, 0.5, 0.5], "transparent": true, "opacity": 0.5, "dispersion": 0.1, "metalness": 0.0},
+            "textures": {"metalness": "roughness.png", "opacity": "roughness.png", "roughness": "roughness.png"}})");
+        blend["maps_dir"] = Json(rough);
+        Json mask = Json::parse(R"({"id": "m", "name": "masked", "source": "test", "values": {"opacity": 0.8},
+            "textures": {"opacity": "roughness.png", "color": "color.png"}, "texture_rotation": 90.0,
+            "normalize_uvs": false})");
+        mask["maps_dir"] = Json(tex);
+        std::vector<Shape> parts;
+        int i = 0;
+        for (const Json* d : {&data, &blend, &mask}) {
+            Part box = Pos(i * 20.0, 0, 0) * Box(10, 10, 10);
+            box.label = "p" + std::to_string(i);
+            assign(box, metals::custom_metal("Look", 1000.0,
+                                             {.pbr = std::make_shared<const PbrProperties>(PbrProperties::from_dict(*d))}));
+            parts.push_back(box);
+            ++i;
+        }
+        return export_summaries(Compound::make_assembly(parts, "ext"), "extensions");
+    });
+    compare::add_value("pbr_gltf_inject_direct", [] {
+        std::vector<V> out;
+        for (const char* name : {"direct.gltf", "direct.glb"}) {
+            const std::string path = (fs::path(pbr_dir("cpp")) / name).string();
+            export_gltf(Box(10, 10, 10), path, Unit::MM, std::string(name).find(".glb") != std::string::npos);
+            inject_materials(path, {{1, std::make_shared<const PbrProperties>(pbr_preset("plastic", "plastic", {.color = "red"}))},
+                                    {0, shared_preset("metal", "copper")},
+                                    {5, shared_preset("metal", "gold")}});
+            out.push_back(gltf_file_summary(path));
+        }
+        return V::list(out);
+    });
+}

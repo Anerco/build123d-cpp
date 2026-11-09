@@ -478,6 +478,255 @@ def material_tables():
     return V(out)
 
 
+# ---- glTF / GLB with materials -------------------------------------------------------------
+
+import io as _io  # noqa: E402
+import json as _json  # noqa: E402
+import tempfile  # noqa: E402
+
+from build123d import Box, Compound, Cylinder, Pos, Sphere, Unit, export_gltf  # noqa: E402
+from threejs_materials import PbrProperties, inject_materials  # noqa: E402
+
+_DTYPES = {5120: "b", 5121: "B", 5122: "h", 5123: "H", 5125: "I", 5126: "f"}
+_COUNTS = {"SCALAR": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4, "MAT4": 16}
+
+
+def pbr_dir(side):
+    path = os.path.join(tempfile.gettempdir(), "build123d_compare_pbr", side)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def accessor_values(doc, blob, index):
+    import struct
+    acc = doc["accessors"][index]
+    bv = doc["bufferViews"][acc["bufferView"]]
+    code = _DTYPES[acc["componentType"]]
+    n = _COUNTS[acc["type"]]
+    size = struct.calcsize("<" + code)
+    stride = bv.get("byteStride") or size * n
+    offset = bv.get("byteOffset", 0) + acc.get("byteOffset", 0)
+    out = []
+    for i in range(acc["count"]):
+        out.extend(struct.unpack_from("<" + code * n, blob, offset + i * stride))
+    return [float(x) for x in out]
+
+
+def key_orders(value, out=None):
+    """The keys of every object, in order (depth first): pygltflib writes its fields' order."""
+    out = [] if out is None else out
+    if isinstance(value, dict):
+        out.append(list(value.keys()))
+        for v in value.values():
+            key_orders(v, out)
+    elif isinstance(value, list):
+        for v in value:
+            key_orders(v, out)
+    return out
+
+
+def triangle_set(values):
+    def canon(t):
+        i = t.index(min(t))
+        return t[i:] + t[:i]
+    tris = sorted(canon(tuple(values[i:i + 3])) for i in range(0, len(values), 3))
+    return [x for t in tris for x in t]
+
+
+def gltf_file_summary(path):
+    with open(path, "rb") as f:
+        data = f.read()
+    base = os.path.dirname(path)
+    glb = path.endswith(".glb")
+    if glb:
+        json_len = int.from_bytes(data[12:16], "little")
+        doc = _json.loads(data[20:20 + json_len])
+        start = 20 + json_len
+        bin_len = int.from_bytes(data[start:start + 4], "little")
+        blob = data[start + 8:start + 8 + bin_len]
+        header = [data[:4].decode(), int.from_bytes(data[4:8], "little"),
+                  int.from_bytes(data[8:12], "little") == len(data), json_len % 4,
+                  data[start + 4:start + 8] == b"BIN\x00", bin_len % 4, data[20 + json_len - 1:20 + json_len] in (b" ", b"}")]
+    else:
+        doc = _json.loads(data.decode())
+        with open(os.path.join(base, doc["buffers"][0]["uri"]), "rb") as f:
+            blob = f.read()
+        header = [doc["buffers"][0]["byteLength"] == len(blob), data[:3].decode(), data[-1:].decode()]
+    images, image_views = [], set()
+    for img in doc.get("images", []):
+        if "bufferView" in img:
+            bv = doc["bufferViews"][img["bufferView"]]
+            raw = blob[bv.get("byteOffset", 0):bv.get("byteOffset", 0) + bv["byteLength"]]
+            image_views.add(img["bufferView"])
+        else:
+            with open(os.path.join(base, img["uri"]), "rb") as f:
+                raw = f.read()
+        images.append(pixel_fingerprint(Image.open(_io.BytesIO(raw))))
+    packed = True
+    if glb:
+        offset = 0
+        for bv in doc.get("bufferViews", []):
+            packed = packed and bv.get("byteOffset", 0) == offset
+            offset += bv["byteLength"] + (-bv["byteLength"]) % 4
+        packed = packed and offset == len(blob)
+    orders = key_orders(doc)
+    # triangles as a set (OCCT builds order the triangles of some meshes differently)
+    index_accessors = {p["indices"] for m in doc.get("meshes", []) for p in m["primitives"] if "indices" in p}
+    accessors = [triangle_set(accessor_values(doc, blob, i)) if i in index_accessors else accessor_values(doc, blob, i)
+                 for i in range(len(doc.get("accessors", [])))]
+    # without what depends on the PNG encoder
+    for i, bv in enumerate(doc.get("bufferViews", [])):
+        if glb:
+            bv.pop("byteOffset", None)
+        if i in image_views:
+            bv.pop("byteLength", None)
+    if glb:
+        for b in doc.get("buffers", []):
+            b.pop("byteLength", None)
+    return {"json": doc, "images": images, "accessors": accessors, "header": header, "packed": packed,
+            "key_orders": orders}
+
+
+def export_summaries(shape, name, deflection=(1e-3, 0.1)):
+    out = []
+    for ext, binary in ((".gltf", False), (".glb", True)):
+        path = os.path.join(pbr_dir("py"), name + ext)
+        export_gltf(shape, path, Unit.MM, binary, *deflection)
+        out.append(gltf_file_summary(path))
+    return out
+
+
+def gltf_metal():
+    box = Box(10, 20, 30)
+    box.material = metals.aluminum()
+    return V(export_summaries(box, "metal"))
+
+
+def gltf_plastic():
+    part = Cylinder(5, 10) - Box(2, 2, 10)
+    part.label = "plastic part"
+    part.material = plastics.pla(color="orange")
+    return V(export_summaries(part, "plastic", (0.1, 0.5)))
+
+
+def gltf_glass():
+    part = Sphere(5)
+    part.material = bglass.soda_lime(opacity=0.3, thickness_mm=2.0, color="#ccffcc")
+    return V(export_summaries(part, "glass", (0.1, 0.5)))
+
+
+def gltf_wood():
+    box = Box(30, 20, 10)
+    box.material = bwood.oak(scale=(2.0, 2.0), rotation=30.0)
+    return V(export_summaries(box, "wood"))
+
+
+def gltf_textured():
+    # P textures (carbon fiber, _rough), a layer texture without UV normalization, brushed metal
+    out = []
+    for name, material in [("carbon", plastics.cfrp()), ("fdm", plastics.pla(color="red", process=proc.fdm())),
+                           ("brushed", metals.stainless(finish=fin.brushed((2.0, 2.0), 45.0))),
+                           ("rough", plastics.abs_(color="blue", process=proc.sls()))]:
+        box = Box(20, 10, 5)
+        box.material = material
+        out.append(export_summaries(box, name))
+    return V(out)
+
+
+def gltf_assembly():
+    look = wood.oak()
+    shared = FinishedMaterial(metals.aluminum().material, pbr=look)
+    a = Box(10, 10, 10)
+    a.label = "a"
+    a.material = metals.aluminum(finish=fin.brushed())
+    b = Pos(20, 0, 0) * Box(5, 5, 10)
+    b.label = "b"
+    b.material = plastics.pla(color="red")
+    c = Pos(40, 0, 0) * Box(8, 8, 8)
+    c.label = "c"
+    c.material = shared
+    d = Pos(60, 0, 0) * Box(6, 6, 6)
+    d.label = "d"
+    d.material = shared
+    e = Pos(80, 0, 0) * Box(5, 5, 5)
+    e.label = "e"
+    e.material = FinishedMaterial(plastics.pla().material, pbr=look)
+    f = Pos(0, 20, 0) * Box(4, 4, 4)
+    f.label = "f"
+    f.material = a.material
+    g = Pos(0, 40, 0) * Box(3, 3, 3)
+    g.label = "g"
+    asm = Compound(children=[a, b, c, d, e, f, g], label="asm")
+    return V(export_summaries(asm, "assembly"))
+
+
+def gltf_inherited():
+    a = Box(10, 10, 10)
+    a.label = "a"
+    b = Pos(20, 0, 0) * Box(5, 5, 5)
+    b.label = "b"
+    inner = Compound(children=[Pos(0, 20, 0) * Box(3, 3, 3)], label="inner")
+    asm = Compound(children=[a, b, inner], label="asm")
+    asm.material = plastics.pla(color="blue")
+    return V(export_summaries(asm, "inherited"))
+
+
+def gltf_extensions():
+    # every glTF extension of a look, texture maps of every kind, alpha modes
+    oak = wood.oak()
+    tex = os.path.join(str(oak.maps_dir))
+    rough = os.path.join(str(metal.steel_matte().maps_dir))
+    data = {"id": "x", "name": "everything", "source": "test",
+            "values": {"color": [0.8, 0.2, 0.1], "metalness": 0.3, "roughness": 0.6, "ior": 1.6, "transmission": 0.4,
+                       "thickness": 2.0, "attenuationColor": [0.9, 0.8, 0.7], "attenuationDistance": 5.0,
+                       "clearcoat": 0.7, "clearcoatRoughness": 0.2, "sheen": 0.5, "sheenColor": [0.1, 0.2, 0.3],
+                       "sheenRoughness": 0.4, "iridescence": 0.6, "iridescenceIOR": 1.3,
+                       "iridescenceThicknessRange": [100.0, 400.0], "anisotropy": 0.5, "anisotropyRotation": 0.7,
+                       "specularIntensity": 0.8, "specularColor": [1.0, 0.9, 0.8], "emissive": [0.1, 0.0, 0.0],
+                       "emissiveIntensity": 2.0, "dispersion": 0.3, "normalScale": [0.5, 0.5], "side": 2,
+                       "alphaTest": 0.25},
+            "textures": {"color": "color.png", "normal": "normal.png", "roughness": "roughness.png",
+                         "ao": "roughness.png", "emissive": "color.png", "transmission": "roughness.png",
+                         "clearcoat": "roughness.png", "clearcoatNormal": "normal.png", "sheenColor": "color.png",
+                         "specularColor": "color.png", "thickness": "roughness.png"},
+            "texture_repeat": [1.0, 1.0], "maps_dir": tex}
+    look = PbrProperties.from_dict(data)
+    blend = PbrProperties.from_dict({"id": "b", "name": "", "source": "test",
+                                     "values": {"color": [0.5, 0.5, 0.5], "transparent": True, "opacity": 0.5,
+                                                "dispersion": 0.1, "metalness": 0.0},
+                                     "textures": {"metalness": "roughness.png", "opacity": "roughness.png",
+                                                  "roughness": "roughness.png"},
+                                     "maps_dir": rough})
+    mask = PbrProperties.from_dict({"id": "m", "name": "masked", "source": "test",
+                                    "values": {"opacity": 0.8},
+                                    "textures": {"opacity": "roughness.png", "color": "color.png"},
+                                    "texture_rotation": 90.0, "normalize_uvs": False,
+                                    "maps_dir": tex})
+    parts = []
+    for i, p in enumerate([look, blend, mask]):
+        box = Pos(i * 20, 0, 0) * Box(10, 10, 10)
+        box.label = f"p{i}"
+        box.material = custom_metal_with(p)
+        parts.append(box)
+    return V(export_summaries(Compound(children=parts, label="ext"), "extensions"))
+
+
+def custom_metal_with(look):
+    return metals.custom_metal("Look", 1000.0, pbr=look)
+
+
+def gltf_inject_direct():
+    # inject_materials on a file of our own: fields pygltflib adds, coerces and drops
+    out = []
+    for name in ("direct.gltf", "direct.glb"):
+        box = Box(10, 10, 10)
+        path = os.path.join(pbr_dir("py"), name)
+        export_gltf(box, path, Unit.MM, name.endswith(".glb"))
+        inject_materials(path, {1: plastic.plastic(color="red"), 0: metal.copper(), 5: metal.gold()})
+        out.append(gltf_file_summary(path))
+    return V(out)
+
+
 CASES = {
     "pbr_pil_textures": pil_textures,
     "pbr_pil_resize": pil_resize,
@@ -489,4 +738,13 @@ CASES = {
     "pbr_material_variants": material_variants,
     "pbr_material_messages": material_messages,
     "pbr_material_tables": material_tables,
+    "pbr_gltf_metal": gltf_metal,
+    "pbr_gltf_plastic": gltf_plastic,
+    "pbr_gltf_glass": gltf_glass,
+    "pbr_gltf_wood": gltf_wood,
+    "pbr_gltf_textured": gltf_textured,
+    "pbr_gltf_assembly": gltf_assembly,
+    "pbr_gltf_inherited": gltf_inherited,
+    "pbr_gltf_extensions": gltf_extensions,
+    "pbr_gltf_inject_direct": gltf_inject_direct,
 }

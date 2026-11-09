@@ -198,8 +198,9 @@ std::string float_text(double x) {
     return pyfmt::repr(x);
 }
 
-void dump_value(const Json& v, std::optional<int> indent, int level, std::string& out) {
-    const std::string item_separator = indent ? "," : ", ";
+void dump_value(const Json& v, std::optional<int> indent, int level, std::string& out, bool compact) {
+    const std::string item_separator = indent || compact ? "," : ", ";
+    const char* const key_separator = compact ? ":" : ": ";
     switch (v.type()) {
         case Json::Type::NUL: out += "null"; return;
         case Json::Type::BOOL: out += v.as_bool() ? "true" : "false"; return;
@@ -220,7 +221,7 @@ void dump_value(const Json& v, std::optional<int> indent, int level, std::string
             }
             for (std::size_t i = 0; i < a.size(); ++i) {
                 if (i) out += item_separator + newline_indent;
-                dump_value(a[i], indent, level + 1, out);
+                dump_value(a[i], indent, level + 1, out, compact);
             }
             if (indent) out += "\n" + std::string(static_cast<std::size_t>(*indent * level), ' ');
             out += "]";
@@ -241,8 +242,8 @@ void dump_value(const Json& v, std::optional<int> indent, int level, std::string
             for (std::size_t i = 0; i < o.size(); ++i) {
                 if (i) out += item_separator + newline_indent;
                 out += quote_ascii(o[i].first);
-                out += ": ";
-                dump_value(o[i].second, indent, level + 1, out);
+                out += key_separator;
+                dump_value(o[i].second, indent, level + 1, out, compact);
             }
             if (indent) out += "\n" + std::string(static_cast<std::size_t>(*indent * level), ' ');
             out += "}";
@@ -256,7 +257,13 @@ void dump_value(const Json& v, std::optional<int> indent, int level, std::string
 std::string Json::dump(std::optional<int> indent) const {
     if (indent && *indent < 0) indent = 0;
     std::string out;
-    dump_value(*this, indent, 0, out);
+    dump_value(*this, indent, 0, out, false);
+    return out;
+}
+
+std::string Json::dump_compact() const {
+    std::string out;
+    dump_value(*this, std::nullopt, 0, out, true);
     return out;
 }
 
