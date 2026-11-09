@@ -127,6 +127,61 @@ def obj_attrs_part():
     )
 
 
+def location_values(loc):
+    return [loc.position, loc.orientation]
+
+
+def locations_values(locs):
+    return V([location_values(l) for l in locs])
+
+
+def obj_locations_mixed():
+    face = Box(1, 2, 3).faces().sort_by(Axis.X).last
+    return locations_values(
+        Locations((1, 2), Pos(3, 4) * Rot(0, 0, 30), Axis.Z, Plane.YZ, Vertex(1, 1, 1), face, [(5, 5), (6, 6)])
+    )
+
+
+def obj_locations_faces_shape():
+    box = Box(4, 4, 4)
+    return box + Locations(box.faces()) * Cylinder(0.5, 1)
+
+
+def obj_location_list_attrs():
+    grid = GridLocations(2, 3, 3, 2, align=(Align.MIN, Align.MAX))
+    hex_ = HexLocations(1, 3, 2, major_radius=True, align=Align.MIN)
+    polar = PolarLocations(3, 4, 10, 180, rotate=False, endpoint=True)
+    locs = Locations((1, 2), (3, 4))
+    return V(
+        {
+            "grid": [
+                grid.x_spacing,
+                grid.y_spacing,
+                grid.x_count,
+                grid.y_count,
+                align_values(grid.align),
+                grid.size,
+                grid.min,
+                grid.max,
+                len(grid.planes),
+                [location_values(l) for l in grid.local_locations],
+            ],
+            "hex": [
+                hex_.radius,
+                hex_.apothem,
+                hex_.diagonal,
+                hex_.x_count,
+                hex_.y_count,
+                hex_.major_radius,
+                align_values(hex_.align),
+                [location_values(l) for l in hex_.local_locations],
+            ],
+            "polar": [location_values(l) for l in polar.local_locations],
+            "locations": [location_values(l) for l in locs.local_locations],
+        }
+    )
+
+
 CASES = {
     # base classes for custom objects
     "obj_base_sketch": lambda: BaseSketchObject(
@@ -149,4 +204,17 @@ CASES = {
     "obj_hole_no_depth": lambda: Hole(1),
     "obj_counter_bore_no_depth": lambda: CounterBoreHole(1, 2, 1),
     "obj_counter_sink_no_depth": lambda: CounterSinkHole(1, 2),
+    # Locations
+    "obj_locations_faces": lambda: locations_values(Locations((Rot(10, 20, 30) * Box(1, 2, 3)).faces())),
+    "obj_locations_faces_explicit": lambda: locations_values(Locations(*(Pos(1, 0, 0) * Cylinder(1, 2)).faces())),
+    "obj_locations_vertices": lambda: locations_values(Locations((Pos(1, 2, 3) * Box(1, 2, 3)).vertices())),
+    "obj_locations_planes": lambda: locations_values(Locations([Plane.XY, Plane.XZ.offset(2), Plane.isometric])),
+    "obj_locations_axes": lambda: locations_values(Locations(Axis.X, Axis((1, 2, 3), (0, 1, 1)))),
+    "obj_locations_axis_list": lambda: locations_values(Locations([Axis.Y, Axis.Z])),
+    "obj_locations_mixed": obj_locations_mixed,
+    "obj_locations_faces_shape": obj_locations_faces_shape,
+    "obj_locations_mixed_shape": lambda: Sketch()
+    + Locations((0, 0), Pos(5, 0) * Rot(0, 0, 45), Plane.XY.offset(1), Axis((-5, 0, 0), (0, 0, 1)))
+    * Rectangle(2, 1),
+    "obj_location_list_attrs": obj_location_list_attrs,
 }

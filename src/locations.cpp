@@ -28,14 +28,25 @@ Locations::Locations(const std::vector<Face>& faces) {
     for (const auto& f : faces) push_back(Location(Plane(f)));
 }
 
-GridLocations::GridLocations(double xs, double ys, int xc, int yc, Align2 align)
-    : x_spacing(xs), y_spacing(ys), x_count(xc), y_count(yc) {
+Locations::Locations(const std::vector<Axis>& axes) {
+    for (const auto& a : axes) push_back(a.location());
+}
+
+void Locations::append(const Vector& point) { push_back(Location(point)); }
+void Locations::append(const Location& location) { push_back(location); }
+void Locations::append(const Vertex& vertex) { push_back(Location(Vector(vertex))); }
+void Locations::append(const Face& face) { push_back(Location(Plane(face))); }
+void Locations::append(const Plane& plane) { push_back(Location(plane)); }
+void Locations::append(const Axis& axis) { push_back(axis.location()); }
+
+GridLocations::GridLocations(double xs, double ys, int xc, int yc, Align2 align_in)
+    : x_spacing(xs), y_spacing(ys), x_count(xc), y_count(yc), align(align_in) {
     if (xc < 1 || yc < 1) {
         throw std::invalid_argument("At least 1 elements required, requested " + std::to_string(xc) + ", " +
                                     std::to_string(yc));
     }
     size = Vector(xs * (xc - 1), ys * (yc - 1));
-    const Vector offset = to_align_offset(Vector(0, 0), size, Align3(align, Align::NONE));
+    const Vector offset = to_align_offset(Vector(0, 0), size, Align3(align_in, Align::NONE));
     min = offset;
     max = min + size;
     for (int i = 0; i < xc; ++i) {
@@ -53,9 +64,9 @@ PolarLocations::PolarLocations(double radius, int count, double start_angle, dou
     }
 }
 
-HexLocations::HexLocations(double r, int xc, int yc, bool major_radius, Align2 align)
-    : radius(r), x_count(xc), y_count(yc) {
-    if (major_radius) {
+HexLocations::HexLocations(double r, int xc, int yc, bool major, Align2 align_in)
+    : radius(r), x_count(xc), y_count(yc), major_radius(major), align(align_in) {
+    if (major) {
         diagonal = 2 * r;
         apothem = r * std::cos(PI / 6);
     } else {
@@ -81,7 +92,7 @@ HexLocations::HexLocations(double r, int xc, int yc, bool major_radius, Align2 a
     }
     const Vector size(xmax - xmin, ymax - ymin);
     const Vector min_corner(xmin, ymin);
-    const Vector offset = to_align_offset(Vector(0, 0), size, Align3(align, Align::NONE));
+    const Vector offset = to_align_offset(Vector(0, 0), size, Align3(align_in, Align::NONE));
     for (const auto& p : points) push_back(Location(p + offset - min_corner));
 }
 

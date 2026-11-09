@@ -36,6 +36,14 @@ public:
                          align) {}
 };
 
+V location_values(const Location& l) { return V::list({l.position(), l.orientation()}); }
+
+V locations_values(const std::vector<Location>& locs) {
+    std::vector<V> out;
+    for (const auto& l : locs) out.push_back(location_values(l));
+    return V::list(out);
+}
+
 }  // namespace
 
 COMPARE_CASES {
@@ -131,4 +139,53 @@ COMPARE_CASES {
     compare::add("obj_hole_no_depth", [] { return Hole(1); });
     compare::add("obj_counter_bore_no_depth", [] { return CounterBoreHole(1, 2, 1); });
     compare::add("obj_counter_sink_no_depth", [] { return CounterSinkHole(1, 2); });
+
+    // ---- Locations
+    compare::add_value("obj_locations_faces", [] {
+        return locations_values(Locations((Rot(10, 20, 30) * Box(1, 2, 3)).faces()));
+    });
+    compare::add_value("obj_locations_faces_explicit", [] {
+        return locations_values(Locations((Pos(1, 0, 0) * Cylinder(1, 2)).faces()));
+    });
+    compare::add_value("obj_locations_vertices", [] {
+        return locations_values(Locations((Pos(1, 2, 3) * Box(1, 2, 3)).vertices()));
+    });
+    compare::add_value("obj_locations_planes", [] {
+        return locations_values(Locations(std::vector<Plane>{Plane::XY, Plane::XZ.offset(2), Plane::isometric}));
+    });
+    compare::add_value("obj_locations_axes", [] {
+        return locations_values(Locations(Axis::X, Axis(Vector(1, 2, 3), Vector(0, 1, 1))));
+    });
+    compare::add_value("obj_locations_axis_list", [] {
+        return locations_values(Locations(std::vector<Axis>{Axis::Y, Axis::Z}));
+    });
+    compare::add_value("obj_locations_mixed", [] {
+        const auto face = Box(1, 2, 3).faces().sort_by(Axis::X).last();
+        return locations_values(Locations(Vector(1, 2), Pos(3, 4) * Rot(0, 0, 30), Axis::Z, Plane::YZ,
+                                          Vertex(1, 1, 1), face, std::vector<Vector>{{5, 5}, {6, 6}}));
+    });
+    compare::add("obj_locations_faces_shape", [] {
+        const Part box = Box(4, 4, 4);
+        return box + Locations(box.faces()) * Cylinder(0.5, 1);
+    });
+    compare::add("obj_locations_mixed_shape", [] {
+        return Sketch() + Locations(Vector(0, 0), Pos(5, 0) * Rot(0, 0, 45), Plane::XY.offset(1),
+                                    Axis(Vector(-5, 0, 0), Vector(0, 0, 1))) *
+                              Rectangle(2, 1);
+    });
+    compare::add_value("obj_location_list_attrs", [] {
+        const GridLocations grid(2, 3, 3, 2, Align2(Align::MIN, Align::MAX));
+        const HexLocations hex(1, 3, 2, true, Align::MIN);
+        const PolarLocations polar(3, 4, 10, 180, false, true);
+        const Locations locs(Vector(1, 2), Vector(3, 4));
+        return V::obj({
+            {"grid", V::list({grid.x_spacing, grid.y_spacing, grid.x_count, grid.y_count, align_values(grid.align),
+                              grid.size, grid.min, grid.max, static_cast<double>(grid.planes.size()),
+                              locations_values(grid.local_locations())})},
+            {"hex", V::list({hex.radius, hex.apothem, hex.diagonal, hex.x_count, hex.y_count, hex.major_radius,
+                             align_values(hex.align), locations_values(hex.local_locations())})},
+            {"polar", locations_values(polar.local_locations())},
+            {"locations", locations_values(locs.local_locations())},
+        });
+    });
 }
