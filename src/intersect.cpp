@@ -531,6 +531,23 @@ ShapeList<Shape> Shape::intersect(const std::vector<IntersectArg>& to_intersect,
 
 ShapeList<Shape> Shape::touch(const Shape& other, double tolerance) const { return touch_any(*this, other, tolerance); }
 
+ShapeList<Shape> Mixin2D::touch(const Shape& other, double tolerance,
+                                const std::optional<ShapeList<Shape>>& found_faces) const {
+    return touch(other, tolerance, found_faces, std::nullopt);
+}
+
+ShapeList<Shape> Mixin2D::touch(const Shape& other, double tolerance, const std::optional<ShapeList<Shape>>& found_faces,
+                                const std::optional<ShapeList<Shape>>& found_edges) const {
+    if (is_null()) return {};
+    return touch_2d(*this, other, tolerance, found_faces ? &*found_faces : nullptr,
+                    found_edges ? &*found_edges : nullptr);
+}
+
+ShapeList<Shape> Solid::touch(const Shape& other, double tolerance, const ShapeList<Shape>& found_solids) const {
+    if (is_null()) return {};
+    return touch_solid(*this, other, tolerance, &found_solids);
+}
+
 // ---- geometry.intersect(shape) is shape.intersect(geometry)
 
 ShapeList<Shape> Vector::intersect(const Shape& shape) const { return shape.intersect(IntersectArg(*this)); }

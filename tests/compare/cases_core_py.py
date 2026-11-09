@@ -99,6 +99,26 @@ def touch():
               describe(a.solids()[0].touch(Vertex(1, 1, 1)))])
 
 
+def touch_found():
+    a = Box(2, 2, 2).solids()[0]
+    overlapping = (Pos(1, 0, 0) * Box(2, 2, 2)).solids()[0]
+    adjacent = (Pos(2, 0, 0) * Box(2, 2, 2)).solids()[0]
+    found = a.intersect(overlapping)
+    f1 = Face.make_rect(2, 2)
+    f2 = Face.make_rect(2, 2, Plane((2, 2, 0)))
+    f3 = Face.make_rect(2, 2, Plane((1, 0, 0)))
+    found_faces = f1.intersect(f3)
+    f1_edges = ShapeList(f1.edges())
+    return V([describe(a.touch(overlapping)), describe(a.touch(overlapping, found_solids=found)),
+              describe(a.touch(overlapping, found_solids=ShapeList())),
+              describe(a.touch(adjacent, found_solids=ShapeList())),
+              describe(f1.touch(f3)), describe(f1.touch(f3, found_faces=ShapeList())),
+              describe(f1.touch(f3, found_faces=found_faces)),
+              describe(f1.touch(f2, found_faces=ShapeList(), found_edges=ShapeList())),
+              describe(f1.touch(f3, found_faces=ShapeList(), found_edges=f1_edges)),
+              describe(f1.touch(f3, found_edges=f1_edges))])
+
+
 def face_face_touched():
     f1 = Face.make_rect(2, 2)
     f2 = Face.make_rect(2, 2, Plane((2, 2, 0)))
@@ -1117,6 +1137,7 @@ CASES = {
     "core_intersect_tolerance": intersect_tolerance,
     "core_intersect_touched": intersect_touched,
     "core_touch": touch,
+    "core_touch_found": touch_found,
     "core_intersect_face_face_touched": face_face_touched,
     "core_intersect_compound_children": compound_children,
     # 2: geometry

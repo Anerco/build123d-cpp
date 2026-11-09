@@ -157,6 +157,25 @@ COMPARE_CASES {
                         describe(f1.touch(f2)), describe(a.touch(Edge::make_line({1, -2, 0}, {1, 2, 0}))),
                         describe(a.solids()[0].touch(Vertex(1, 1, 1)))});
     });
+    add_value("core_touch_found", [] {
+        const Solid a = Box(2, 2, 2).solids()[0];
+        const Solid overlapping = (Pos(1, 0, 0) * Box(2, 2, 2)).solids()[0];
+        const Solid adjacent = (Pos(2, 0, 0) * Box(2, 2, 2)).solids()[0];
+        const ShapeList<Shape> found = a.intersect(overlapping);
+        const Face f1 = Face::make_rect(2, 2);
+        const Face f2 = Face::make_rect(2, 2, Plane(Vector(2, 2, 0)));
+        const Face f3 = Face::make_rect(2, 2, Plane(Vector(1, 0, 0)));
+        const ShapeList<Shape> found_faces = f1.intersect(f3);
+        ShapeList<Shape> f1_edges;
+        for (const auto& e : f1.edges()) f1_edges.push_back(e);
+        const ShapeList<Shape> none;
+        return V::list({describe(a.touch(overlapping)), describe(a.touch(overlapping, 1e-6, found)),
+                        describe(a.touch(overlapping, 1e-6, none)), describe(a.touch(adjacent, 1e-6, none)),
+                        describe(f1.touch(f3)), describe(f1.touch(f3, 1e-6, none)),
+                        describe(f1.touch(f3, 1e-6, found_faces)), describe(f1.touch(f2, 1e-6, none, none)),
+                        describe(f1.touch(f3, 1e-6, none, f1_edges)),
+                        describe(f1.touch(f3, 1e-6, std::nullopt, f1_edges))});
+    });
     add_value("core_intersect_face_face_touched", [] {
         const Face f1 = Face::make_rect(2, 2);
         const Face f2 = Face::make_rect(2, 2, Plane(Vector(2, 2, 0)));

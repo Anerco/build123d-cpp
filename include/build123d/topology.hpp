@@ -961,6 +961,14 @@ public:
     /// side(s), each a Face, a Shell or several Faces (nothing for None); Keep::BOTH gives
     /// `auto [inside, outside] = face.split_by_perimeter(perimeter, Keep::BOTH)`.
     PerimeterSplit split_by_perimeter(const Mixin1D& perimeter, Keep keep = Keep::INSIDE) const;
+
+    using Shape::touch;
+    /// touch, leaving out contacts on the faces and edges of an intersection found beforehand
+    /// (build123d's found_faces and found_edges). Without found_faces, both are computed as by
+    /// touch(other, tolerance); without found_edges, there are none.
+    ShapeList<Shape> touch(const Shape& other, double tolerance, const std::optional<ShapeList<Shape>>& found_faces) const;
+    ShapeList<Shape> touch(const Shape& other, double tolerance, const std::optional<ShapeList<Shape>>& found_faces,
+                           const std::optional<ShapeList<Shape>>& found_edges) const;
 };
 
 class Face : public Mixin2D {
@@ -1195,6 +1203,11 @@ public:
     Solid() = default;
     explicit Solid(const TopoDS_Shape& obj);
     explicit Solid(const Shell& shell);
+
+    using Shape::touch;
+    /// touch, leaving out contacts on the faces of the solids of an intersection found
+    /// beforehand (build123d's found_solids) instead of computing them.
+    ShapeList<Shape> touch(const Shape& other, double tolerance, const ShapeList<Shape>& found_solids) const;
 
     static Solid make_box(double length, double width, double height,
                           const Plane& plane = Plane::XY);
