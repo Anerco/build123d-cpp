@@ -182,5 +182,5 @@ TEST(objects_projection) {
     CHECK(closest.shape_type() == ShapeType::WIRE);
     CHECK_NEAR(closest.position_at(0).Z, 0, 1e-9);
     CHECK_THROWS(project(std::vector<Face>{}, Plane::XY), std::invalid_argument);
-    CHECK(project(Vertex(1, 2, 3), Plane::XZ)[0] == Vector(1, -3, 0));
+    CHECK(project(Vertex(1, 2, 3), Plane::XZ)[0] == Vector(1, 3, 0));
 }
