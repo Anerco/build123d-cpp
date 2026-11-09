@@ -50,7 +50,15 @@ endif()
 message(STATUS "lib3mf: ${LIB3MF_LIBRARY}")
 
 file(GLOB BUILD123D_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
-add_library(build123d ${BUILD123D_SOURCES})
+# lodepng (zlib license, third_party/lodepng): PNG reading and writing for PBR textures,
+# compiled into the library privately.
+set(BUILD123D_LODEPNG ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lodepng/lodepng.cpp)
+if(MSVC)
+  set_source_files_properties(${BUILD123D_LODEPNG} PROPERTIES COMPILE_OPTIONS "/w")
+else()
+  set_source_files_properties(${BUILD123D_LODEPNG} PROPERTIES COMPILE_OPTIONS "-w")
+endif()
+add_library(build123d ${BUILD123D_SOURCES} ${BUILD123D_LODEPNG})
 add_library(build123d::build123d ALIAS build123d)
 target_compile_features(build123d PUBLIC cxx_std_17)
 target_include_directories(build123d
@@ -73,6 +81,7 @@ else()
 endif()
 
 target_include_directories(build123d SYSTEM PRIVATE ${LIB3MF_INCLUDE_DIR})
+target_include_directories(build123d SYSTEM PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lodepng)
 target_link_libraries(build123d PRIVATE ${LIB3MF_LIBRARY})
 if(MSVC)
   target_compile_options(build123d PRIVATE /W3 /bigobj /permissive-)
@@ -136,4 +145,14 @@ install(DIRECTORY data/fonts DESTINATION ${CMAKE_INSTALL_DATADIR}/build123d)
 target_compile_definitions(build123d PRIVATE
   BUILD123D_INSTALL_FONT_DIR="${CMAKE_INSTALL_FULL_DATADIR}/build123d/fonts"
   BUILD123D_SOURCE_FONT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data/fonts")
+# The textures of the PBR material presets (threejs_materials' textures, ~87 MB) aren't part
+# of the sources: scripts/fetch-textures.sh downloads them into data/textures (git-ignored). The
+# library looks for them at run time in $BUILD123D_TEXTURE_DIR, ../share/build123d/textures next
+# to itself, the install prefix and this source tree.
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/data/textures)
+  install(DIRECTORY data/textures DESTINATION ${CMAKE_INSTALL_DATADIR}/build123d)
+endif()
+target_compile_definitions(build123d PRIVATE
+  BUILD123D_INSTALL_TEXTURE_DIR="${CMAKE_INSTALL_FULL_DATADIR}/build123d/textures"
+  BUILD123D_SOURCE_TEXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data/textures")
 target_link_libraries(build123d PRIVATE ${CMAKE_DL_LIBS})

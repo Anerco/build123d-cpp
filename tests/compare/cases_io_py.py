@@ -1179,3 +1179,4 @@ def material_pbr_colors():
 
 
 CASES["io_material_pbr_colors"] = material_pbr_colors
+CASES["io_material_pbr_table"] = material_pbr_colors

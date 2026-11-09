@@ -44,3 +44,16 @@ Toolchain ready in $prefix. Build with:
   $mamba run -p $prefix cmake -S $root -B $root/build -G Ninja -DCMAKE_PREFIX_PATH=$prefix
   $mamba run -p $prefix cmake --build $root/build
 EOF
+
+# The textures of the PBR material presets (90 MB, downloaded separately). FETCH_TEXTURES=yes or
+# no answers without asking.
+if [ ! -f "$root/data/textures/_brush/normal.png" ]; then
+    answer="${FETCH_TEXTURES:-}"
+    if [ -z "$answer" ] && [ -t 0 ]; then
+        read -r -p "Download the PBR material textures (90 MB) into data/textures now? [y/N] " answer || answer=""
+    fi
+    case "$answer" in
+        [yY]*) "$root/scripts/fetch-textures.sh" ;;
+        *) echo "Textured materials (wood, brushed metal, ...) need their textures: run scripts/fetch-textures.sh." ;;
+    esac
+fi

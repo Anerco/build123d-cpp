@@ -1151,10 +1151,25 @@ COMPARE_CASES {
 }
 
 // ---- the color Python's material setter gives a shape (bd_materials PBR look)
+#include "../../src/io_internal.hpp"
 #include "../../src/pbr_colors.hpp"
 
 COMPARE_CASES {
+    // the look's color, computed (bd_materials + threejs_materials port)
     compare::add_value("io_material_pbr_colors", [] {
+        std::vector<std::string> grades;
+        for (const std::string& name : material_names()) grades.push_back(resolve_material(name).material.name);
+        std::sort(grades.begin(), grades.end());
+        grades.erase(std::unique(grades.begin(), grades.end()), grades.end());
+        std::vector<V> out;
+        for (const std::string& grade : grades) {
+            const auto c = detail::python_color_tuple(resolve_material(grade).pbr().interpolated_color());
+            out.push_back(V::list({grade, V::list({c[0], c[1], c[2], c[3]})}));
+        }
+        return V::list(out);
+    });
+    // the table the material setter reads (src/pbr_colors.inc)
+    compare::add_value("io_material_pbr_table", [] {
         std::vector<V> out;
         for (const std::string& grade : detail::catalog_pbr_grades()) {
             const auto c = *detail::catalog_pbr_color(grade);

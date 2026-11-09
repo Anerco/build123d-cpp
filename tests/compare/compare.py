@@ -82,6 +82,12 @@ def diff(cpp, py):
 def main():
     exe = sys.argv[1]
     only = sys.argv[2:]
+    # the C++ side reads the PBR textures of this environment's threejs_materials, unless told
+    if not os.environ.get("BUILD123D_TEXTURE_DIR"):
+        import threejs_materials
+
+        assets = os.path.join(os.path.dirname(threejs_materials.__file__), "pbr_properties", "_assets")
+        os.environ["BUILD123D_TEXTURE_DIR"] = assets
     cpp = run([exe, *only])
     py = run([sys.executable, os.path.join(HERE, "cases_py.py"), *only])
     names = list(py.keys()) + [n for n in cpp if n not in py]
