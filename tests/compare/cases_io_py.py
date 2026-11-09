@@ -769,3 +769,344 @@ CASES.update(
         "io_dxf_bad_version": dxf_bad_version,
     }
 )
+
+
+# ---- SVG import (see cases_io.cpp)
+def svg_shapes(shapes):
+    out = []
+    for s in shapes:
+        bb = s.bounding_box()
+        extra = s.normal_at() if isinstance(s, Face) else [s.start_point(), s.end_point()]
+        out.append(
+            {
+                "type": type(s).__name__,
+                "label": s.label,
+                "color": color_value(s.color),
+                "area": s.area,
+                "length": sum(e.length for e in s.edges()),
+                "edges": [e.geom_type.name for e in s.edges()],
+                "bbox": [bb.min, bb.max],
+                "position": s.location.position,
+                "normal_or_ends": extra,
+            }
+        )
+    return V(out)
+
+
+def svg_case(name, **kwargs):
+    return lambda: svg_shapes(import_svg(fixture(name + ".svg"), **kwargs))
+
+
+def svg_import_stream():
+    with open(fixture("svg_inkscape.svg")) as f:
+        return svg_shapes(import_svg(f, label_by="tag"))
+
+
+for _n in ["svg_basic", "svg_inkscape", "svg_holes", "svg_edge"]:
+    CASES[f"io_{_n}_default"] = svg_case(_n)
+    CASES[f"io_{_n}_label_noalign"] = svg_case(_n, align=None, label_by="inkscape:label")
+    CASES[f"io_{_n}_noflip_center"] = svg_case(_n, flip_y=False, align=Align.CENTER, ignore_visibility=True)
+CASES["io_svg_import_align_pair"] = lambda: svg_shapes(
+    import_svg(fixture("svg_basic.svg"), align=(Align.MAX, Align.CENTER), label_by="class")
+)
+CASES["io_svg_import_stream"] = svg_import_stream
+CASES["io_svg_import_missing"] = lambda: svg_shapes(import_svg(cpp_file("missing.svg")))
+CASES["io_svg_export_roundtrip"] = lambda: svg_shapes(import_svg(fixture("svg_export.svg"), label_by="id"))
+CASES["io_svg_export_roundtrip_layers"] = lambda: svg_shapes(
+    import_svg(fixture("svg_export.svg"), flip_y=False, label_by="stroke-dasharray")
+)
+
+
+def svg_buildline(name, *args):
+    return lambda: V(list(import_svg_as_buildline_code(fixture(name + ".svg"), *args)))
+
+
+for _n in ["svg_basic", "svg_inkscape", "svg_holes", "svg_edge", "svg_export"]:
+    CASES[f"io_svg_buildline_{_n}"] = svg_buildline(_n)
+CASES["io_svg_buildline_precision"] = svg_buildline("svg_basic", 3)
+
+
+# ---- DXF import (see cases_io.cpp)
+def dxf_type_name(s):
+    for cls in (Vertex, Edge, Wire, Face, Shell, Solid):
+        if isinstance(s, cls):
+            return cls.__name__
+    return "Compound"
+
+
+def dxf_import_summary(shapes):
+    out = []
+    for s in shapes:
+        edges = s.edges()
+        listed = not isinstance(s, Compound) or len(edges) <= 4
+        bb = s.bounding_box()
+        out.append(
+            {
+                "type": dxf_type_name(s),
+                "area": s.area,
+                "length": sum(e.length for e in edges),
+                "edge_count": len(edges),
+                "edges": [[e.geom_type.name, e.start_point(), e.end_point()] for e in edges] if listed else [],
+                "faces": len(s.faces()),
+                "vertices": len(s.vertices()),
+                "bbox": [bb.min, bb.max],
+            }
+        )
+    return V(out)
+
+
+def import_dxf_stream(path):
+    with open(path, "rb") as f:
+        return import_dxf(f)
+
+
+def dxf_crlf():
+    path = cpp_file("crlf.dxf")
+    return V([dxf_import_summary(import_dxf(path)).data, dxf_import_summary(import_dxf_stream(path)).data])
+
+
+def dxf_plain_mtext():
+    from ezdxf.tools.text import fast_plain_mtext
+
+    texts = ["Plain {\\C1;red} 50%%d", "x\\S1^2;y", "a\\Pb\\Nc\\Ld\\le", "\\\\back\\{\\}", "%%c%%p%%d%%%%%%x",
+             "unterminated \\fArial", "^Jcaret^I^", "tail\\", "{\\H2.5x;\\fArial|b1;Bold}", "100%", "%%", "%%%",
+             "\\A1;aligned", "\\S1#2;", "\\S;empty", "\\;semi", "\u00e9\u20ac\u00fc^\u00e9", "\\Sab", "%%C%%D"]
+    return V([fast_plain_mtext(t) for t in texts])
+
+
+for _n in ["dxf_entities", "dxf_hatch", "dxf_r12", "dxf_binary", "dxf_cp1252", "dxf_3dface", "dxf_polyline3d"]:
+    CASES[f"io_import_{_n}"] = (lambda n: lambda: dxf_import_summary(import_dxf(fixture(n + ".dxf"))))(_n)
+for _n in ["dxf_entities", "dxf_cp1252", "dxf_binary"]:
+    CASES[f"io_import_{_n}_stream"] = (lambda n: lambda: dxf_import_summary(import_dxf_stream(fixture(n + ".dxf"))))(_n)
+CASES["io_dxf_crlf"] = dxf_crlf
+CASES["io_dxf_import_exported"] = lambda: dxf_import_summary(import_dxf(cpp_file("export_import.dxf")))
+CASES["io_dxf_import_exported_r12_binary"] = lambda: dxf_import_summary(import_dxf(cpp_file("export_import_r12.dxf")))
+CASES["io_dxf_import_missing"] = lambda: dxf_import_summary(import_dxf(cpp_file("missing.dxf")))
+CASES["io_dxf_import_not_dxf"] = lambda: dxf_import_summary(import_dxf(fixture("svg_basic.svg")))
+CASES["io_dxf_import_no_eof"] = lambda: dxf_import_summary(import_dxf(cpp_file("no_eof.dxf")))
+CASES["io_dxf_import_minimal"] = lambda: dxf_import_summary(import_dxf(cpp_file("minimal.dxf")))
+CASES["io_dxf_plain_mtext"] = dxf_plain_mtext
+
+
+# ---- Mesher (see cases_io.cpp)
+USER_UUID = "12345678-1234-5678-1234-567812345678"
+
+
+def mesh_properties(m):
+    return [
+        {"name": p["name"], "part_number": p["part_number"], "type": p["type"],
+         "uuid": p["uuid"] if p["uuid"] == USER_UUID else len(p["uuid"])}
+        for p in m.get_mesh_properties()
+    ]
+
+
+def mesher_state(m):
+    meta = []
+    try:
+        meta = [[d["name_space"], d["name"], d["type"], d["value"]] for d in m.get_meta_data()]
+    except Exception:  # no metadata group
+        meta = []
+    return {
+        "unit": m.model_unit.name,
+        "mesh_count": m.mesh_count,
+        "triangle_counts": m.triangle_counts,
+        "vertex_counts": m.vertex_counts,
+        "properties": mesh_properties(m),
+        "meta_data": meta,
+    }
+
+
+def mesh_shapes(shapes):
+    out = []
+    for s in shapes:
+        bb = s.bounding_box()
+        out.append(
+            {
+                "type": dxf_type_name(s),
+                "label": s.label,
+                "color": color_value(s.color),
+                "volume": s.volume,
+                "area": s.area,
+                "faces": len(s.faces()),
+                "shells": len(s.shells()),
+                "bbox": [bb.min, bb.max],
+            }
+        )
+    return out
+
+
+def sample_mesher(unit=Unit.MM):
+    import uuid
+
+    m = Mesher(unit)
+    box = Box(2, 3, 4)
+    box.label = "box"
+    box.color = Color("red")
+    m.add_shape(box, 0.001, 0.1, MeshType.MODEL, "P-1", uuid.UUID(USER_UUID))
+    m.add_shape(Pos(5, 0, 0) * Sphere(1), 0.5, 0.5, MeshType.SUPPORT)
+    tube = Pos(0, 6, 0) * (Cylinder(2, 3) - Cylinder(1, 3))
+    tube.color = Color(0.1, 0.2, 0.3, 0.4)
+    m.add_shape(tube, 0.05, 0.2, MeshType.SOLIDSUPPORT, "T-2")
+    m.add_meta_data("build123d", "note", 'hello <&> "world"', "string", True)
+    m.add_meta_data("other", "count", "3", "xs:integer", False)
+    return m
+
+
+def threemf_structure(data):
+    """The content of a 3MF model: units, metadata, resources and build items, with lib3mf's
+    random UUIDs blanked and the triangles sorted (OCCT versions order them differently)."""
+    import xml.etree.ElementTree as ET
+    import zipfile
+
+    z = zipfile.ZipFile(io.BytesIO(data))
+    root = ET.fromstring(z.read("3D/3dmodel.model"))
+    uuid_key = "{http://schemas.microsoft.com/3dmanufacturing/production/2015/06}UUID"
+
+    def attrs(e):
+        return sorted((k, "<uuid>" if k == uuid_key and v != USER_UUID else v) for k, v in e.attrib.items())
+
+    def element(e):
+        tag = e.tag.split("}")[-1]
+        if tag == "triangles":
+            return [tag, sorted(attrs(t) for t in e)]
+        return [tag, attrs(e), (e.text or "").strip(), [element(c) for c in e]]
+
+    return [attrs(root), [element(c) for c in root], sorted(z.namelist())]
+
+
+def stl_structure(data):
+    import struct
+
+    count = struct.unpack_from("<I", data, 80)[0]
+    triangles = [struct.unpack_from("<12f", data, 84 + 50 * i) for i in range(count)]
+    return [data[:80], len(data), sorted(triangles)]
+
+
+def mesh_file_diff(name, python_data):
+    cpp = read_bytes(cpp_file(name))
+    structure = threemf_structure if name.endswith(".3mf") else stl_structure
+    a, b = structure(cpp), structure(python_data)
+    if a == b:
+        return [name, "same"]
+    return [name, "different: " + repr(a)[:300] + " != " + repr(b)[:300]]
+
+
+def mesher_state_case():
+    m = sample_mesher()
+    v = m.get_meta_data_by_key("build123d", "note")
+    return V([mesher_state(m), [v["type"], v["value"]]])
+
+
+def mesher_file(ext):
+    def case():
+        path = py_file("sample." + ext)
+        sample_mesher().write(path)
+        return V(mesh_file_diff("sample." + ext, read_bytes(path)))
+
+    return case
+
+
+def mesher_stream():
+    m = sample_mesher(Unit.IN)
+    out = []
+    for ext in ["3mf", "stl"]:
+        stream = io.BytesIO()
+        m.write_stream(stream, ext)
+        out.append(mesh_file_diff("stream." + ext, stream.getvalue()))
+    return V(out)
+
+
+def mesher_read(path):
+    reader = Mesher()
+    shapes = reader.read(path)
+    return V([mesh_shapes(shapes), mesher_state(reader)])
+
+
+def mesher_read_stl():
+    reader, open_reader = Mesher(), Mesher()
+    return V([mesh_shapes(reader.read(fixture("py_mesher.stl"))), reader.model_unit.name,
+              mesh_shapes(open_reader.read(fixture("open_pyramid.stl")))])
+
+
+def mesher_assemblies():
+    a = Box(1, 1, 1)
+    a.label = "a"
+    b = Pos(3, 0, 0) * Sphere(1)
+    b.color = Color("blue")
+    assembly = Compound(children=[a, b], label="asm")
+    assembly.color = Color("green")
+    labelled = Pos(0, 5, 0) * Box(1, 2, 3) + Pos(4, 5, 0) * Box(1, 1, 1)
+    labelled.label = "labelled"
+    plain = Pos(0, -5, 0) * Box(1, 1, 1) + Pos(3, -5, 0) * Cylinder(1, 1)
+    m = Mesher()
+    m.add_shape([assembly, labelled, plain], 0.01, 0.2)
+    path = py_file("assemblies.3mf")
+    m.write(path)
+    return V([mesher_state(m), mesh_file_diff("assemblies.3mf", read_bytes(path)),
+              mesh_shapes(Mesher().read(path))])
+
+
+def mesher_degenerate():
+    m = Mesher()
+    m.add_shape(Edge.make_line((0, 0), (1, 1)))
+    m.add_shape(Box(1, 1, 1))
+    return V(mesher_state(m))
+
+
+def mesher_open_face():
+    m = Mesher()
+    m.add_shape(Face.make_rect(1, 1))
+    return V(mesher_state(m))
+
+
+def mesher_other_type():
+    m = Mesher()
+    m.add_shape(Box(1, 1, 1), 0.001, 0.1, MeshType.OTHER)
+    return V(mesher_state(m))
+
+
+def mesher_bad_unit():
+    Mesher(Unit.KG)
+    return V("created")
+
+
+def mesher_bad_extension():
+    sample_mesher().write(py_file("sample.obj"))
+    return V("written")
+
+
+def mesher_bad_read_extension():
+    Mesher().read(fixture("py_mesher.3MF"))
+    return V("read")
+
+
+def mesher_bad_stream_type():
+    sample_mesher().write_stream(io.BytesIO(), "obj")
+    return V("written")
+
+
+def mesher_read_missing():
+    Mesher().read(cpp_file("missing.3mf"))
+    return V("read")
+
+
+CASES.update(
+    {
+        "io_mesher_state": mesher_state_case,
+        "io_mesher_3mf_file": mesher_file("3mf"),
+        "io_mesher_stl_file": mesher_file("stl"),
+        "io_mesher_stream": mesher_stream,
+        "io_mesher_read_cpp": lambda: mesher_read(cpp_file("read.3mf")),
+        "io_mesher_read_py": lambda: mesher_read(fixture("py_mesher.3mf")),
+        "io_mesher_read_stl": mesher_read_stl,
+        "io_mesher_assemblies": mesher_assemblies,
+        "io_mesher_degenerate": mesher_degenerate,
+        "io_mesher_open_face": mesher_open_face,
+        "io_mesher_other_type": mesher_other_type,
+        "io_mesher_bad_unit": mesher_bad_unit,
+        "io_mesher_bad_extension": mesher_bad_extension,
+        "io_mesher_bad_read_extension": mesher_bad_read_extension,
+        "io_mesher_bad_stream_type": mesher_bad_stream_type,
+        "io_mesher_read_missing": mesher_read_missing,
+    }
+)

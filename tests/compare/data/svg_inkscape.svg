@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- An Inkscape-like drawing: mm, viewBox, layers, transforms, defs/use, CSS, hidden items -->
+<svg
+   width="120mm"
+   height="80mm"
+   viewBox="0 0 120 80"
+   version="1.1"
+   id="svg1"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns:xlink="http://www.w3.org/1999/xlink"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview id="namedview1" pagecolor="#ffffff" inkscape:document-units="mm"/>
+  <defs id="defs1">
+    <style type="text/css">
+      /* classes for some shapes */
+      .blue { fill: #0000ff; stroke: none }
+      .thick, .outline { stroke: #ff00ff; stroke-width: 2 }
+      rect.special { fill: yellow }
+      // a line comment
+      #named { fill: lime }
+    </style>
+    <path id="star" d="M 0,-5 L 1.5,-1.5 L 5,-1 L 2.5,1.5 L 3,5 L 0,3 L -3,5 L -2.5,1.5 L -5,-1 L -1.5,-1.5 Z"/>
+    <rect id="hiddenrect" width="5" height="5"/>
+  </defs>
+  <metadata id="metadata1"><title>meta</title></metadata>
+  <g inkscape:label="Layer 1" inkscape:groupmode="layer" id="layer1" transform="translate(5,5)">
+    <rect class="blue" id="rect1" x="0" y="0" width="20" height="10" inkscape:label="Blue box"/>
+    <rect class="blue special" id="rect2" x="25" y="0" width="20" height="10" rx="2"/>
+    <circle id="named" cx="55" cy="5" r="5"/>
+    <g id="g1" transform="rotate(30 70 5)" style="fill:#ff8800">
+      <rect id="rect3" x="65" y="0" width="10" height="10"/>
+      <ellipse id="ell1" cx="85" cy="5" rx="6" ry="3"/>
+      <path id="path1" d="M 95,0 L 105,0 L 100,10 Z" inkscape:label="Triangle"/>
+    </g>
+    <g id="g2" transform="scale(1.5) translate(0, 10)">
+      <rect id="rect4" x="0" y="0" width="8" height="8" style="fill:currentColor" color="#336699"/>
+      <circle id="circ2" cx="15" cy="4" r="3" class="outline" fill="none"/>
+    </g>
+    <use xlink:href="#star" id="use1" x="40" y="30" style="fill:#aa0000"/>
+    <use href="#star" id="use2" transform="translate(60 30) scale(0.8)"/>
+    <g id="hidden" style="display:none">
+      <rect id="rect5" x="0" y="40" width="10" height="10" fill="black"/>
+    </g>
+    <rect id="rect6" x="15" y="40" width="10" height="10" visibility="hidden" fill="black"/>
+    <path id="path2" d="M 30,45 C 35,35 45,35 50,45" style="fill:none;stroke:#008000" class="thick"/>
+    <polygon id="poly1" points="60,40 70,40 70,50 60,50" transform="matrix(1,0,0.3,1,0,0)" fill="#808080"/>
+    <text id="text1" x="80" y="45" fill="black">Hello</text>
+    <circle id="circ3" cx="95" cy="45" r="4" transform="scale(2,1) translate(-45,0)" fill="#996633"/>
+    <rect id="rect7" x="100" y="40" width="10" height="6" transform="rotate(15)" fill="#660066"/>
+  </g>
+  <g inkscape:label="Layer 2" inkscape:groupmode="layer" id="layer2">
+    <path id="path3" d="m 5,70 h 10 v 5 h -10 z" fill="#00aaaa"/>
+    <circle id="circ4" cx="30" cy="72" r="0" fill="black"/>
+    <path id="path4" d="M 40 70 L 50 70 L 60 75" fill="#aaaa00"/>
+  </g>
+</svg>

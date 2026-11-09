@@ -148,3 +148,128 @@ TEST(io_geom_encoder) {
     CHECK_THROWS(GeomEncoder::loads(R"({"Vector": [1, 2, 3], "Axis": 1})"), std::invalid_argument);
     CHECK_THROWS(GeomEncoder::loads(R"({"Foo": [1]})"), std::out_of_range);
 }
+
+static_assert(std::is_same_v<decltype(import_svg(std::string())), ShapeList<Shape>>);
+
+TEST(io_import_svg) {
+    const std::string svg = R"(<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10">
+        <rect id="a" width="10" height="5" fill="red"/>
+        <path id="b" d="M0 0 L5 5" stroke="blue" fill="none"/></svg>)";
+    std::istringstream in(svg);
+    const ShapeList<Shape> shapes = import_svg(in);
+    CHECK(shapes.size() == 2);
+    CHECK(shapes[0].wrapped().ShapeType() == TopAbs_FACE);
+    CHECK(shapes[0].label == "a");
+    CHECK(shapes[0].color && shapes[0].color->red == 1.0 && shapes[0].color->green == 0.0);
+    CHECK(shapes[1].wrapped().ShapeType() == TopAbs_WIRE);
+    CHECK(shapes[1].color && shapes[1].color->blue == 1.0);
+    CHECK_NEAR(cast_shape<Face>(shapes[0]).area(), 50.0, 1e-9);
+    CHECK(shapes.faces().size() == 1);
+    // y flipped, the viewbox aligned at the origin
+    const BoundBox bb = shapes[0].bounding_box();
+    CHECK_NEAR(bb.min.Y, 5.0, 1e-6);
+    CHECK_NEAR(bb.max.Y, 10.0, 1e-6);
+    std::istringstream in2(svg);
+    const auto unflipped = import_svg(in2, {.flip_y = false, .align = Align::NONE, .label_by = "fill"});
+    CHECK_NEAR(unflipped[0].bounding_box().max.Y, 5.0, 1e-6);
+    CHECK(unflipped[0].label == "red");
+
+    std::istringstream broken("<svg><rect");
+    CHECK_THROWS(import_svg(broken), std::invalid_argument);
+    std::istringstream no_d(R"(<svg xmlns="http://www.w3.org/2000/svg"><path/></svg>)");
+    CHECK_THROWS(import_svg(no_d), std::invalid_argument);
+    std::istringstream not_svg(R"(<g><rect width="1" height="1"/></g>)");
+    CHECK_THROWS(import_svg(not_svg), std::invalid_argument);
+    CHECK_THROWS(import_svg("/nonexistent/drawing.svg"), std::runtime_error);
+
+    const IoTempDir dir("svg");
+    {
+        std::ofstream(dir.file("my_line.svg")) << R"(<svg><path d="M 0 0 L 10 0 A 5 5 0 0 1 20 0"/></svg>)";
+    }
+    const auto [code, builder] = import_svg_as_buildline_code(dir.file("my_line.svg"));
+    CHECK(builder == "my_line");
+    CHECK(code == "from build123d import *\nwith BuildLine() as my_line:\n    Line((0, 0),(10, 0))\n"
+                  "    RadiusArc((10, 0), (20, 0), 5, True)");
+}
+
+static_assert(std::is_same_v<decltype(import_dxf(std::string())), ShapeList<Shape>>);
+
+TEST(io_import_dxf) {
+    const IoTempDir dir("dxf");
+    ExportDXF exporter;
+    exporter.add_shape(Edge::make_line({0, 0}, {10, 0}));
+    exporter.add_shape(Edge::make_circle(2));
+    exporter.add_shape(Pos(5, 5) * Rectangle(2, 2));
+    exporter.write(dir.file("shapes.dxf"));
+    const ShapeList<Shape> shapes = import_dxf(dir.file("shapes.dxf"));
+    CHECK(shapes.size() == 6);
+    CHECK(shapes[0].wrapped().ShapeType() == TopAbs_EDGE);
+    CHECK_NEAR(cast_shape<Edge>(shapes[0]).length(), 10.0, 1e-9);
+    CHECK(cast_shape<Edge>(shapes[1]).geom_type() == GeomType::CIRCLE);
+    CHECK(shapes.edges().size() == 6);
+
+    std::istringstream stream(
+        "  0\nSECTION\n  2\nENTITIES\n  0\nPOINT\n 10\n1\n 20\n2\n 30\n3\n  0\nXLINE\n 10\n0\n 20\n0\n 30\n0\n"
+        "  0\nENDSEC\n  0\nEOF\n");
+    std::vector<std::string> warnings;
+    const auto previous = set_warning_handler([&](const std::string& m) { warnings.push_back(m); });
+    const ShapeList<Shape> points = import_dxf(stream);
+    set_warning_handler(previous);
+    CHECK(points.size() == 1);
+    CHECK(points[0].wrapped().ShapeType() == TopAbs_VERTEX);
+    CHECK(warnings == std::vector<std::string>{"Unable to convert XLINE"});
+
+    std::istringstream broken("  0\nSECTION\n  2\nENTITIES\n");
+    CHECK_THROWS(import_dxf(broken), std::invalid_argument);
+    CHECK_THROWS(import_dxf(dir.file("missing.dxf")), std::runtime_error);
+    {
+        std::ofstream(dir.file("not.dxf")) << "hello\nworld\n";
+    }
+    CHECK_THROWS(import_dxf(dir.file("not.dxf")), std::runtime_error);
+}
+
+static_assert(!std::is_copy_constructible_v<Mesher>);
+static_assert(std::is_move_constructible_v<Mesher>);
+
+TEST(io_mesher) {
+    const IoTempDir dir("mesher");
+    Mesher m(Unit::CM);
+    CHECK(m.model_unit() == Unit::CM);
+    CHECK(m.library_version().find('.') != std::string::npos);
+    Part box = Box(1, 2, 3);
+    box.label = "box";
+    m.add_shape(box);
+    const Part ball = Pos(5, 0, 0) * Sphere(1);
+    m.add_shape(ball.solids(), 0.1, 0.3, MeshType::SUPPORT);  // a ShapeList<Solid>
+    CHECK(m.mesh_count() == 2);
+    CHECK(m.triangle_counts().size() == 2 && m.triangle_counts()[0] == 12);
+    CHECK(m.vertex_counts()[0] == 8);
+    m.add_code_to_metadata();
+    const auto meta = m.get_meta_data();
+    CHECK(meta.size() == 1);
+    CHECK(meta[0].name_space == "build123d" && meta[0].name == "test_io.cpp" && meta[0].type == "cpp");
+    CHECK(meta[0].value.find("TEST(io_mesher)") != std::string::npos);
+    CHECK(m.get_meta_data_by_key("build123d", "test_io.cpp").type == "cpp");
+    CHECK_THROWS(m.get_meta_data_by_key("build123d", "nothing"), std::runtime_error);
+    const auto properties = m.get_mesh_properties();
+    CHECK(properties[0].name == "box" && properties[1].type == MeshType::SUPPORT);
+    CHECK(properties[1].uuid.size() == 36);
+
+    m.write(dir.file("m.3mf"));
+    Mesher moved = std::move(m);
+    moved.write(dir.file("m.stl"));
+    CHECK_THROWS(moved.write(dir.file("m.obj")), std::invalid_argument);
+    std::ostringstream stream;
+    moved.write_stream(stream, "3mf");
+    CHECK(stream.str().compare(0, 2, "PK") == 0);  // a zip archive
+
+    Mesher reader;
+    const ShapeList<Shape> shapes = reader.read(dir.file("m.3mf"));
+    CHECK(shapes.size() == 2);
+    CHECK(reader.model_unit() == Unit::CM);
+    CHECK(shapes[0].label == "box");
+    CHECK_NEAR(cast_shape<Solid>(shapes[0]).volume(), 6.0, 1e-6);
+    CHECK_THROWS(Mesher().read(dir.file("missing.3mf")), std::runtime_error);
+    CHECK_THROWS(Mesher(Unit::LB), std::invalid_argument);
+    CHECK_THROWS(Mesher().add_shape(Face::make_rect(1, 1)), std::runtime_error);
+}

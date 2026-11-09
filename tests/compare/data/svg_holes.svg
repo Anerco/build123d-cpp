@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Filled paths with holes and islands, an open filled path, a degenerate path, units -->
+<svg xmlns="http://www.w3.org/2000/svg" width="4in" height="3in" viewBox="-10 -10 400 300" preserveAspectRatio="xMinYMax meet">
+  <path id="donut" fill-rule="evenodd" fill="#202020"
+        d="M 0 0 L 100 0 L 100 100 L 0 100 Z M 20 20 L 20 80 L 80 80 L 80 20 Z M 40 40 L 60 40 L 60 60 L 40 60 Z"/>
+  <path id="two" fill="#404040" d="M 120 0 h 40 v 40 h -40 z M 180 0 h 40 v 40 h -40 z"/>
+  <path id="circles" fill="#606060"
+        d="M 300 50 A 50 50 0 1 0 300 50.001 Z M 270 50 A 20 20 0 1 1 270 50.001 Z"/>
+  <path id="open" fill="#808080" d="M 0 150 L 50 150 L 25 200"/>
+  <path id="dot" fill="black" d="M 100 150 L 100 150"/>
+  <path id="bad" fill="#a0a0a0" d="M 120 150 L 160 150 L 140 190 Z L 3"/>
+  <rect id="pct" x="10%" y="70%" width="20%" height="5%" fill="#c0c0c0"/>
+  <circle id="mm" cx="20mm" cy="20mm" r="2mm" fill="#e0e0e0"/>
+</svg>

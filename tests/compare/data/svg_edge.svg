@@ -1,0 +1,57 @@
+<?xml version="1.0"?>
+<!DOCTYPE svg [
+  <!ENTITY red "#cc0000">
+]>
+<!-- Corner cases of svgelements and ocpsvg -->
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="300" height="200">
+  <style>
+    * { stroke-width: 1 }
+    circle { fill: #112233 }
+    .c1 { fill: #445566 } .c1 { stroke: red }
+    path.p { fill: #778899; }
+  </style>
+  <!-- percentages without a viewBox (svgelements swaps the width and height) -->
+  <rect id="pct" x="5%" y="5%" width="10%" height="5%" fill="&red;"/>
+  <circle id="styled" cx="60" cy="20" r="8"/>
+  <circle id="classed" class="c1" cx="80" cy="20" r="8"/>
+  <path id="classpath" class="p" d="M100 10l10 0 0 10-10 0z"/>
+  <!-- compressed path data, implicit commands, inline close -->
+  <path id="compact" d="M120-10.5.5 10L130,20 140 10 150 20h-5-5v5 5L120 30z" fill="#010203"/>
+  <path id="arcflags" d="M160 20a10 10 0 1010 10 5 5 0 0 1 10 0z" fill="#020304"/>
+  <path id="smooth" d="M190 20 L200 20 S 210 10 220 20 T 240 20 Z" fill="#030405"/>
+  <path id="inlinez" d="M250 10 L270 10 L270 30 L z" fill="#040506"/>
+  <path id="exp" d="M 1e1 5e1 L 2E1 5e1 L 1.5e+1 6.e1 z" fill="#050607"/>
+  <!-- transforms -->
+  <rect id="skewx" x="40" y="50" width="20" height="10" transform="skewX(20)" fill="#060708"/>
+  <rect id="skewy" x="70" y="50" width="20" height="10" transform="skewY(-10)" fill="#070809"/>
+  <rect id="flip" x="100" y="50" width="20" height="10" transform="scale(1,-1) translate(0,-120)" fill="#08090a"/>
+  <rect id="rotpt" x="130" y="50" width="20" height="10" transform="rotate(45deg, 140, 55)" fill="#090a0b"/>
+  <ellipse id="rotell" cx="170" cy="55" rx="12" ry="5" transform="rotate(20 170 55)" fill="#0a0b0c"/>
+  <circle id="stretched" cx="200" cy="55" r="5" transform="scale(2 1)" fill="#0b0c0d"/>
+  <rect id="units" x="0" y="0" width="5" height="5" transform="translate(10mm 20mm) rotate(0.1turn)" fill="#0c0d0e"/>
+  <polyline id="mm" points="0,0 5,5 10,0" transform="translate(2in) scale(.5)" fill="none" stroke="#0d0e0f"/>
+  <!-- groups, use, symbol, switch, a -->
+  <g id="grp" style="fill:#0e0f10;stroke:currentColor;color:#102030" transform="translate(0 80)">
+    <rect id="inherit" x="0" y="0" width="10" height="10"/>
+    <use id="useuse" xlink:href="#reused" x="20"/>
+    <switch><rect id="switched" x="40" y="0" width="10" height="10"/></switch>
+    <a href="https://example.com"><circle id="linked" cx="65" cy="5" r="5" fill="#111213"/></a>
+  </g>
+  <use id="reused" xlink:href="#sym" transform="translate(100 80)"/>
+  <symbol id="sym"><path id="sympath" d="M0 0 L10 0 L5 8 Z" fill="#121314"/></symbol>
+  <!-- invisible, zero-sized, transparent -->
+  <rect id="zero" x="0" y="100" width="0" height="10" fill="black"/>
+  <rect id="vis" x="20" y="100" width="10" height="10" style="visibility:collapse" fill="black"/>
+  <g style="display:none"><circle id="none" cx="50" cy="105" r="5" fill="black"/></g>
+  <rect id="clear" x="60" y="100" width="10" height="10" fill="transparent" stroke="none"/>
+  <rect id="opaque" x="80" y="100" width="10" height="10" fill="#204060" fill-opacity="0.3" opacity="0.5"/>
+  <line id="noline" x1="100" y1="100" x2="100" y2="100" stroke="black"/>
+  <polygon id="nopoints" fill="black"/>
+  <path id="empty" d="" fill="black"/>
+  <!-- nested svg with its own viewBox -->
+  <svg id="inner" x="150" y="100" width="100" height="50" viewBox="0 0 20 10">
+    <rect id="innerrect" x="1" y="1" width="8" height="8" fill="#131415"/>
+    <circle id="innercircle" cx="15" cy="5" r="4" fill="#141516"/>
+  </svg>
+  <text x="10" y="190"><tspan>ignored</tspan></text>
+</svg>
