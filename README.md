@@ -42,7 +42,8 @@ export_step(plate, "plate.step")
   - intersection and `touch` in every dimension and with geometry;
   - history, so `part.edges(Select::NEW)` gives the edges the last operation created;
   - convexity, mass/material/inertia, hashing, Gordon surfaces, wrapping faces onto surfaces;
-  - the topology helpers (`topo_explore_connected_edges`, `new_edges`, …).
+  - the topology helpers `topo_explore_connected_edges`, `topo_explore_common_vertex`,
+    `topo_distance_to`, `new_edges`, `delta`, `polar` and `edges_to_wires`.
 - **Assemblies**: `children`, with `parent()`, `root()`, `path()`, `descendants()`, `leaves()`,
   `global_location()`, … (build123d's anytree tree).
 - **Joints**: `RigidJoint`, `RevoluteJoint`, `LinearJoint`, `CylindricalJoint`, `BallJoint`,
@@ -59,8 +60,9 @@ export_step(plate, "plate.step")
     `Helix`, `PolarLine`, `FilletPolyline`, `IntersectingLine`, `ConstrainedArcs`,
     `ConstrainedLines`, `Airfoil`. Arcs and `PolarLine` can end at a shape, axis, plane or point.
   - 2D: `Circle`, `Ellipse`, `Rectangle`, `RectangleRounded`, `Polygon`, `RegularPolygon`,
-    `Trapezoid`, `Triangle`, the `Slot*` objects, `Superellipse`, `Text` (any font, including the
-    bundled single-line font, with `FontManager`).
+    `Trapezoid`, `Triangle`, `SlotArc`, `SlotCenterPoint`, `SlotCenterToCenter`, `SlotOverall`,
+    `Superellipse`, `Text` (any font, including the bundled single-line font, with
+    `FontManager` and `available_fonts`).
   - 3D: `Box`, `Cylinder`, `Cone`, `Sphere`, `Torus`, `Wedge`, `Hole`, `CounterBoreHole`,
     `CounterSinkHole`, `ConvexPolyhedron`.
   - Drafting: `Draft`, `DimensionLine`, `ExtensionLine`, `Arrow`, `ArrowHead`,
@@ -72,11 +74,14 @@ export_step(plate, "plate.step")
   `chamfer`, `full_round`, `offset`, `mirror`, `scale`, `split`, `project`, `project_workplane`,
   `make_face`, `make_hull`, `make_brake_formed`, `trace`, `bounding_box`, `pack`.
 - **Import and export**:
-  - STEP (assemblies with names and colors), BREP, STL, glTF/GLB, OBJ, 3MF and STL with `Mesher`;
+  - `export_step` (assemblies with names and colors), `export_brep`, `export_stl`,
+    `export_gltf` (glTF and GLB) and `export_obj`; 3MF and STL meshes with `Mesher`;
   - 2D drawings with `ExportSVG` and `ExportDXF`, from hidden-line views (`project_to_viewport`);
   - `import_svg`, `import_svg_as_buildline_code`, `import_dxf`, `import_step`, `import_brep`,
     `import_stl`, and `detect_primitives` (faces from a mesh);
-  - serialization to bytes, compatible with Python's pickled shapes;
+  - `serialize_shape`/`deserialize_shape`, which write and read the same bytes as Python's
+    `persistence` module, and `to_bytes`/`from_bytes`, which save a shape with its label, color
+    and children (Python's pickling);
   - `export_to_pcbway` (3D printing quotes);
   - `shape_to_html` and VTK output for viewers (Jupyter's display of a shape).
 
@@ -267,6 +272,8 @@ Smaller differences:
   formatted as floats.
 - `shape_to_html`, `to_vtkpoly_string` and `vtk_mesh` don't need VTK. The VTK text has the same
   content as Python's but isn't compressed.
+- `to_bytes` uses its own format, so it can't read Python pickles (the shape data inside them,
+  `serialize_shape`'s bytes, is the same). Unlike Python, it can save a shape that has a color.
 - `export_to_pcbway` only opens http(s) pages, and never through a shell.
 - Before OCCT 8, OCCT's exceptions don't derive from `std::exception`: an OCCT error that the
   library doesn't translate arrives as a `Standard_Failure`.
