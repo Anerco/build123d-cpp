@@ -8,6 +8,7 @@ from build123d import (
     Color,
     Compound,
     Cylinder,
+    Edge,
     LinearJoint,
     Location,
     Plane,
@@ -129,7 +130,31 @@ def color_material_lookup():
     return V(out)
 
 
+def property_setters():
+    axis = Axis((0, 0, 0), (1, 0, 0))
+    axis.direction = (0, 0, 2)
+    axis.position = (1, 2, 3)
+    try:
+        axis.direction = (0, 0, 0)
+        null_direction_rejected = False
+    except Exception:  # pylint: disable=broad-exception-caught
+        null_direction_rejected = True
+    box = Box(1, 2, 3)
+    box.position = (5, 0, 0)
+    box.orientation = (0, 0, 90)
+    bb = box.bounding_box()
+    plane = Plane((0, 0, 0))
+    plane.origin = (1, 1, 1)
+    plane.x_dir = (1, 1, 0)
+    edge = Edge.make_line((0, 0), (1, 0))
+    edge.label = "kept"
+    edge.wrapped = Edge.make_line((0, 0), (0, 2)).wrapped
+    return V([axis.direction, axis.position, null_direction_rejected, box.position, box.orientation, bb.min, bb.max,
+              plane.origin, plane.x_dir, plane.y_dir, plane.z_dir, edge.length, edge.label])
+
+
 CASES = {
+    "integ_property_setters": property_setters,
     "integ_color_material_lookup": color_material_lookup,
     "integ_unit_tables": unit_tables,
     "integ_brake_select": brake_select,

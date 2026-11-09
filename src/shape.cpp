@@ -278,6 +278,20 @@ void Shape::set_location(const Location& loc) {
 Vector Shape::position() const { return location().position(); }
 Vector Shape::orientation() const { return location().orientation(); }
 
+void Shape::set_position(const Vector& position) {
+    require_not_null("Can't find the location of an empty shape");
+    Location loc = location();
+    loc.set_position(position);
+    set_location(loc);
+}
+
+void Shape::set_orientation(const Vector& rotations) {
+    require_not_null("Can't find the location of an empty shape");
+    Location loc = location();
+    loc.set_orientation(rotations);
+    set_location(loc);
+}
+
 ShapeList<Vertex> Shape::vertices(Select select) const {
     return sub_shapes<Vertex>(*this, TopAbs_VERTEX, select);
 }

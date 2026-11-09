@@ -188,6 +188,8 @@ private:
 // Adds the build123d methods that return "Self" with the right C++ type.
 #define BUILD123D_TYPED_OPS(T)                                                                 \
 public:                                                                                        \
+    /** Replace the OCCT shape (checked as by the constructor), keeping the attributes. */    \
+    void set_wrapped(const TopoDS_Shape& obj) { obj_ = T(obj).wrapped(); }                    \
     /** Copy relocated relative to the current location. */                                   \
     T moved(const Location& loc) const { return derive<T>(moved_topods(loc)); }               \
     T moved(const Plane& plane) const { return derive<T>(moved_topods(plane.location())); }   \
@@ -449,6 +451,10 @@ public:
     OrientedBoundBox oriented_bounding_box() const;
     Location location() const;
     void set_location(const Location& loc);
+    /// build123d's position and orientation setters: a new position, or new intrinsic XYZ
+    /// angles in degrees, keeping the rest of the location.
+    void set_position(const Vector& position);
+    void set_orientation(const Vector& rotations);
     Vector position() const;
     Vector orientation() const;
 

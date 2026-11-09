@@ -155,6 +155,8 @@ Axis::Axis(const Vector& origin, const Vector& dir) : position(origin) {
     direction = Vector(gp_Dir(dir.normalized().to_xyz()));
 }
 
+void Axis::set_direction(const Vector& new_direction) { direction = Vector(new_direction.to_dir()); }
+
 Axis::Axis(const gp_Ax1& ax1)
     : position(Vector(ax1.Location())), direction(Vector(ax1.Direction())) {}
 

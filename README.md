@@ -196,6 +196,9 @@ python tests/compare/compare_examples.py build/examples       # the examples
 | `node.global_location` | `node.global_location()` |
 | `part.color = "red"`, `part.material = "aluminum"` | the same |
 | `part._color` | `part.color.raw()` |
+| `part.position = (5, 0, 0)`, `part.orientation = (0, 0, 90)` | `part.set_position({5, 0, 0})`, `part.set_orientation({0, 0, 90})` |
+| `part.location = loc`, `part.wrapped = obj` | `part.set_location(loc)`, `part.set_wrapped(obj)` |
+| `axis.direction = d`, `plane.x_dir = d` | `axis.set_direction(d)`, `plane.set_x_dir(d)` (assigning the fields directly skips normalizing) |
 | `RigidJoint("j", part, location)` | the same |
 | `a.joints["j"].connect_to(b.joints["k"], angle=90)` | `a.joints["j"].connect_to(b.joints["k"], {.angle = 90})` |
 | `with SkipClean(): ...` | `{ SkipClean skip; ... }` |

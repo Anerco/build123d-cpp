@@ -117,6 +117,17 @@ TEST(readme_python_to_cpp_table) {
     }
     CHECK((Box(1, 1, 1) + Pos(1, 0, 0) * Box(1, 1, 1)).faces().size() == 6);
     CHECK(!shape_to_html(block).empty());
+    Part placed = Box(1, 1, 1);
+    placed.set_position({5, 0, 0});
+    placed.set_orientation({0, 0, 90});
+    placed.set_location(Location({1, 2, 3}));
+    placed.set_wrapped(Box(2, 2, 2).wrapped());
+    CHECK_NEAR(placed.volume(), 8, 1e-9);
+    Axis axis = Axis::X;
+    axis.set_direction({0, 0, 2});
+    Plane plane = Plane::XY;
+    plane.set_x_dir({1, 1, 0});
+    CHECK(axis.direction == Vector(0, 0, 1) && plane.y_dir == Vector(-1, 1, 0).normalized());
 
     std::vector<std::string> warnings;
     const WarningHandler previous = set_warning_handler([&](const std::string& m) { warnings.push_back(m); });
@@ -157,4 +168,19 @@ TEST(color_material_properties) {
     CHECK(copy.material->name() == "Alu_G6061_T6" && copy.color == part.color);
     part.material.set_raw(std::nullopt);
     CHECK(!part.material && part.color.has_value());
+}
+
+TEST(property_setters) {
+    Edge edge = Edge::make_line({0, 0}, {1, 0});
+    edge.label = "kept";
+    CHECK_THROWS(edge.set_wrapped(Box(1, 1, 1).wrapped()), std::invalid_argument);
+    edge.set_wrapped(Edge::make_line({0, 0}, {0, 2}).wrapped());
+    CHECK_NEAR(edge.length(), 2, 1e-12);
+    CHECK(edge.label == "kept");
+    Shape empty;
+    CHECK_THROWS(empty.set_position(Vector(1, 0, 0)), std::invalid_argument);
+    CHECK_THROWS(empty.set_orientation(Vector(0, 0, 90)), std::invalid_argument);
+    Axis axis = Axis::Z;
+    axis.set_direction(Vector(0, 3, 4));
+    CHECK(axis.direction == Vector(0, 0.6, 0.8));
 }

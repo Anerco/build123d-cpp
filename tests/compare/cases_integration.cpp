@@ -29,6 +29,30 @@ V joint_info(const Part& p) {
 }  // namespace
 
 COMPARE_CASES {
+    compare::add_value("integ_property_setters", [] {
+        Axis axis(Vector(0, 0, 0), Vector(1, 0, 0));
+        axis.set_direction(Vector(0, 0, 2));
+        axis.set_position(Vector(1, 2, 3));
+        bool null_direction_rejected = false;
+        try {
+            axis.set_direction(Vector(0, 0, 0));
+        } catch (const std::invalid_argument&) {
+            null_direction_rejected = true;
+        }
+        Part box = Box(1, 2, 3);
+        box.set_position(Vector(5, 0, 0));
+        box.set_orientation(Vector(0, 0, 90));
+        const BoundBox bb = box.bounding_box();
+        Plane plane(Vector(0, 0, 0));
+        plane.origin = Vector(1, 1, 1);
+        plane.set_x_dir(Vector(1, 1, 0));
+        Edge edge = Edge::make_line({0, 0}, {1, 0});
+        edge.label = "kept";
+        edge.set_wrapped(Edge::make_line({0, 0}, {0, 2}).wrapped());
+        return V::list({V(axis.direction), V(axis.position), V(null_direction_rejected), V(box.position()),
+                        V(box.orientation()), V(bb.min), V(bb.max), V(plane.origin), V(plane.x_dir), V(plane.y_dir),
+                        V(plane.z_dir), V(edge.length()), V(edge.label)});
+    });
     compare::add_value("integ_color_material_lookup", [] {
         const auto c = [](const std::optional<Color>& color) { return color ? V::list_of(color->to_tuple()) : V(); };
         const auto m = [](const std::optional<FinishedMaterial>& material) {

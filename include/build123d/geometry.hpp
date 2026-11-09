@@ -160,6 +160,10 @@ public:
     /// Axis from the start point and tangent of an Edge.
     explicit Axis(const Edge& edge);
     static Axis from_end_point(const Vector& origin, const Vector& end_point);
+    /// build123d's position and direction setters. The direction is normalized (a null one
+    /// throws std::invalid_argument); assigning the `direction` field directly skips that.
+    void set_position(const Vector& new_position) { position = new_position; }
+    void set_direction(const Vector& new_direction);
 
     static const Axis X;
     static const Axis Y;
