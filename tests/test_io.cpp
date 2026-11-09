@@ -273,3 +273,24 @@ TEST(io_mesher) {
     CHECK_THROWS(Mesher(Unit::LB), std::invalid_argument);
     CHECK_THROWS(Mesher().add_shape(Face::make_rect(1, 1)), std::runtime_error);
 }
+
+static_assert(std::is_same_v<decltype(detect_primitives(Shape())),
+                             std::tuple<ShapeList<Face>, ShapeList<Face>, std::vector<std::string>>>);
+
+TEST(io_detect_primitives) {
+    const IoTempDir dir("brep");
+    Mesher mesher;
+    mesher.add_shape(Box(2, 2, 1) - Cylinder(0.5, 1), 0.01, 1);
+    mesher.write(dir.file("plate.stl"));
+    Mesher reader;
+    const Shape mesh = reader.read(dir.file("plate.stl"))[0];
+    const auto [primitives, leftovers, code] = detect_primitives(mesh);
+    CHECK(primitives.size() == code.size());
+    CHECK(primitives.filter_by(GeomType::PLANE).size() == 6);
+    CHECK(primitives.filter_by(GeomType::CYLINDER).size() == 1);
+    CHECK(leftovers.empty());
+    CHECK(code[0].rfind("r0 = Plane.XY.offset(-0.5) * Pos(-1, -1) * Rectangle(2, 2, align=Align.MIN)", 0) == 0);
+    const ShapeList<Face> cylinders = primitives.filter_by(GeomType::CYLINDER);
+    CHECK_NEAR(cylinders[0].area(), 2 * 3.141592653589793 * 0.5 * 1, 1e-2);
+    CHECK_THROWS(detect_primitives(Cylinder(1, 2)), std::out_of_range);  // circular edges: one vertex
+}

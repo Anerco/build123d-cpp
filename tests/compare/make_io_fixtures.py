@@ -273,6 +273,28 @@ def mesher_files():
         f.write(data)
 
 
+# ---- Meshes for detect_primitives (brep_from_stl.py), written by Python's Mesher like
+# upstream's test_brep_from_stl.py does
+def brep_files():
+    def write(shape, name):
+        mesher = Mesher()
+        mesher.add_shape(shape, linear_deflection=0.01, angular_deflection=1)
+        mesher.write(os.path.join(DATA, name))
+
+    write(
+        split(Cylinder(1, 2, align=None) + Sphere(1), Plane.XY.offset(1).rotated((0, 30, 0)), Keep.BOTTOM),
+        "brep_cylinder.stl",
+    )
+    write(Sphere(1), "brep_sphere.stl")
+    write(fillet(Box(1, 1, 1).edges(), 0.1), "brep_box.stl")
+    write(Box(5, 5, 1) - Cylinder(1, 1), "brep_box_with_hole.stl")
+    # tilted and moved parts: Location(...) and offset code, a sphere away from the origin
+    write(Rot(20, 30, 0) * (Box(4, 3, 2) - Cylinder(0.8, 2)), "brep_tilted.stl")
+    write(Pos(3, -2, 5) * (Box(2, 3, 1) + Pos(0, 0, 1) * Sphere(0.7)), "brep_moved.stl")
+    # a cone isn't detected: its faces are left over
+    write(Cone(1, 0.5, 2) + Pos(0, 0, -1.5) * Cylinder(1.2, 1), "brep_cone.stl")
+
+
 def main():
     os.makedirs(DATA, exist_ok=True)
     persistence()
@@ -280,6 +302,7 @@ def main():
     svg_files()
     dxf_files()
     mesher_files()
+    brep_files()
 
 
 if __name__ == "__main__":

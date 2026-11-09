@@ -9,6 +9,7 @@
 //   export_step(part, "part.step");
 #pragma once
 
+#include "build123d/brep_from_stl.hpp"
 #include "build123d/cast.hpp"
 #include "build123d/drafting.hpp"
 #include "build123d/enums.hpp"

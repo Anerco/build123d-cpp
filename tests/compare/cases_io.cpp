@@ -1062,3 +1062,104 @@ COMPARE_CASES {
         return V("read");
     });
 }
+
+// ---- detect_primitives (brep_from_stl.py) on meshes written by Python's Mesher
+namespace {
+
+Shape read_mesh(const std::string& name) {
+    Mesher reader;
+    return reader.read(fixture(name + ".stl"))[0];
+}
+
+V face_summary(const Face& f) {
+    const BoundBox bb = f.bounding_box();
+    return V::obj({{"type", enum_name(f.geom_type())},
+                   {"area", f.area()},
+                   {"center", f.center()},
+                   {"bbox", V::list({bb.min, bb.max})}});
+}
+
+/// detect_primitives' result. The primitives whose code sorts last with equal keys (spheres,
+/// "Pos(...)") are ordered by their fit residuals, which tie up to rounding noise of numpy's
+/// least squares (LAPACK): that tail is compared sorted by its code.
+V detect_summary(const ShapeList<Face>& primitives, const ShapeList<Face>& leftovers,
+                 const std::vector<std::string>& code) {
+    std::vector<std::string> names, bodies;
+    for (const std::string& line : code) {
+        const auto p = line.find(" = ");
+        names.push_back(line.substr(0, p));
+        bodies.push_back(line.substr(p + 3));
+    }
+    auto tail = [&bodies](std::size_t i) {
+        return !(bodies[i].rfind("Plane.", 0) == 0 || bodies[i].rfind("Location", 0) == 0);
+    };
+    std::vector<std::size_t> order(bodies.size());
+    for (std::size_t i = 0; i < order.size(); ++i) order[i] = i;
+    std::stable_sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
+        if (tail(a) != tail(b)) return tail(b);
+        return tail(a) && bodies[a] < bodies[b];
+    });
+    std::vector<V> faces, left, lines, name_values;
+    for (const std::size_t i : order) {
+        faces.push_back(face_summary(primitives[static_cast<std::ptrdiff_t>(i)]));
+        lines.push_back(V(bodies[i]));
+    }
+    for (const std::string& name : names) name_values.push_back(V(name));
+    for (const Face& f : leftovers) left.push_back(V(f.center()));
+    return V::obj({{"primitives", V::list(faces)},
+                   {"leftovers", V::list(left)},
+                   {"names", V::list(name_values)},
+                   {"code", V::list(lines)},
+                   {"counts", V::list({static_cast<double>(primitives.size()), static_cast<double>(code.size())})}});
+}
+
+}  // namespace
+
+COMPARE_CASES {
+    for (const char* name : {"brep_cylinder", "brep_sphere", "brep_box", "brep_box_with_hole", "brep_tilted",
+                             "brep_moved", "brep_cone"}) {
+        const std::string n = name;
+        compare::add_value("io_" + n + "_mesh", [n] {
+            // the mesh both sides work on: its faces in order
+            const Shape mesh = read_mesh(n);
+            std::vector<V> centers;
+            for (const Face& f : mesh.faces()) centers.push_back(V(f.center()));
+            return V::obj({{"type", type_name(mesh)}, {"faces", static_cast<double>(mesh.faces().size())},
+                           {"centers", V::list(centers)}});
+        });
+        compare::add_value("io_" + n + "_detect", [n] {
+            const auto [primitives, leftovers, code] = detect_primitives(read_mesh(n));
+            return detect_summary(primitives, leftovers, code);
+        });
+    }
+}
+
+COMPARE_CASES {
+    // shapes that aren't triangle meshes
+    compare::add_value("io_detect_primitives_brep_box", [] {
+        const auto [primitives, leftovers, code] = detect_primitives(Pos(1, 2, 3) * Box(2, 3, 4));
+        return detect_summary(primitives, leftovers, code);
+    });
+    compare::add_value("io_detect_primitives_brep_cylinder", [] {
+        const auto [primitives, leftovers, code] = detect_primitives(Cylinder(1, 2));
+        return detect_summary(primitives, leftovers, code);
+    });
+    compare::add_value("io_detect_primitives_empty", [] {
+        const auto [primitives, leftovers, code] = detect_primitives(Compound());
+        return detect_summary(primitives, leftovers, code);
+    });
+}
+
+// ---- the color Python's material setter gives a shape (bd_materials PBR look)
+#include "../../src/pbr_colors.hpp"
+
+COMPARE_CASES {
+    compare::add_value("io_material_pbr_colors", [] {
+        std::vector<V> out;
+        for (const std::string& grade : detail::catalog_pbr_grades()) {
+            const auto c = *detail::catalog_pbr_color(grade);
+            out.push_back(V::list({grade, V::list({c[0], c[1], c[2], c[3]})}));
+        }
+        return V::list(out);
+    });
+}

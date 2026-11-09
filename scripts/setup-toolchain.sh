@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Create a self-contained build toolchain in ./.toolchain: OpenCASCADE (without VTK), CMake,
-# Ninja and a C++ compiler from conda-forge, installed with micromamba. Needs no root access
-# and writes nothing outside this directory.
+# Create a self-contained build toolchain in ./.toolchain: OpenCASCADE (without VTK), lib3mf
+# (3MF and STL meshes, for Mesher), CMake, Ninja and a C++ compiler from conda-forge, installed
+# with micromamba. Needs no root access and writes nothing outside this directory.
 #
 #   scripts/setup-toolchain.sh                      # OCCT 8.0.0
 #   OCCT_VERSION=7.9.3 scripts/setup-toolchain.sh   # another OCCT version
@@ -34,8 +34,8 @@ case "$occt_version" in
 esac
 
 export MAMBA_ROOT_PREFIX="${MAMBA_ROOT_PREFIX:-$root/.toolchain-bin/root}"
-"$mamba" create -y -p "$prefix" -c conda-forge "occt==$occt_version=novtk*" cmake ninja cxx-compiler \
-    ${extra[@]+"${extra[@]}"}
+"$mamba" create -y -p "$prefix" -c conda-forge "occt==$occt_version=novtk*" "lib3mf>=2.3,<3" \
+    cmake ninja cxx-compiler ${extra[@]+"${extra[@]}"}
 
 cat <<EOF
 

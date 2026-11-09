@@ -1110,3 +1110,72 @@ CASES.update(
         "io_mesher_read_missing": mesher_read_missing,
     }
 )
+
+
+# ---- detect_primitives (see cases_io.cpp)
+def read_mesh(name):
+    return Mesher().read(fixture(name + ".stl"))[0]
+
+
+def brep_face_summary(f):
+    bb = f.bounding_box()
+    return {"type": f.geom_type.name, "area": f.area, "center": f.center(), "bbox": [bb.min, bb.max]}
+
+
+def brep_mesh_case(name):
+    def case():
+        mesh = read_mesh(name)
+        return V({"type": dxf_type_name(mesh), "faces": len(mesh.faces()), "centers": [f.center() for f in mesh.faces()]})
+
+    return case
+
+
+def detect_summary(primitives, leftovers, code):
+    """See cases_io.cpp detect_summary: the tied tail (spheres) is compared sorted by its code."""
+    names = [line.split(" = ", 1)[0] for line in code]
+    bodies = [line.split(" = ", 1)[1] for line in code]
+
+    def tail(i):
+        return not (bodies[i].startswith("Plane.") or bodies[i].startswith("Location"))
+
+    order = sorted(range(len(bodies)), key=lambda i: (tail(i), bodies[i] if tail(i) else ""))
+    return V(
+        {
+            "primitives": [brep_face_summary(primitives[i]) for i in order],
+            "leftovers": [f.center() for f in leftovers],
+            "names": names,
+            "code": [bodies[i] for i in order],
+            "counts": [len(primitives), len(code)],
+        }
+    )
+
+
+def brep_detect_case(name):
+    def case():
+        return detect_summary(*detect_primitives(read_mesh(name)))
+
+    return case
+
+
+for _n in ["brep_cylinder", "brep_sphere", "brep_box", "brep_box_with_hole", "brep_tilted", "brep_moved", "brep_cone"]:
+    CASES[f"io_{_n}_mesh"] = brep_mesh_case(_n)
+    CASES[f"io_{_n}_detect"] = brep_detect_case(_n)
+CASES["io_detect_primitives_brep_box"] = lambda: detect_summary(*detect_primitives(Pos(1, 2, 3) * Box(2, 3, 4)))
+CASES["io_detect_primitives_brep_cylinder"] = lambda: detect_summary(*detect_primitives(Cylinder(1, 2)))
+CASES["io_detect_primitives_empty"] = lambda: detect_summary(*detect_primitives(Compound()))
+
+
+def material_pbr_colors():
+    # the color build123d's Shape.material setter applies, by material grade
+    from bd_materials import material_names, resolve
+
+    grades = sorted({resolve(n).material.name for n in material_names()})
+    out = []
+    for grade in grades:
+        box = Box(1, 1, 1)
+        box.material = grade
+        out.append([grade, list(tuple(box.color))])
+    return V(out)
+
+
+CASES["io_material_pbr_colors"] = material_pbr_colors

@@ -33,6 +33,7 @@
 #include <Geom_TrimmedCurve.hxx>
 #include <ShapeExtend_WireData.hxx>
 #include <ShapeFix_Face.hxx>
+#include <Standard_Version.hxx>
 #include <Standard_Failure.hxx>
 #include <StdFail_NotDone.hxx>
 #include <TColgp_Array1OfPnt.hxx>
