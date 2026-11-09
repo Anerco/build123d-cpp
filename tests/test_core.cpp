@@ -130,3 +130,32 @@ TEST(core_split_unpacks) {
     CHECK(box.split(Plane::XY.offset(-5), Keep::BOTTOM).empty());  // build123d's None
     CHECK_THROWS(box.split(Plane::XY, Keep::INSIDE), std::invalid_argument);
 }
+
+// group_by keys: numbers (and bools) are rounded doubles, other keys keep their type
+static_assert(std::is_same_v<decltype(ShapeList<Solid>().group_by([](const Solid& s) { return s.label; })),
+                             GroupBy<Solid, std::string>>);
+static_assert(std::is_same_v<decltype(ShapeList<Edge>().group_by([](const Edge& e) { return e.is_closed(); })),
+                             GroupBy<Edge, double>>);
+static_assert(std::is_same_v<decltype(ShapeList<Edge>().group_by(by_convexity)), GroupBy<Edge, Convexity>>);
+static_assert(std::is_same_v<decltype(ShapeList<Edge>().group_by(Axis::Z)), GroupBy<Edge>>);
+
+TEST(core_shapelist_semantics) {
+    const Part box = Box(1, 2, 3);
+    const auto faces = box.faces();
+    // == compares as sets (is_same), like build123d
+    CHECK(faces == faces.slice(std::nullopt, std::nullopt, -1));
+    CHECK(faces == faces + faces);
+    CHECK(faces != faces.slice(1));
+    // - and & keep each shape once
+    CHECK((faces + faces - faces.slice(0, 2)).size() == 4);
+    CHECK(((faces + faces) & faces.slice(0, 2)).size() == 2);
+    // expand drops null shapes
+    ShapeList<Shape> with_null{Shape(), Vertex(1, 2, 3), Compound(std::vector<Shape>{Wire::make_rect(1, 1)})};
+    CHECK(with_null.expand().size() == 5);
+    CHECK_THROWS(faces.slice(0, 2, 0), std::invalid_argument);
+    // a GroupBy of enum keys looks groups up by the enum
+    const Part pocket = Box(10, 10, 10) - Pos(0, 0, 3) * Box(4, 4, 4);
+    const auto groups = pocket.edges().group_by(by_convexity);
+    CHECK(groups.group(Convexity::CONCAVE).size() == pocket.edges().filter_by(Convexity::CONCAVE).size());
+    CHECK_THROWS(groups.group(Convexity::SADDLE), std::out_of_range);
+}

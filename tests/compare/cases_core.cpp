@@ -337,7 +337,7 @@ COMPARE_CASES {
         const auto groups = pocket.edges().group_by(by_convexity);
         std::vector<V> sizes;
         for (std::size_t i = 0; i < groups.size(); ++i) {
-            sizes.emplace_back(V::list({V(groups.keys[i]), V(groups[static_cast<std::ptrdiff_t>(i)].size())}));
+            sizes.emplace_back(V::list({V(static_cast<double>(groups.keys[i])), V(groups[static_cast<std::ptrdiff_t>(i)].size())}));
         }
         const auto concave = pocket.edges().filter_by(Convexity::CONCAVE);
         const auto not_concave = pocket.edges().filter_by(Convexity::CONCAVE, true);
@@ -596,6 +596,182 @@ COMPARE_CASES {
         const Part rotated = Box(1, 2, 3).rotate(Axis::Z, 30, true);
         return V::list({V(moved.location().position()), V(regenerated.location().position()),
                         V(rotated.location().orientation()), V(regenerated.center()), V(rotated.faces()[0].normal_at())});
+    });
+
+    // ---- 9: ShapeList
+    add_value("core_shapelist_sort", [] {
+        const Part box = Box(1, 2, 3);
+        const Axis skew({1, 2, 3}, {1, 0.3, 0.7});
+        const auto centers = [](const auto& list) {
+            std::vector<V> out;
+            for (const auto& s : list) out.emplace_back(s.center());
+            return V::list(out);
+        };
+        const auto measures = [](const auto& list) {
+            std::vector<V> out;
+            for (const auto& s : list) out.emplace_back(rnd(measure(s), 6));
+            return V::list(out);
+        };
+        const auto raises = [](auto f) {
+            try {
+                f();
+            } catch (const std::exception&) {
+                return true;
+            }
+            return false;
+        };
+        const Solid cone = Solid::make_cone(2, 1, 2);
+        const auto circles = cone.edges().filter_by(GeomType::CIRCLE);
+        std::vector<V> radii;
+        for (const auto& e : circles.sort_by(SortBy::RADIUS, true)) radii.emplace_back(e.radius());
+        const Part cyl = Cylinder(1, 2);
+        std::vector<Solid> labelled;
+        for (const char* name : {"b", "c", "a"}) {
+            Solid b = Solid::make_box(1, 1, 1);
+            b.label = name;
+            labelled.push_back(b);
+        }
+        std::vector<V> labels;
+        for (const auto& b : ShapeList<Solid>(labelled).sort_by([](const Solid& b) { return b.label; })) {
+            labels.emplace_back(b.label);
+        }
+        const Edge path = Edge::make_line({0, 0, 0}, {1, 2, 3});
+        const ShapeList<Solid> solids{Solid::make_box(3, 1, 1), Solid::make_box(1, 1, 1), Solid::make_box(2, 1, 1)};
+        return V::list({centers(box.vertices().sort_by(skew)), centers(box.vertices().sort_by(skew, true)),
+                        centers(box.faces().sort_by(skew)), measures(box.faces().sort_by(SortBy::AREA)),
+                        measures(box.faces() < SortBy::AREA), V::list(radii),
+                        V(raises([&] { (void)cone.edges().sort_by(SortBy::RADIUS); })),
+                        V(raises([&] { (void)cyl.faces().sort_by(SortBy::RADIUS); })),
+                        V(cyl.faces().filter_by(GeomType::CYLINDER).sort_by(SortBy::RADIUS).size()),
+                        measures(box.edges().sort_by(SortBy::LENGTH)),
+                        centers((Pos(1, 1.2, 1.1) * Box(1, 2, 3)).vertices().sort_by(SortBy::DISTANCE)),
+                        measures(solids.sort_by(SortBy::VOLUME)),
+                        measures(box.faces().sort_by([](const Face& f) { return f.area(); }, true)), V::list(labels),
+                        centers(Box(1, 2, 3, Align::MIN).vertices().sort_by(path)),
+                        centers(box.edges().sort_by_distance(Vector(-0.2, 0.13, 0.5))),
+                        centers(box.faces().sort_by_distance(Vertex(5, 0.3, 0.25), true)),
+                        V(raises([&] { (void)box.vertices().sort_by(SortBy::LENGTH); }))});
+    });
+    add_value("core_shapelist_group", [] {
+        const auto sizes = [](const auto& groups) {
+            std::vector<V> out;
+            for (const auto& g : groups) out.emplace_back(g.size());
+            return V::list(out);
+        };
+        const auto keys = [](const auto& groups) { return V::list_of(groups.keys); };
+        const Solid box = Solid::make_box(1, 1, 2);
+        const Edge line = Edge::make_line({0, 0, 0}, {1, 1, 2});
+        std::vector<Solid> boxes;
+        for (int i = 0; i < 6; ++i) {
+            Solid b = Solid::make_box(1, 1, 1);
+            b.label = i < 3 ? "A" : (i < 5 ? "B" : "");
+            boxes.push_back(b);
+        }
+        const auto by_label = ShapeList<Solid>(boxes).group_by([](const Solid& b) { return b.label; });
+        std::vector<V> label_keys;
+        for (const auto& k : by_label.keys) label_keys.emplace_back(k);
+        const Part box1 = Box(2, 2, 2);
+        const Part box2 = Box(2, 2, 2).translate(Vector(1, 1, 1));
+        const auto interior = [](const Edge& e) { return e.is_interior(); };
+        const auto fused = (box1 + box2).edges().group_by(interior);
+        const auto cut = (box1 - box2).edges().group_by(interior);
+        bool missing = false;
+        try {
+            (void)by_label.group("C");
+        } catch (const std::out_of_range&) {
+            missing = true;
+        }
+        const ShapeList<Solid> solids{Solid::make_box(1, 1, 1), Solid::make_box(1, 1, 2), Solid::make_box(1, 1, 1),
+                                      Solid::make_box(1, 1, 3), Solid::make_box(1, 1, 2)};
+        return V::list({sizes(box.vertices().group_by(Axis::Z)), keys(box.vertices().group_by(Axis::Z)),
+                        keys(box.vertices().group_by(Axis::Z, true)),
+                        keys(box.vertices().group_by(Axis({0, 0, 0}, {1, 1, 0.5}), false, 2)),
+                        sizes(box.edges().group_by(SortBy::LENGTH)), sizes(box.faces().group_by(SortBy::AREA)),
+                        sizes(box.vertices().group_by(line)), keys(box.vertices().group_by(line)),
+                        sizes(by_label), V::list(label_keys), V(by_label.group("A").size()), V(missing),
+                        V(by_label.group_for(boxes[3]).size()), V(fused.group(true).size()),
+                        V(fused.group(false).size()), V(cut.group(true).size()), V(cut.group(false).size()),
+                        V((solids << SortBy::VOLUME).size()), V((solids >> SortBy::VOLUME).size()),
+                        V((box.faces() >> Axis::X).size()), V((box.faces() << Axis::Z)[0].center())});
+    });
+    add_value("core_shapelist_filter", [] {
+        const Solid box = Solid::make_box(1, 1, 1);
+        const Part c1 = Cylinder(1, 3);
+        const Part c2 = Cylinder(1, 3, Rotation(90, 0, 0));
+        const Part bar = Box(1, 2, 3);
+        const auto counts_by_position = [&](const Axis& axis, double lo, double hi) {
+            std::vector<V> out;
+            for (const auto& inclusive : {std::pair<bool, bool>{true, true}, {true, false}, {false, true}, {false, false}}) {
+                out.emplace_back(bar.vertices().filter_by_position(axis, lo, hi, inclusive).size());
+            }
+            out.emplace_back(bar.faces().filter_by_position(axis, lo - 0.1, hi - 0.2).size());
+            return V::list(out);
+        };
+        std::vector<V> positioned;
+        for (const auto& f : bar.faces().filter_by_position(Axis({0, 0, 0}, {1, 0.3, 0.7}), -0.6, 0.6)) {
+            positioned.emplace_back(f.center());
+        }
+        const Part pocket = Box(10, 10, 10) - Pos(0, 0, 3) * Box(4, 4, 4);
+        return V::list({V(box.faces().filter_by(Axis::X).size()), V(box.edges().filter_by(Axis::X).size()),
+                        V(box.vertices().filter_by(Axis::X).size()), V(c1.faces().filter_by(Plane::XY).size()),
+                        V(c1.edges().filter_by(Plane::XY).size()), V(c2.faces().filter_by(Plane::XZ).size()),
+                        V(c2.edges().filter_by(Plane::XZ).size()), V(c1.wires().filter_by(Plane::XY).size()),
+                        V(c2.wires().filter_by(Plane::XZ).size()),
+                        V((Pos(1, 2, 3) * c2).edges().filter_by(Plane::XZ).size()),
+                        V(Solid::make_cylinder(1, 1).faces().filter_by(GeomType::PLANE, true).size()),
+                        counts_by_position(Axis::Z, -1.5, 1.5), counts_by_position(Axis::Y, -1, 0),
+                        V::list(positioned), V((box.edges() | Axis::Z).size()), V((c1.faces() | GeomType::PLANE).size()),
+                        V((c1.edges() | Plane::XY).size()), V((pocket.edges() | Convexity::CONCAVE).size()),
+                        V(box.edges().filter_by([](const Edge& e) { return e.center().Z > 0.5; }).size()),
+                        V(box.edges().filter_by(Axis::Z, true).size())});
+    });
+    add_value("core_shapelist_ops", [] {
+        const Part box = Box(1, 1, 1);
+        const Part cyl = Cylinder(1, 1);
+        const ShapeList<Shape> sl{box, cyl};
+        const ShapeList<Shape> same{cyl, box};
+        const ShapeList<Shape> repeated{cyl, box, box};
+        const ShapeList<Shape> other{Box(1, 1, 1), Box(1, 2, 3)};
+        const auto faces = Box(1, 2, 3).faces();
+        const auto top = faces.sort_by(Axis::Z).slice(-2);
+        const auto doubled = faces + faces;
+        const auto measures = [](const auto& list) {
+            std::vector<V> out;
+            for (const auto& s : list) out.emplace_back(rnd(measure(s), 6));
+            return V::list(out);
+        };
+        const auto centers = [](const auto& list) {
+            std::vector<V> out;
+            for (const auto& s : list) out.emplace_back(s.center());
+            return V::list(out);
+        };
+        ShapeList<Face> appended = faces.slice(0, 1);
+        appended += faces[1];
+        appended += faces.slice(2, 4);
+        const auto messages = [](auto f) -> V {
+            try {
+                f();
+            } catch (const std::invalid_argument& e) {
+                return V(std::string(e.what()));
+            }
+            return V();
+        };
+        ShapeList<Shape> nested;
+        const Wire square = Wire::make_rect(1, 1);
+        const Shell shell = Box(1, 1, 1).shells()[0];
+        nested.push_back(Compound(std::vector<Shape>{Solid::make_box(1, 1, 1), square, Compound(std::vector<Shape>{shell})}));
+        nested.push_back(Vertex(1, 2, 3));
+        return V::list({V(sl == same), V(sl == repeated), V(sl != same), V(sl == other), V(sl != other),
+                        describe(doubled - top), describe(faces - top), describe(doubled & top),
+                        V((doubled - top).size()), V((doubled & top).size()), V((faces + faces[0]).size()),
+                        V(appended.size()), centers(faces.slice(std::nullopt, std::nullopt, 2)),
+                        centers(faces.slice(std::nullopt, std::nullopt, -1)), centers(faces.slice(1, -1, 2)),
+                        centers(faces.slice(5, 1, -2)), centers(faces.slice(-2)), V(faces.slice(10).size()),
+                        centers(faces.slice(-10, 2)), V(faces.first().center()), V(faces.last().center()),
+                        V(ShapeList<Shape>().center()), V(ShapeList<Vertex>{Vertex(0, 0, 0), Vertex(1, 0, 0), Vertex(2, 0, 0)}.center()),
+                        V(ShapeList<Shape>{box, Vertex(1, 1, 1)}.compound().volume()), V(sl.compounds().size()),
+                        messages([&] { (void)sl.compound(); }), messages([&] { (void)faces.edge(); }),
+                        messages([&] { (void)faces.solid(); }), describe(nested.expand()), measures(faces.slice(0, 2))});
     });
 
     add_value("core_geom_with_shape", [] {

@@ -13,6 +13,7 @@
 #include <string>
 #include <tuple>
 #include <type_traits>
+#include <unordered_set>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -47,7 +48,7 @@ class SplitResult;
 /// An operand of Shape::intersect: a shape or a geometry object (Vector and Location
 /// act as a Vertex, Axis as an infinite Edge, Plane as an infinite Face).
 using IntersectArg = std::variant<Shape, Vector, Location, Axis, Plane>;
-template <class T>
+template <class T, class K = double>
 class GroupBy;
 
 /// RAII guard that disables the automatic clean() after boolean operations,
@@ -977,9 +978,41 @@ Shape algebra(AlgebraOp op, const Shape& a, const std::vector<const Shape*>& b, 
 Shape algebra_and(const Shape& a, const std::vector<IntersectArg>& others, SelfKind kind);
 
 std::vector<TopoDS_Shape> list_entities(const TopoDS_Shape& shape, int topabs_type);
-double sort_key_axis(const Shape& s, const Axis& axis);
-double sort_key(const Shape& s, SortBy sort_by);
+/// The location that sort_by/group_by(Axis) measure in: axis.location().inverse().
+Location axis_sort_location(const Axis& axis);
+/// (axis_as_location * Location(s.center())).position().Z, as build123d.
+double sort_key_axis(const Shape& s, const Location& axis_as_location);
+/// The SortBy property of a shape; std::nullopt where build123d's is None (the length of
+/// a non-planar face, the radius of a face that is not a cylinder or sphere). Throws for
+/// shapes without the property and for edges that are not circles (RADIUS).
+std::optional<double> sort_key_value(const Shape& s, SortBy sort_by);
+/// sort_key_value as a sort key: a None value throws when keys are `compared` (Python
+/// can't order None), else counts as 0.
+double sort_key(const Shape& s, SortBy sort_by, bool compared = true);
+/// build123d's hasattr(obj, "radius"): Edges, Wires (their radius is evaluated, so a
+/// non-circular one throws as in build123d) and Faces.
+bool has_radius(const Shape& s);
+/// Plane(axis).to_local_coords(s).center().Z, as build123d's filter_by_position.
+double local_center_z(const Shape& s, const Plane& plane);
 double sort_key_path(const Shape& s, const Mixin1D& path);
+
+/// Sets of shapes with build123d's hash and equality (TShape and location: is_same).
+struct ShapePtrHash {
+    std::size_t operator()(const Shape* s) const { return s->hash(); }
+};
+struct ShapePtrSame {
+    bool operator()(const Shape* a, const Shape* b) const { return a->is_same(*b); }
+};
+using ShapePtrSet = std::unordered_set<const Shape*, ShapePtrHash, ShapePtrSame>;
+template <class L>
+ShapePtrSet shape_set(const L& shapes) {
+    ShapePtrSet set;
+    for (const auto& s : shapes) set.insert(&s);
+    return set;
+}
+/// ShapeList::expand for any list of shapes.
+ShapeList<Shape> expand_shapes(const std::vector<Shape>& shapes);
+
 bool axis_parallel_predicate(const Shape& s, const Axis& axis, double tolerance);
 bool plane_parallel_predicate(const Shape& s, const Plane& plane, double tolerance);
 double round_digits(double value, int digits);
@@ -1004,22 +1037,46 @@ using algebra_t = typename detail::algebra_for<std::decay_t<T>::kDim>::type;
 struct ConvexityKey {};
 inline constexpr ConvexityKey by_convexity{};
 
-/// Result of ShapeList::group_by: sorted groups, indexable (negative indices allowed).
-template <class T>
+namespace detail {
+/// The key type of a group_by key function returning R: numbers (and bools) become
+/// doubles rounded to tol_digits, as build123d rounds them; other keys (strings, enums)
+/// are kept as they are.
+template <class R>
+using group_key_t = std::conditional_t<std::is_arithmetic_v<std::decay_t<R>>, double, std::decay_t<R>>;
+
+template <class K>
+std::string group_key_name(const K& key) {
+    if constexpr (std::is_arithmetic_v<K>) {
+        return std::to_string(key);
+    } else if constexpr (std::is_convertible_v<K, std::string>) {
+        return "'" + std::string(key) + "'";
+    } else if constexpr (std::is_enum_v<K>) {
+        return std::to_string(static_cast<long long>(key));
+    } else {
+        return "(key)";
+    }
+}
+}  // namespace detail
+
+/// Result of ShapeList::group_by: the groups sorted by key, indexable (negative indices
+/// allowed). K is the key type: double for numeric keys, else what the key function returns.
+template <class T, class K>
 class GroupBy : public std::vector<ShapeList<T>> {
 public:
     using Base = std::vector<ShapeList<T>>;
-    std::vector<double> keys;
-    std::function<double(const T&)> key_f;
+    using key_type = K;
+    /// The key of each group, in group order.
+    std::vector<K> keys;
+    std::function<K(const T&)> key_f;
 
     ShapeList<T>& operator[](std::ptrdiff_t i) { return Base::at(norm(i)); }
     const ShapeList<T>& operator[](std::ptrdiff_t i) const { return Base::at(norm(i)); }
-    /// The group with the given key.
-    const ShapeList<T>& group(double key) const {
+    /// The group with the given key; std::out_of_range (Python's KeyError) if there is none.
+    const ShapeList<T>& group(const K& key) const {
         for (std::size_t i = 0; i < keys.size(); ++i) {
             if (keys[i] == key) return Base::at(i);
         }
-        throw std::out_of_range("GroupBy: no group with key " + std::to_string(key));
+        throw std::out_of_range("GroupBy: no group with key " + detail::group_key_name(key));
     }
     /// The group containing a shape like the given one.
     const ShapeList<T>& group_for(const T& shape) const { return group(key_f(shape)); }
@@ -1048,35 +1105,55 @@ public:
     const T& operator[](std::ptrdiff_t i) const { return Base::at(norm(i)); }
     const T& first() const { return (*this)[0]; }
     const T& last() const { return (*this)[-1]; }
-    /// Python slicing list[start:stop].
-    ShapeList slice(std::ptrdiff_t start,
-                    std::optional<std::ptrdiff_t> stop = std::nullopt) const {
+    /// Python slicing list[start:stop:step]; std::nullopt stands for an omitted bound, so
+    /// slice(std::nullopt, std::nullopt, -1) is list[::-1]. std::invalid_argument for step 0.
+    ShapeList slice(std::optional<std::ptrdiff_t> start, std::optional<std::ptrdiff_t> stop = std::nullopt,
+                    std::ptrdiff_t step = 1) const {
+        if (step == 0) throw std::invalid_argument("slice step cannot be zero");
         const auto n = static_cast<std::ptrdiff_t>(this->size());
-        auto clamp = [n](std::ptrdiff_t i) {
-            if (i < 0) i += n;
-            return std::min(std::max<std::ptrdiff_t>(i, 0), n);
+        // CPython's PySlice_AdjustIndices
+        const std::ptrdiff_t lower = step < 0 ? -1 : 0;
+        const std::ptrdiff_t upper = step < 0 ? n - 1 : n;
+        const auto bound = [&](std::optional<std::ptrdiff_t> value, std::ptrdiff_t omitted) {
+            if (!value) return omitted;
+            std::ptrdiff_t i = *value;
+            if (i < 0) {
+                i += n;
+                if (i < lower) i = lower;
+            } else if (i > upper) {
+                i = upper;
+            }
+            return i;
         };
-        const std::ptrdiff_t b = clamp(start);
-        const std::ptrdiff_t e = stop ? clamp(*stop) : n;
+        const std::ptrdiff_t b = bound(start, step < 0 ? upper : lower);
+        const std::ptrdiff_t e = bound(stop, step < 0 ? lower : upper);
         ShapeList out;
-        for (std::ptrdiff_t i = b; i < e; ++i) out.push_back(Base::at(static_cast<std::size_t>(i)));
+        for (std::ptrdiff_t i = b; step > 0 ? i < e : i > e; i += step) {
+            out.push_back(Base::at(static_cast<std::size_t>(i)));
+        }
         return out;
     }
 
     // ---- sorting
     ShapeList sort_by(const Axis& axis = Axis::Z, bool reverse = false) const {
-        return sorted([&](const T& s) { return detail::sort_key_axis(s, axis); }, reverse);
+        const Location axis_as_location = detail::axis_sort_location(axis);
+        return sorted([&](const T& s) { return detail::sort_key_axis(s, axis_as_location); }, reverse);
     }
+    /// Sort by a property; build123d sorts only the shapes that have a radius for RADIUS.
     ShapeList sort_by(SortBy sort_by, bool reverse = false) const {
-        return sorted([&](const T& s) { return detail::sort_key(s, sort_by); }, reverse);
+        const ShapeList candidates =
+            sort_by == SortBy::RADIUS ? filtered([](const T& s) { return detail::has_radius(s); }, false) : *this;
+        const bool compared = candidates.size() > 1;
+        return candidates.sorted([&](const T& s) { return detail::sort_key(s, sort_by, compared); }, reverse);
     }
     /// Sort by the parameter of the closest point on a path (Edge or Wire).
     ShapeList sort_by(const Mixin1D& path, bool reverse = false) const {
         return sorted([&](const T& s) { return detail::sort_key_path(s, path); }, reverse);
     }
+    /// Sort by a key function returning anything ordered with < (numbers, strings, ...).
     template <class F, std::enable_if_t<std::is_invocable_v<F, const T&>, int> = 0>
     ShapeList sort_by(F key, bool reverse = false) const {
-        return sorted([&](const T& s) { return static_cast<double>(key(s)); }, reverse);
+        return sorted([&](const T& s) { return key(s); }, reverse);
     }
     ShapeList sort_by_distance(const Shape& other, bool reverse = false) const {
         return sorted([&](const T& s) { return detail::shape_distance(s, other); }, reverse);
@@ -1088,8 +1165,9 @@ public:
     // ---- grouping
     GroupBy<T> group_by(const Axis& axis = Axis::Z, bool reverse = false,
                         int tol_digits = 6) const {
-        return grouped([axis](const T& s) { return detail::sort_key_axis(s, axis); }, reverse,
-                       tol_digits);
+        const Location axis_as_location = detail::axis_sort_location(axis);
+        return grouped([axis_as_location](const T& s) { return detail::sort_key_axis(s, axis_as_location); },
+                       reverse, tol_digits);
     }
     GroupBy<T> group_by(SortBy sort_by, bool reverse = false, int tol_digits = 6) const {
         return grouped([sort_by](const T& s) { return detail::sort_key(s, sort_by); }, reverse,
@@ -1100,15 +1178,17 @@ public:
         return grouped([p](const T& s) { return detail::sort_key_path(s, p); }, reverse,
                        tol_digits);
     }
-    template <class F, std::enable_if_t<std::is_invocable_v<F, const T&>, int> = 0>
-    GroupBy<T> group_by(F key, bool reverse = false, int tol_digits = 6) const {
-        return grouped([key](const T& s) { return static_cast<double>(key(s)); }, reverse,
-                       tol_digits);
+    /// Group by a key function: numeric (and bool) keys are rounded to tol_digits and become
+    /// double keys; other keys (strings, enums, ...) are grouped as they are, ordered with <.
+    template <class F, std::enable_if_t<std::is_invocable_v<F, const T&>, int> = 0,
+              class K = detail::group_key_t<std::invoke_result_t<F, const T&>>>
+    GroupBy<T, K> group_by(F key, bool reverse = false, int tol_digits = 6) const {
+        return grouped<K>([key](const T& s) -> K { return static_cast<K>(key(s)); }, reverse, tol_digits);
     }
     /// build123d's group_by(Convexity): groups of equal convexity in the enum's order
-    /// (the group keys are static_cast<double>(Convexity)).
-    GroupBy<T> group_by(ConvexityKey, bool reverse = false, int tol_digits = 6) const {
-        return grouped([](const T& s) { return static_cast<double>(s.convexity()); }, reverse, tol_digits);
+    /// (the group keys are Convexity values).
+    GroupBy<T, Convexity> group_by(ConvexityKey, bool reverse = false, int tol_digits = 6) const {
+        return grouped<Convexity>([](const T& s) { return s.convexity(); }, reverse, tol_digits);
     }
 
     // ---- filtering
@@ -1138,9 +1218,10 @@ public:
     /// Objects whose centers lie between minimum and maximum along the axis, sorted by it.
     ShapeList filter_by_position(const Axis& axis, double minimum, double maximum,
                                  std::pair<bool, bool> inclusive = {true, true}) const {
+        const Plane axis_plane(axis);
         ShapeList out;
         for (const T& s : *this) {
-            const double z = detail::sort_key_axis(s, axis);
+            const double z = detail::local_center_z(s, axis_plane);
             const bool lo = inclusive.first ? (minimum <= z) : (minimum < z);
             const bool hi = inclusive.second ? (z <= maximum) : (z < maximum);
             if (lo && hi) out.push_back(s);
@@ -1164,6 +1245,11 @@ public:
     Face face() const;
     Shell shell() const;
     Solid solid() const;
+    /// The one compound among compounds(); std::invalid_argument for none or several.
+    Compound compound() const;
+    /// Compounds dissolved into their elements (recursively), wires into their edges and
+    /// shells into their faces, null shapes dropped.
+    ShapeList<Shape> expand() const;
     /// Average of the centers.
     Vector center() const {
         if (this->empty()) return Vector(0, 0, 0);
@@ -1172,10 +1258,17 @@ public:
         return total / static_cast<double>(this->size());
     }
 
-    // ---- set-like operators
+    // ---- list and set operators
+    /// Concatenation (duplicates kept), as Python's list +.
     ShapeList operator+(const ShapeList& other) const {
         ShapeList out(*this);
         out.insert(out.end(), other.begin(), other.end());
+        return out;
+    }
+    /// A new list with the shape appended.
+    ShapeList operator+(const T& item) const {
+        ShapeList out(*this);
+        out.push_back(item);
         return out;
     }
     ShapeList& operator+=(const ShapeList& other) {
@@ -1186,22 +1279,39 @@ public:
         this->push_back(item);
         return *this;
     }
-    /// Elements not present (is_same) in `other`.
+    /// The shapes not in `other` (build123d's set difference: each shape once, is_same;
+    /// in this list's order, where Python's set order is arbitrary).
     ShapeList operator-(const ShapeList& other) const {
+        const detail::ShapePtrSet exclude = detail::shape_set(other);
+        detail::ShapePtrSet seen;
         ShapeList out;
         for (const T& s : *this) {
-            if (!contains_shape(other, s) && !contains_shape(out, s)) out.push_back(s);
+            if (exclude.count(&s) == 0 && seen.insert(&s).second) out.push_back(s);
         }
         return out;
     }
-    /// Elements present (is_same) in both lists.
+    /// The shapes in both lists (build123d's set intersection, in this list's order).
     ShapeList operator&(const ShapeList& other) const {
+        const detail::ShapePtrSet keep = detail::shape_set(other);
+        detail::ShapePtrSet seen;
         ShapeList out;
         for (const T& s : *this) {
-            if (contains_shape(other, s) && !contains_shape(out, s)) out.push_back(s);
+            if (keep.count(&s) != 0 && seen.insert(&s).second) out.push_back(s);
         }
         return out;
     }
+    /// build123d compares ShapeLists as sets: the same shapes (is_same), in any order and
+    /// any number of times.
+    bool operator==(const ShapeList& other) const {
+        const detail::ShapePtrSet mine = detail::shape_set(*this);
+        const detail::ShapePtrSet theirs = detail::shape_set(other);
+        if (mine.size() != theirs.size()) return false;
+        for (const Shape* s : mine) {
+            if (theirs.count(s) == 0) return false;
+        }
+        return true;
+    }
+    bool operator!=(const ShapeList& other) const { return !(*this == other); }
     bool contains(const T& shape) const { return contains_shape(*this, shape); }
 
 private:
@@ -1214,14 +1324,15 @@ private:
         }
         return static_cast<std::size_t>(i);
     }
-    template <class K>
-    ShapeList sorted(K key, bool reverse) const {
-        std::vector<std::pair<double, std::size_t>> keyed;
+    template <class F>
+    ShapeList sorted(F key, bool reverse) const {
+        using R = std::decay_t<std::invoke_result_t<F, const T&>>;
+        std::vector<std::pair<R, std::size_t>> keyed;
         keyed.reserve(this->size());
         for (std::size_t i = 0; i < this->size(); ++i) keyed.emplace_back(key(Base::at(i)), i);
         if (reverse) {
             std::stable_sort(keyed.begin(), keyed.end(),
-                             [](const auto& a, const auto& b) { return a.first > b.first; });
+                             [](const auto& a, const auto& b) { return b.first < a.first; });
         } else {
             std::stable_sort(keyed.begin(), keyed.end(),
                              [](const auto& a, const auto& b) { return a.first < b.first; });
@@ -1231,25 +1342,29 @@ private:
         for (const auto& k : keyed) out.push_back(Base::at(k.second));
         return out;
     }
-    template <class K>
-    GroupBy<T> grouped(K key, bool reverse, int tol_digits) const {
-        GroupBy<T> groups;
-        groups.key_f = [key, tol_digits](const T& s) {
-            return detail::round_digits(key(s), tol_digits);
+    template <class K = double, class F>
+    GroupBy<T, K> grouped(F key, bool reverse, int tol_digits) const {
+        GroupBy<T, K> groups;
+        groups.key_f = [key, tol_digits](const T& s) -> K {
+            if constexpr (std::is_same_v<K, double>) {
+                return detail::round_digits(key(s), tol_digits);
+            } else {
+                return key(s);
+            }
         };
-        std::vector<std::pair<double, std::size_t>> keyed;
+        std::vector<std::pair<K, std::size_t>> keyed;
         for (std::size_t i = 0; i < this->size(); ++i) {
             keyed.emplace_back(groups.key_f(Base::at(i)), i);
         }
         if (reverse) {
             std::stable_sort(keyed.begin(), keyed.end(),
-                             [](const auto& a, const auto& b) { return a.first > b.first; });
+                             [](const auto& a, const auto& b) { return b.first < a.first; });
         } else {
             std::stable_sort(keyed.begin(), keyed.end(),
                              [](const auto& a, const auto& b) { return a.first < b.first; });
         }
         for (const auto& k : keyed) {
-            if (groups.keys.empty() || groups.keys.back() != k.first) {
+            if (groups.keys.empty() || !(groups.keys.back() == k.first)) {
                 groups.keys.push_back(k.first);
                 groups.emplace_back();
             }
@@ -1329,6 +1444,8 @@ template <class T>
 ShapeList<T> operator|(const ShapeList<T>& l, const Plane& plane) { return l.filter_by(plane); }
 template <class T>
 ShapeList<T> operator|(const ShapeList<T>& l, GeomType g) { return l.filter_by(g); }
+template <class T>
+ShapeList<T> operator|(const ShapeList<T>& l, Convexity c) { return l.filter_by(c); }
 
 template <class T>
 Vertex ShapeList<T>::vertex() const {
@@ -1365,6 +1482,16 @@ Solid ShapeList<T>::solid() const {
     auto v = solids();
     if (v.size() != 1) detail::throw_count("solid", v.size());
     return v[0];
+}
+template <class T>
+Compound ShapeList<T>::compound() const {
+    auto v = compounds();
+    if (v.size() != 1) detail::throw_count("compound", v.size());
+    return v[0];
+}
+template <class T>
+ShapeList<Shape> ShapeList<T>::expand() const {
+    return detail::expand_shapes(std::vector<Shape>(this->begin(), this->end()));
 }
 
 // ---------------------------------------------------------------------------

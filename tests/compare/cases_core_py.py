@@ -505,6 +505,151 @@ def transform_keeps_location():
               regenerated.center(), rotated.faces()[0].normal_at()])
 
 
+def raises(f):
+    try:
+        f()
+    except Exception:  # noqa: BLE001
+        return True
+    return False
+
+
+def centers(shapes):
+    return [s.center() for s in shapes]
+
+
+def measures(shapes):
+    return [rnd(measure(s), 6) for s in shapes]
+
+
+def shapelist_sort():
+    box = Box(1, 2, 3)
+    skew = Axis((1, 2, 3), (1, 0.3, 0.7))
+    cone = Solid.make_cone(2, 1, 2)
+    circles = cone.edges().filter_by(GeomType.CIRCLE)
+    radii = [e.radius for e in circles.sort_by(SortBy.RADIUS, reverse=True)]
+    cyl = Cylinder(1, 2)
+    labelled = []
+    for name in ["b", "c", "a"]:
+        b = Solid.make_box(1, 1, 1)
+        b.label = name
+        labelled.append(b)
+    labels = [b.label for b in ShapeList(labelled).sort_by(lambda b: b.label)]
+    path = Edge.make_line((0, 0, 0), (1, 2, 3))
+    solids = ShapeList([Solid.make_box(3, 1, 1), Solid.make_box(1, 1, 1), Solid.make_box(2, 1, 1)])
+    return V([centers(box.vertices().sort_by(skew)), centers(box.vertices().sort_by(skew, reverse=True)),
+              centers(box.faces().sort_by(skew)), measures(box.faces().sort_by(SortBy.AREA)),
+              measures(box.faces() < SortBy.AREA), radii,
+              raises(lambda: cone.edges().sort_by(SortBy.RADIUS)),
+              raises(lambda: cyl.faces().sort_by(SortBy.RADIUS)),
+              len(cyl.faces().filter_by(GeomType.CYLINDER).sort_by(SortBy.RADIUS)),
+              measures(box.edges().sort_by(SortBy.LENGTH)),
+              centers((Pos(1, 1.2, 1.1) * Box(1, 2, 3)).vertices().sort_by(SortBy.DISTANCE)),
+              measures(solids.sort_by(SortBy.VOLUME)),
+              measures(box.faces().sort_by(lambda f: f.area, reverse=True)), labels,
+              centers(Box(1, 2, 3, align=Align.MIN).vertices().sort_by(path)),
+              centers(box.edges().sort_by_distance((-0.2, 0.13, 0.5))),
+              centers(box.faces().sort_by_distance(Vertex(5, 0.3, 0.25), reverse=True)),
+              raises(lambda: box.vertices().sort_by(SortBy.LENGTH))])
+
+
+def shapelist_group():
+    def sizes(groups):
+        return [len(g) for g in groups]
+
+    def keys(groups):
+        return [k for k, _ in groups.key_to_group_index]
+
+    box = Solid.make_box(1, 1, 2)
+    line = Edge.make_line((0, 0, 0), (1, 1, 2))
+    boxes = []
+    for i in range(6):
+        b = Solid.make_box(1, 1, 1)
+        b.label = "A" if i < 3 else ("B" if i < 5 else "")
+        boxes.append(b)
+    by_label = ShapeList(boxes).group_by(lambda b: b.label)
+    box1 = Box(2, 2, 2)
+    box2 = Box(2, 2, 2).translate((1, 1, 1))
+    fused = (box1 + box2).edges().group_by(Edge.is_interior)
+    cut = (box1 - box2).edges().group_by(Edge.is_interior)
+    try:
+        by_label.group("C")
+        missing = False
+    except KeyError:
+        missing = True
+    solids = ShapeList([Solid.make_box(1, 1, 1), Solid.make_box(1, 1, 2), Solid.make_box(1, 1, 1),
+                        Solid.make_box(1, 1, 3), Solid.make_box(1, 1, 2)])
+    return V([sizes(box.vertices().group_by(Axis.Z)), keys(box.vertices().group_by(Axis.Z)),
+              keys(box.vertices().group_by(Axis.Z, reverse=True)),
+              keys(box.vertices().group_by(Axis((0, 0, 0), (1, 1, 0.5)), tol_digits=2)),
+              sizes(box.edges().group_by(SortBy.LENGTH)), sizes(box.faces().group_by(SortBy.AREA)),
+              sizes(box.vertices().group_by(line)), keys(box.vertices().group_by(line)),
+              sizes(by_label), keys(by_label), len(by_label.group("A")), missing,
+              len(by_label.group_for(boxes[3])), len(fused.group(True)), len(fused.group(False)),
+              len(cut.group(True)), len(cut.group(False)), len(solids << SortBy.VOLUME),
+              len(solids >> SortBy.VOLUME), len(box.faces() >> Axis.X), (box.faces() << Axis.Z)[0].center()])
+
+
+def shapelist_filter():
+    box = Solid.make_box(1, 1, 1)
+    c1 = Cylinder(1, 3)
+    c2 = Cylinder(1, 3, rotation=(90, 0, 0))
+    bar = Box(1, 2, 3)
+
+    def counts_by_position(axis, lo, hi):
+        out = [len(bar.vertices().filter_by_position(axis, lo, hi, inclusive))
+               for inclusive in [(True, True), (True, False), (False, True), (False, False)]]
+        out.append(len(bar.faces().filter_by_position(axis, lo - 0.1, hi - 0.2)))
+        return out
+
+    positioned = centers(bar.faces().filter_by_position(Axis((0, 0, 0), (1, 0.3, 0.7)), -0.6, 0.6))
+    pocket = Box(10, 10, 10) - Pos(0, 0, 3) * Box(4, 4, 4)
+    return V([len(box.faces().filter_by(Axis.X)), len(box.edges().filter_by(Axis.X)),
+              len(box.vertices().filter_by(Axis.X)), len(c1.faces().filter_by(Plane.XY)),
+              len(c1.edges().filter_by(Plane.XY)), len(c2.faces().filter_by(Plane.XZ)),
+              len(c2.edges().filter_by(Plane.XZ)), len(c1.wires().filter_by(Plane.XY)),
+              len(c2.wires().filter_by(Plane.XZ)), len((Pos(1, 2, 3) * c2).edges().filter_by(Plane.XZ)),
+              len(Solid.make_cylinder(1, 1).faces().filter_by(GeomType.PLANE, reverse=True)),
+              counts_by_position(Axis.Z, -1.5, 1.5), counts_by_position(Axis.Y, -1, 0), positioned,
+              len(box.edges() | Axis.Z), len(c1.faces() | GeomType.PLANE), len(c1.edges() | Plane.XY),
+              len(pocket.edges() | Convexity.CONCAVE), len(box.edges().filter_by(lambda e: e.center().Z > 0.5)),
+              len(box.edges().filter_by(Axis.Z, reverse=True))])
+
+
+def shapelist_ops():
+    box = Box(1, 1, 1)
+    cyl = Cylinder(1, 1)
+    sl = ShapeList([box, cyl])
+    same = ShapeList([cyl, box])
+    repeated = ShapeList([cyl, box, box])
+    other = ShapeList([Box(1, 1, 1), Box(1, 2, 3)])
+    faces = Box(1, 2, 3).faces()
+    top = faces.sort_by(Axis.Z)[-2:]
+    doubled = faces + faces
+    appended = faces[0:1]
+    appended += faces[1]
+    appended += faces[2:4]
+
+    def messages(f):
+        try:
+            f()
+        except ValueError as e:
+            return str(e)
+        return None
+
+    square = Wire.make_rect(1, 1)
+    shell = Box(1, 1, 1).shells()[0]
+    nested = ShapeList([Compound([Solid.make_box(1, 1, 1), square, Compound([shell])]), Vertex(1, 2, 3)])
+    return V([sl == same, sl == repeated, sl != same, sl == other, sl != other, describe(doubled - top),
+              describe(faces - top), describe(doubled & top), len(doubled - top), len(doubled & top),
+              len(faces + faces[0]), len(appended), centers(faces[::2]), centers(faces[::-1]),
+              centers(faces[1:-1:2]), centers(faces[5:1:-2]), centers(faces[-2:]), len(faces[10:]),
+              centers(faces[-10:2]), faces.first.center(), faces.last.center(), ShapeList().center(),
+              ShapeList(Vertex(i, 0, 0) for i in range(3)).center(),
+              ShapeList([box, Vertex(1, 1, 1)]).compound().volume, len(sl.compounds()),
+              messages(lambda: sl.compound()), messages(lambda: faces.edge()), messages(lambda: faces.solid()),
+              describe(nested.expand()), measures(faces[0:2])])
+
+
 CASES = {
     # 1a
     "core_and_list_part": lambda: Box(4, 4, 4) & [Pos(1, 0, 0) * Box(4, 4, 4), Sphere(2.5)],
@@ -592,4 +737,9 @@ CASES = {
     "core_rotate_transform": lambda: Box(1, 2, 3).rotate(Axis.Z, 30, transform=True),
     "core_translate_transform": lambda: Box(1, 2, 3).translate((1, 2, 3), transform=True),
     "core_transform_keeps_location": transform_keeps_location,
+    # 9: ShapeList
+    "core_shapelist_sort": shapelist_sort,
+    "core_shapelist_group": shapelist_group,
+    "core_shapelist_filter": shapelist_filter,
+    "core_shapelist_ops": shapelist_ops,
 }
