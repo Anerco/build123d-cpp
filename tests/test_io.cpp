@@ -148,3 +148,46 @@ TEST(io_geom_encoder) {
     CHECK_THROWS(GeomEncoder::loads(R"({"Vector": [1, 2, 3], "Axis": 1})"), std::invalid_argument);
     CHECK_THROWS(GeomEncoder::loads(R"({"Foo": [1]})"), std::out_of_range);
 }
+
+static_assert(std::is_same_v<decltype(import_svg(std::string())), ShapeList<Shape>>);
+
+TEST(io_import_svg) {
+    const std::string svg = R"(<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10">
+        <rect id="a" width="10" height="5" fill="red"/>
+        <path id="b" d="M0 0 L5 5" stroke="blue" fill="none"/></svg>)";
+    std::istringstream in(svg);
+    const ShapeList<Shape> shapes = import_svg(in);
+    CHECK(shapes.size() == 2);
+    CHECK(shapes[0].wrapped().ShapeType() == TopAbs_FACE);
+    CHECK(shapes[0].label == "a");
+    CHECK(shapes[0].color && shapes[0].color->red == 1.0 && shapes[0].color->green == 0.0);
+    CHECK(shapes[1].wrapped().ShapeType() == TopAbs_WIRE);
+    CHECK(shapes[1].color && shapes[1].color->blue == 1.0);
+    CHECK_NEAR(cast_shape<Face>(shapes[0]).area(), 50.0, 1e-9);
+    CHECK(shapes.faces().size() == 1);
+    // y flipped, the viewbox aligned at the origin
+    const BoundBox bb = shapes[0].bounding_box();
+    CHECK_NEAR(bb.min.Y, 5.0, 1e-6);
+    CHECK_NEAR(bb.max.Y, 10.0, 1e-6);
+    std::istringstream in2(svg);
+    const auto unflipped = import_svg(in2, {.flip_y = false, .align = Align::NONE, .label_by = "fill"});
+    CHECK_NEAR(unflipped[0].bounding_box().max.Y, 5.0, 1e-6);
+    CHECK(unflipped[0].label == "red");
+
+    std::istringstream broken("<svg><rect");
+    CHECK_THROWS(import_svg(broken), std::invalid_argument);
+    std::istringstream no_d(R"(<svg xmlns="http://www.w3.org/2000/svg"><path/></svg>)");
+    CHECK_THROWS(import_svg(no_d), std::invalid_argument);
+    std::istringstream not_svg(R"(<g><rect width="1" height="1"/></g>)");
+    CHECK_THROWS(import_svg(not_svg), std::invalid_argument);
+    CHECK_THROWS(import_svg("/nonexistent/drawing.svg"), std::runtime_error);
+
+    const IoTempDir dir("svg");
+    {
+        std::ofstream(dir.file("my_line.svg")) << R"(<svg><path d="M 0 0 L 10 0 A 5 5 0 0 1 20 0"/></svg>)";
+    }
+    const auto [code, builder] = import_svg_as_buildline_code(dir.file("my_line.svg"));
+    CHECK(builder == "my_line");
+    CHECK(code == "from build123d import *\nwith BuildLine() as my_line:\n    Line((0, 0),(10, 0))\n"
+                  "    RadiusArc((10, 0), (20, 0), 5, True)");
+}

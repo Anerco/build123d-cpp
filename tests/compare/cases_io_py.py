@@ -769,3 +769,58 @@ CASES.update(
         "io_dxf_bad_version": dxf_bad_version,
     }
 )
+
+
+# ---- SVG import (see cases_io.cpp)
+def svg_shapes(shapes):
+    out = []
+    for s in shapes:
+        bb = s.bounding_box()
+        extra = s.normal_at() if isinstance(s, Face) else [s.start_point(), s.end_point()]
+        out.append(
+            {
+                "type": type(s).__name__,
+                "label": s.label,
+                "color": color_value(s.color),
+                "area": s.area,
+                "length": sum(e.length for e in s.edges()),
+                "edges": [e.geom_type.name for e in s.edges()],
+                "bbox": [bb.min, bb.max],
+                "position": s.location.position,
+                "normal_or_ends": extra,
+            }
+        )
+    return V(out)
+
+
+def svg_case(name, **kwargs):
+    return lambda: svg_shapes(import_svg(fixture(name + ".svg"), **kwargs))
+
+
+def svg_import_stream():
+    with open(fixture("svg_inkscape.svg")) as f:
+        return svg_shapes(import_svg(f, label_by="tag"))
+
+
+for _n in ["svg_basic", "svg_inkscape", "svg_holes", "svg_edge"]:
+    CASES[f"io_{_n}_default"] = svg_case(_n)
+    CASES[f"io_{_n}_label_noalign"] = svg_case(_n, align=None, label_by="inkscape:label")
+    CASES[f"io_{_n}_noflip_center"] = svg_case(_n, flip_y=False, align=Align.CENTER, ignore_visibility=True)
+CASES["io_svg_import_align_pair"] = lambda: svg_shapes(
+    import_svg(fixture("svg_basic.svg"), align=(Align.MAX, Align.CENTER), label_by="class")
+)
+CASES["io_svg_import_stream"] = svg_import_stream
+CASES["io_svg_import_missing"] = lambda: svg_shapes(import_svg(cpp_file("missing.svg")))
+CASES["io_svg_export_roundtrip"] = lambda: svg_shapes(import_svg(fixture("svg_export.svg"), label_by="id"))
+CASES["io_svg_export_roundtrip_layers"] = lambda: svg_shapes(
+    import_svg(fixture("svg_export.svg"), flip_y=False, label_by="stroke-dasharray")
+)
+
+
+def svg_buildline(name, *args):
+    return lambda: V(list(import_svg_as_buildline_code(fixture(name + ".svg"), *args)))
+
+
+for _n in ["svg_basic", "svg_inkscape", "svg_holes", "svg_edge", "svg_export"]:
+    CASES[f"io_svg_buildline_{_n}"] = svg_buildline(_n)
+CASES["io_svg_buildline_precision"] = svg_buildline("svg_basic", 3)

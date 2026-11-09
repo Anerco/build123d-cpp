@@ -692,3 +692,79 @@ COMPARE_CASES {
         return V("created");
     });
 }
+
+// ---- SVG import
+namespace {
+
+/// What import_svg returned: per shape its type, label, color, size and position.
+V svg_shapes(const ShapeList<Shape>& shapes) {
+    std::vector<V> out;
+    for (const Shape& s : shapes) {
+        double length = 0.0;
+        std::vector<V> geom;
+        const bool is_wire = s.wrapped().ShapeType() == TopAbs_WIRE;
+        // Python's Wire.edges() follows the wire (BRepTools_WireExplorer)
+        for (const Edge& e : is_wire ? Wire(s.wrapped()).edges() : s.edges()) {
+            length += e.length();
+            geom.push_back(V(enum_name(e.geom_type())));
+        }
+        const BoundBox bb = s.bounding_box();
+        const bool face = s.wrapped().ShapeType() == TopAbs_FACE;
+        V extra = face ? V(Face(s.wrapped()).normal_at())
+                       : V::list({Wire(s.wrapped()).start_point(), Wire(s.wrapped()).end_point()});
+        out.push_back(V::obj({{"type", type_name(s)},
+                              {"label", s.label},
+                              {"color", color_value(s.color)},
+                              {"area", s.area()},
+                              {"length", length},
+                              {"edges", V::list(geom)},
+                              {"bbox", V::list({bb.min, bb.max})},
+                              {"position", s.location().position()},
+                              {"normal_or_ends", extra}}));
+    }
+    return V::list(out);
+}
+
+}  // namespace
+
+COMPARE_CASES {
+    for (const char* name : {"svg_basic", "svg_inkscape", "svg_holes", "svg_edge"}) {
+        const std::string n = name;
+        compare::add_value("io_" + n + "_default", [n] { return svg_shapes(import_svg(fixture(n + ".svg"))); });
+        compare::add_value("io_" + n + "_label_noalign", [n] {
+            return svg_shapes(import_svg(fixture(n + ".svg"), {.align = Align::NONE, .label_by = "inkscape:label"}));
+        });
+        compare::add_value("io_" + n + "_noflip_center", [n] {
+            return svg_shapes(import_svg(fixture(n + ".svg"),
+                                         {.flip_y = false, .align = Align::CENTER, .ignore_visibility = true}));
+        });
+    }
+    compare::add_value("io_svg_import_align_pair", [] {
+        return svg_shapes(import_svg(fixture("svg_basic.svg"), {.align = Align2(Align::MAX, Align::CENTER), .label_by = "class"}));
+    });
+    compare::add_value("io_svg_import_stream", [] {
+        std::ifstream in(fixture("svg_inkscape.svg"));
+        return svg_shapes(import_svg(in, {.label_by = "tag"}));
+    });
+    compare::add_value("io_svg_import_missing", [] { return svg_shapes(import_svg(cpp_file("missing.svg"))); });
+}
+
+COMPARE_CASES {
+    compare::add_value("io_svg_export_roundtrip", [] {
+        return svg_shapes(import_svg(fixture("svg_export.svg"), {.label_by = "id"}));
+    });
+    compare::add_value("io_svg_export_roundtrip_layers", [] {
+        return svg_shapes(import_svg(fixture("svg_export.svg"), {.flip_y = false, .label_by = "stroke-dasharray"}));
+    });
+    for (const char* name : {"svg_basic", "svg_inkscape", "svg_holes", "svg_edge", "svg_export"}) {
+        const std::string n = name;
+        compare::add_value("io_svg_buildline_" + n, [n] {
+            const auto [code, builder] = import_svg_as_buildline_code(fixture(n + ".svg"));
+            return V::list({code, builder});
+        });
+    }
+    compare::add_value("io_svg_buildline_precision", [] {
+        const auto [code, builder] = import_svg_as_buildline_code(fixture("svg_basic.svg"), 3);
+        return V::list({code, builder});
+    });
+}

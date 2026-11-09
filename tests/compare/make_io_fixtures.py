@@ -75,10 +75,26 @@ def face_colors_step(path):
     assert writer.Write(path) == IFSelect_ReturnStatus.IFSelect_RetDone
 
 
+def svg_files():
+    # A hidden-line drawing and a sketch, as Python's ExportSVG writes them
+    part = Box(30, 20, 10) - Pos(5, 0, 0) * Cylinder(4, 10) + Pos(-8, 0, 5) * Sphere(5)
+    view = part.project_to_viewport((40, -60, 50))
+    e = ExportSVG(unit=Unit.MM, line_weight=0.3)
+    e.add_layer("hidden", line_color=Color("gray"), line_type=LineType.ISO_DOT)
+    sketch = Pos(0, 60) * (Rectangle(40, 20) - Circle(5) - Pos(12, 0) * SlotOverall(8, 3))
+    sketch.color = Color("orange")
+    e.add_shape(view[0])
+    e.add_shape(view[1], layer="hidden")
+    e.add_shape(sketch)
+    e.add_shape(Pos(-30, 60) * Text("SVG", 8))
+    e.write(os.path.join(DATA, "svg_export.svg"))
+
+
 def main():
     os.makedirs(DATA, exist_ok=True)
     persistence()
     step_files()
+    svg_files()
 
 
 if __name__ == "__main__":
