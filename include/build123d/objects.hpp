@@ -462,7 +462,8 @@ struct TextOptions {
     FontStyle font_style = FontStyle::REGULAR;
     std::pair<TextAlign, TextAlign> text_align = {TextAlign::CENTER, TextAlign::CENTER};
     std::optional<Align2> align;
-    std::optional<Wire> path;
+    /// The Edge or Wire for the text to follow (an Edge extends beyond its ends, a Wire doesn't).
+    std::optional<Mixin1D> path;
     double position_on_path = 0.0;
     /// Width of the outline of a single-line font's strokes; defaults to 4% of font_size.
     std::optional<double> single_line_width;
@@ -482,7 +483,7 @@ public:
     FontStyle font_style;
     std::pair<TextAlign, TextAlign> text_align;
     std::optional<Align2> align;
-    std::optional<Wire> text_path;
+    std::optional<Mixin1D> text_path;
     double position_on_path;
     double single_line_width;
 };

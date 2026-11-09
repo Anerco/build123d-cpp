@@ -1302,6 +1302,10 @@ CASES = {
         Pos(5, 0, 0) * Rectangle(1, 1), Edge.make_helix(5, 10, 5), binormal=Edge.make_line((0, 0, 0), (0, 0, 10))
     ),
     "obj_ops_sweep_empty_list": lambda: sweep([], Edge.make_line((0, 0, 0), (0, 0, 5))),
+    "obj_ops_bounding_box_compound_faces": lambda: bounding_box(
+        Compound([Pos(1, 2) * Face.make_rect(2, 1), Pos(-3, 0) * Circle(1).face()])
+    ),
+    "obj_ops_bounding_box_shapes": lambda: bounding_box([Pos(0, 0, 3) * Box(1, 2, 3), Pos(5, 5, 5) * Sphere(1)]),
     # drafting
     "obj_draft_numbers": obj_draft_numbers,
     "obj_draft_labels": obj_draft_labels,
@@ -1455,6 +1459,14 @@ CASES = {
     "obj_text_singleline_outline": lambda: Compound.make_text("Wire", 8, "singleline", single_line_width=0.5),
     "obj_text_singleline_path": lambda: Text(
         "Curved", 4, font="singleline", path=Wire([CenterArc((0, 0), 20, 30, 120)]), position_on_path=0.1
+    ),
+    "obj_text_path_edge": lambda: Text("Curved", 4, path=CenterArc((0, 0), 20, 30, 120), position_on_path=0.1),
+    "obj_text_path_wire": lambda: Text("Curved", 4, path=Wire([CenterArc((0, 0), 20, 30, 120)]), position_on_path=0.1),
+    "obj_text_path_spline_edge": lambda: Text(
+        "Spline path", 3, path=Spline((0, 0), (10, 5), (20, -3), (30, 0)), position_on_path=0.05
+    ),
+    "obj_text_path_polyline": lambda: Compound.make_text(
+        "Along", 3, text_path=Polyline((0, 0), (10, 0), (15, 8)), position_on_path=0.2
     ),
     "obj_text_singleline_wide": lambda: Text("Hi", 5, font="singleline", single_line_width=3),
     "obj_text_singleline_too_wide": lambda: Text("ii", 5, font="singleline", single_line_width=20),

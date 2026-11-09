@@ -255,8 +255,12 @@ algebra_t<T> offset(const std::vector<T>& objs, double amount = 0, const OffsetO
         detail::offset_impl(detail::shape_ptrs(objs), amount, options));
 }
 
+/// Sketch for 2D objects, Part otherwise; a Compound (rectangles or boxes, decided when it runs,
+/// as in build123d) for a Shape or Compound.
 template <class T>
-using bounding_box_t = std::conditional_t<std::decay_t<T>::kDim == 2, Sketch, Part>;
+using bounding_box_t =
+    std::conditional_t<std::decay_t<T>::kDim == 2, Sketch,
+                       std::conditional_t<(std::decay_t<T>::kDim < 0), Compound, Part>>;
 
 /// Bounding rectangle (2D objects) or box (otherwise) of objects.
 template <class T, std::enable_if_t<detail::is_shape_v<T>, int> = 0>

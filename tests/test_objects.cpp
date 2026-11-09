@@ -247,6 +247,9 @@ static_assert(std::is_same_v<decltype(split(std::vector<Part>{}, Face())), Part>
 static_assert(std::is_same_v<decltype(offset(Rectangle(1, 1))), Sketch>);
 static_assert(std::is_same_v<decltype(sweep(Circle(1), std::vector<Edge>{})), Part>);
 static_assert(std::is_same_v<decltype(sweep(std::vector<Edge>{}, std::vector<Edge>{})), Sketch>);
+static_assert(std::is_same_v<decltype(bounding_box(Compound())), Compound>);
+static_assert(std::is_same_v<decltype(bounding_box(Circle(1))), Sketch>);
+static_assert(std::is_same_v<decltype(bounding_box(Box(1, 1, 1))), Part>);
 
 TEST(objects_operation_overloads) {
     // Empty inputs behave as in build123d: an empty Sketch gives an empty Part, an empty list of

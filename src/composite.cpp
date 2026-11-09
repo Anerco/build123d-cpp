@@ -143,7 +143,7 @@ Font_FontAspect to_aspect(FontStyle style) {
     return Font_FA_Regular;
 }
 
-Shape position_glyph(const Shape& glyph, const Wire& path, double position) {
+Shape position_glyph(const Shape& glyph, const Mixin1D& path, double position) {
     const BoundBox bbox = glyph.bounding_box();
     const Vector face_bottom_center((bbox.min.X + bbox.max.X) / 2, 0, 0);
     const double relative = position + face_bottom_center.X / path.length();
@@ -204,7 +204,7 @@ std::tuple<std::string, std::string, Handle(Font_SystemFont)> Compound::resolve_
 Compound Compound::make_text(const std::string& txt, double font_size, const std::string& font,
                              const std::string& font_path, FontStyle font_style,
                              std::pair<TextAlign, TextAlign> text_align, std::optional<Align2> align,
-                             double position_on_path, const std::optional<Wire>& text_path,
+                             double position_on_path, const std::optional<Mixin1D>& text_path,
                              double single_line_width) {
     const auto [resolved_font, resolved_font_path, system_font] = resolve_font(font, font_path, font_style);
 
@@ -242,7 +242,7 @@ Compound Compound::make_text(const std::string& txt, double font_size, const std
     if (align) text_flat = text_flat.translate(text_flat.bounding_box().to_align_offset(*align));
 
     // Place text on path
-    if (text_path) {
+    if (text_path && !text_path->is_null()) {
         std::vector<Shape> glyphs;
         for (const auto& g : text_flat.get_top_level_shapes()) {
             glyphs.push_back(position_glyph(g, *text_path, position_on_path));

@@ -780,7 +780,7 @@ public:
                                                                             TextAlign::CENTER},
                               std::optional<Align2> align = std::nullopt,
                               double position_on_path = 0.0,
-                              const std::optional<Wire>& text_path = std::nullopt,
+                              const std::optional<Mixin1D>& text_path = std::nullopt,
                               double single_line_width = 0.0);
     /// The font that a font name (or file) and style resolve to: its name, its file for that
     /// style (empty if the font lacks the style) and OCCT's font (include build123d/text.hpp).

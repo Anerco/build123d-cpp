@@ -1110,6 +1110,12 @@ COMPARE_CASES {
                      {.binormal = Wire(Edge::make_line({0, 0, 0}, {0, 0, 10}))});
     });
     compare::add("obj_ops_sweep_empty_list", [=] { return sweep(std::vector<Face>{}, z5()); });
+    compare::add("obj_ops_bounding_box_compound_faces", [] {
+        return bounding_box(Compound(std::vector<Shape>{Pos(1, 2) * Face::make_rect(2, 1), Pos(-3, 0) * Circle(1).face()}));
+    });
+    compare::add("obj_ops_bounding_box_shapes", [] {
+        return bounding_box(std::vector<Shape>{Pos(0, 0, 3) * Box(1, 2, 3), Pos(5, 5, 5) * Sphere(1)});
+    });
 
     // ---- drafting
     compare::add_value("obj_draft_numbers", [] {
@@ -1399,6 +1405,19 @@ COMPARE_CASES {
     });
     compare::add("obj_text_singleline_path", [] {
         return Text("Curved", 4, {.font = "singleline", .path = Wire(CenterArc({0, 0}, 20, 30, 120)), .position_on_path = 0.1});
+    });
+    compare::add("obj_text_path_edge", [] {
+        return Text("Curved", 4, {.path = CenterArc({0, 0}, 20, 30, 120), .position_on_path = 0.1});
+    });
+    compare::add("obj_text_path_wire", [] {
+        return Text("Curved", 4, {.path = Wire(CenterArc({0, 0}, 20, 30, 120)), .position_on_path = 0.1});
+    });
+    compare::add("obj_text_path_spline_edge", [] {
+        return Text("Spline path", 3, {.path = Spline({{0, 0}, {10, 5}, {20, -3}, {30, 0}}), .position_on_path = 0.05});
+    });
+    compare::add("obj_text_path_polyline", [] {
+        return Compound::make_text("Along", 3, "Arial", "", FontStyle::REGULAR, {TextAlign::CENTER, TextAlign::CENTER},
+                                   std::nullopt, 0.2, Polyline({{0, 0}, {10, 0}, {15, 8}}));
     });
     compare::add("obj_text_singleline_wide", [] { return Text("Hi", 5, {.font = "singleline", .single_line_width = 3}); });
     compare::add("obj_text_singleline_too_wide", [] {
