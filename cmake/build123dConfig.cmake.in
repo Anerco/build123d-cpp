@@ -1,0 +1,11 @@
+@PACKAGE_INIT@
+
+# find_package(build123d): the build123d::build123d target and the libraries it needs.
+include(CMakeFindDependencyMacro)
+find_dependency(OpenCASCADE)
+if(@BUILD123D_HAVE_CURL@)
+  find_dependency(CURL)
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/build123dTargets.cmake")
+check_required_components(build123d)
