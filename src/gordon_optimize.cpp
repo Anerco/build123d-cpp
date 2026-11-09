@@ -2,6 +2,7 @@
 // (linalg.solve/inv/eigh/cholesky through LAPACK gesv/syevd/potrf) and scipy 1.18
 // (optimize._optimize._minimize_bfgs with _linesearch.line_search_wolfe1/2 and
 // _dcsrch.DCSRCH, optimize._optimize._minimize_scalar_bounded), and misc.math_BFGS.
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <string>

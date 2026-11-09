@@ -512,11 +512,12 @@ private:
         return winner;
     }
 
-    static std::optional<Quantity_ColorRGBA> get_label_color(const TDF_Label& label) {
+    // Through the instance: GetColor(label, ...) is only static from OCCT 7.7.
+    std::optional<Quantity_ColorRGBA> get_label_color(const TDF_Label& label) const {
         Quantity_ColorRGBA col;
-        if (XCAFDoc_ColorTool::GetColor(label, XCAFDoc_ColorCurv, col) ||
-            XCAFDoc_ColorTool::GetColor(label, XCAFDoc_ColorGen, col) ||
-            XCAFDoc_ColorTool::GetColor(label, XCAFDoc_ColorSurf, col)) {
+        if (color_tool_->GetColor(label, XCAFDoc_ColorCurv, col) ||
+            color_tool_->GetColor(label, XCAFDoc_ColorGen, col) ||
+            color_tool_->GetColor(label, XCAFDoc_ColorSurf, col)) {
             return col;
         }
         return std::nullopt;

@@ -478,7 +478,7 @@ ShapeList<Shape> import_svg_text(const std::string& text, const ImportSvgOptions
                 for (const auto& w : wires) faces_or_wires.push_back(w);
             }
             for (const TopoDS_Shape& face_or_wire : faces_or_wires) {
-                TopoDS_Shape mirrored = BRepBuilderAPI_Transform(face_or_wire, transform, false, false).Shape();
+                TopoDS_Shape mirrored = BRepBuilderAPI_Transform(face_or_wire, transform, false).Shape();
                 if (options.flip_y) mirrored.Reverse();
                 Shape shape(mirrored);
                 if (offset.X != 0 || offset.Y != 0) shape = shape.translate(offset);
