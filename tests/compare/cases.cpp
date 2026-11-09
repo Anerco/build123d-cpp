@@ -10,8 +10,22 @@
 #include <string>
 #include <vector>
 
+#include <Standard_Failure.hxx>
+#include <Standard_Version.hxx>
+
 #include "case_registry.hpp"
 #include "show.hpp"
+
+namespace {
+std::string occt_failure_text(const Standard_Failure& e) {
+#if OCC_VERSION_HEX >= 0x080000
+    return std::string(e.DynamicType()->Name()) + ": " + e.what();
+#else
+    const char* message = e.GetMessageString();
+    return std::string(e.DynamicType()->Name()) + ": " + (message != nullptr ? message : "");
+#endif
+}
+}  // namespace
 
 using namespace build123d;
 
@@ -384,6 +398,10 @@ int main(int argc, char** argv) {
                 std::cout << "{\"name\": " << compare::V::quote(e.name) << ", \"values\": " << values << "}"
                           << std::endl;
             }
+        } catch (const Standard_Failure& ex) {
+            // Before OCCT 8, Standard_Failure doesn't derive from std::exception.
+            std::cout << "{\"name\": \"" << e.name << "\", \"error\": \"" << escape(occt_failure_text(ex)) << "\"}"
+                      << std::endl;
         } catch (const std::exception& ex) {
             std::cout << "{\"name\": \"" << e.name << "\", \"error\": \"" << escape(ex.what()) << "\"}" << std::endl;
         }

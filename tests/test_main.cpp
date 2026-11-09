@@ -5,6 +5,7 @@
 
 #include <BRep_Tool.hxx>
 #include <Poly_Triangulation.hxx>
+#include <Standard_Failure.hxx>
 #include <TopoDS.hxx>
 
 #include <chrono>
@@ -346,6 +347,10 @@ int main(int argc, char** argv) {
         try {
             test.body();
             std::cout << "ok      " << test.name << "\n";
+        } catch (const Standard_Failure& e) {
+            // Before OCCT 8, Standard_Failure doesn't derive from std::exception.
+            ++failed;
+            std::cout << "FAILED  " << test.name << ": OCCT " << e.DynamicType()->Name() << "\n";
         } catch (const std::exception& e) {
             ++failed;
             std::cout << "FAILED  " << test.name << ": " << e.what() << "\n";
