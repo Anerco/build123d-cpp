@@ -155,8 +155,9 @@ def property_setters():
 
 def version():
     import build123d  # pylint: disable=import-outside-toplevel
+    from build123d import _version  # pylint: disable=import-outside-toplevel
 
-    return V([build123d.__version__, list(build123d.__version_tuple__)])
+    return V([build123d.__version__, list(_version.version_tuple)])
 
 
 CASES = {
