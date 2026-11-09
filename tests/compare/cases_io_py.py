@@ -334,7 +334,36 @@ def obj_sketch():
     return V(obj_canonical(stream.getvalue().decode()))
 
 
+def gltf_assembly():
+    export_gltf(sample_assembly(), py_file("assembly.gltf"))
+    return V([json.loads(read_text(py_file("assembly.gltf"))), len(read_bytes(py_file("assembly.bin")))])
+
+
+def glb_json(data):
+    length = int.from_bytes(data[12:16], "little")
+    return json.loads(data[20 : 20 + length])
+
+
+def gltf_glb_options():
+    part = Rot(0, 0, 30) * (Cylinder(10, 5) - Box(4, 4, 5))
+    part.label = "part"
+    part.color = Color(0.25, 0.5, 0.75, 0.5)
+    export_gltf(part, py_file("part.glb"), Unit.M, True, 0.01, 0.3)
+    glb = read_bytes(py_file("part.glb"))
+    return V([glb_json(glb), len(glb)])
+
+
+def gltf_sketch_curve():
+    export_gltf(Circle(3) - Rectangle(1, 2), py_file("sketch.gltf"))
+    return V(json.loads(read_text(py_file("sketch.gltf"))))
+
+
 CASES = {
+    # ---- glTF
+    "io_gltf_assembly": gltf_assembly,
+    "io_gltf_glb_options": gltf_glb_options,
+    "io_gltf_sketch_curve": gltf_sketch_curve,
+    "io_gltf_missing_dir": lambda: V(export_gltf(Box(1, 1, 1), py_file("no/dir/x.gltf"))),
     # ---- STEP
     "io_step_text_box": step_text_box,
     "io_step_text_assembly": step_text_assembly,

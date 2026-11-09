@@ -168,6 +168,37 @@ V step_canonical(const std::string& text) {
     return V::list({header, V::list_of(entities)});
 }
 
+V json_value(const Json& j) {
+    switch (j.type()) {
+        case Json::Type::NUL: return V();
+        case Json::Type::BOOL: return V(j.as_bool());
+        case Json::Type::INT:
+        case Json::Type::FLOAT: return V(j.as_double());
+        case Json::Type::STRING: return V(j.as_string());
+        case Json::Type::ARRAY: {
+            std::vector<V> items;
+            for (const auto& x : j.as_array()) items.push_back(json_value(x));
+            return V::list(items);
+        }
+        case Json::Type::OBJECT: {
+            std::vector<std::pair<std::string, V>> fields;
+            for (const auto& [k, v] : j.as_object()) fields.emplace_back(k, json_value(v));
+            return V::obj(fields);
+        }
+    }
+    return V();
+}
+
+/// The JSON chunk of a .glb file.
+Json glb_json(const Bytes& glb) {
+    auto u32 = [&](std::size_t at) {
+        return static_cast<std::uint32_t>(glb[at]) | static_cast<std::uint32_t>(glb[at + 1]) << 8 |
+               static_cast<std::uint32_t>(glb[at + 2]) << 16 | static_cast<std::uint32_t>(glb[at + 3]) << 24;
+    };
+    const std::uint32_t length = u32(12);
+    return Json::parse(std::string(glb.begin() + 20, glb.begin() + 20 + length));
+}
+
 /// A nested assembly with labels and colors (the same as make_io_fixtures.py's).
 Compound sample_assembly() {
     Part red = Box(2, 2, 2);
@@ -411,6 +442,26 @@ COMPARE_CASES {
         return obj_canonical(out.str());
     });
     compare::add_value("io_obj_missing_dir", [] { return V(export_obj(Box(1, 1, 1), cpp_file("no/dir/x.obj"))); });
+
+    // ---- glTF
+    compare::add_value("io_gltf_assembly", [] {
+        export_gltf(sample_assembly(), cpp_file("assembly.gltf"));
+        return V::list({json_value(Json::parse(read_text(cpp_file("assembly.gltf")))),
+                        static_cast<double>(read_bytes(cpp_file("assembly.bin")).size())});
+    });
+    compare::add_value("io_gltf_glb_options", [] {
+        Part part = Rot(0, 0, 30) * (Cylinder(10, 5) - Box(4, 4, 5));
+        part.label = "part";
+        part.color = Color(0.25, 0.5, 0.75, 0.5);
+        export_gltf(part, cpp_file("part.glb"), Unit::M, true, 0.01, 0.3);
+        const Bytes glb = read_bytes(cpp_file("part.glb"));
+        return V::list({json_value(glb_json(glb)), static_cast<double>(glb.size())});
+    });
+    compare::add_value("io_gltf_sketch_curve", [] {
+        export_gltf(Circle(3) - Rectangle(1, 2), cpp_file("sketch.gltf"));
+        return json_value(Json::parse(read_text(cpp_file("sketch.gltf"))));
+    });
+    compare::add_value("io_gltf_missing_dir", [] { return V(export_gltf(Box(1, 1, 1), cpp_file("no/dir/x.gltf"))); });
 
     compare::add_value("io_persist_location_round_trip", [] {
         const Location loc(deserialize_location(serialize_location(Location(Vector(1, 2, 3), Vector(10, 20, 30)).wrapped())));
