@@ -12,14 +12,6 @@ using namespace detail;
 
 namespace {
 
-/// BasePartObject: align by bounding box, then rotate.
-TopoDS_Shape base_part(Shape part, const Rotation& rotation, std::optional<Align3> align) {
-    if (align) part.move(Location(part.bounding_box().to_align_offset(*align)));
-    const Shape transformed = rotation != Rotation() ? part.moved(rotation) : part;
-    if (transformed.wrapped().ShapeType() == TopAbs_COMPOUND) return transformed.wrapped();
-    return make_compound({transformed.wrapped()});
-}
-
 Plane down_plane(const Vector& origin = Vector(0, 0, 0)) { return Plane(origin, std::nullopt, Vector(0, 0, -1)); }
 
 // ---- incremental 3D convex hull (triangles, outward normals)
@@ -110,13 +102,20 @@ TopoDS_Shape fused(const Solid& a, const std::vector<Solid>& others) {
 
 }  // namespace
 
-Box::Box(double length, double width, double height, const Rotation& rotation, Align3 align)
-    : Part(base_part(Solid::make_box(length, width, height), rotation, align)) {}
+Box::Box(double length_in, double width_in, double height, const Rotation& rotation, Align3 align)
+    : BasePartObject(Solid::make_box(length_in, width_in, height), rotation, align),
+      length(length_in),
+      width(width_in),
+      box_height(height) {}
 
 Box::Box(double length, double width, double height, Align3 align) : Box(length, width, height, Rotation(), align) {}
 
-Cylinder::Cylinder(double radius, double height, double arc_size, const Rotation& rotation, Align3 align)
-    : Part(base_part(Solid::make_cylinder(radius, height, Plane::XY, arc_size), rotation, align)) {}
+Cylinder::Cylinder(double radius_in, double height, double arc_size_in, const Rotation& rotation, Align3 align_in)
+    : BasePartObject(Solid::make_cylinder(radius_in, height, Plane::XY, arc_size_in), rotation, align_in),
+      radius(radius_in),
+      cylinder_height(height),
+      arc_size(arc_size_in),
+      align(align_in) {}
 
 Cylinder::Cylinder(double radius, double height, Align3 align)
     : Cylinder(radius, height, 360.0, Rotation(), align) {}
@@ -124,9 +123,13 @@ Cylinder::Cylinder(double radius, double height, Align3 align)
 Cylinder::Cylinder(double radius, double height, const Rotation& rotation, Align3 align)
     : Cylinder(radius, height, 360.0, rotation, align) {}
 
-Cone::Cone(double bottom_radius, double top_radius, double height, double arc_size, const Rotation& rotation,
-           Align3 align)
-    : Part(base_part(Solid::make_cone(bottom_radius, top_radius, height, Plane::XY, arc_size), rotation, align)) {}
+Cone::Cone(double bottom, double top, double height, double arc_size_in, const Rotation& rotation, Align3 align_in)
+    : BasePartObject(Solid::make_cone(bottom, top, height, Plane::XY, arc_size_in), rotation, align_in),
+      bottom_radius(bottom),
+      top_radius(top),
+      cone_height(height),
+      arc_size(arc_size_in),
+      align(align_in) {}
 
 Cone::Cone(double bottom_radius, double top_radius, double height, Align3 align)
     : Cone(bottom_radius, top_radius, height, 360.0, Rotation(), align) {}
@@ -134,20 +137,29 @@ Cone::Cone(double bottom_radius, double top_radius, double height, Align3 align)
 Cone::Cone(double bottom_radius, double top_radius, double height, const Rotation& rotation, Align3 align)
     : Cone(bottom_radius, top_radius, height, 360.0, rotation, align) {}
 
-Sphere::Sphere(double radius, double arc_size1, double arc_size2, double arc_size3, const Rotation& rotation,
-               Align3 align)
-    : Part(base_part(Solid::make_sphere(radius, Plane::XY, arc_size1, arc_size2, arc_size3), rotation, align)) {}
+Sphere::Sphere(double radius_in, double a1, double a2, double a3, const Rotation& rotation, Align3 align_in)
+    : BasePartObject(Solid::make_sphere(radius_in, Plane::XY, a1, a2, a3), rotation, align_in),
+      radius(radius_in),
+      arc_size1(a1),
+      arc_size2(a2),
+      arc_size3(a3),
+      align(align_in) {}
 
 Sphere::Sphere(double radius, Align3 align) : Sphere(radius, -90.0, 90.0, 360.0, Rotation(), align) {}
 
 Sphere::Sphere(double radius, const Rotation& rotation, Align3 align)
     : Sphere(radius, -90.0, 90.0, 360.0, rotation, align) {}
 
-Torus::Torus(double major_radius, double minor_radius, double minor_start_angle, double minor_end_angle,
-             double major_angle, const Rotation& rotation, Align3 align)
-    : Part(base_part(Solid::make_torus(major_radius, minor_radius, Plane::XY, minor_start_angle, minor_end_angle,
-                                       major_angle),
-                     rotation, align)) {}
+Torus::Torus(double major, double minor, double minor_start, double minor_end, double major_angle_in,
+             const Rotation& rotation, Align3 align_in)
+    : BasePartObject(Solid::make_torus(major, minor, Plane::XY, minor_start, minor_end, major_angle_in), rotation,
+                     align_in),
+      major_radius(major),
+      minor_radius(minor),
+      minor_start_angle(minor_start),
+      minor_end_angle(minor_end),
+      major_angle(major_angle_in),
+      align(align_in) {}
 
 Torus::Torus(double major_radius, double minor_radius, Align3 align)
     : Torus(major_radius, minor_radius, 0.0, 360.0, 360.0, Rotation(), align) {}
@@ -164,30 +176,51 @@ Solid wedge(double xsize, double ysize, double zsize, double xmin, double zmin, 
 }
 }  // namespace
 
-Wedge::Wedge(double xsize, double ysize, double zsize, double xmin, double zmin, double xmax, double zmax,
-             const Rotation& rotation, Align3 align)
-    : Part(base_part(wedge(xsize, ysize, zsize, xmin, zmin, xmax, zmax), rotation, align)) {}
+Wedge::Wedge(double xs, double ys, double zs, double x0, double z0, double x1, double z1, const Rotation& rotation,
+             Align3 align_in)
+    : BasePartObject(wedge(xs, ys, zs, x0, z0, x1, z1), rotation, align_in),
+      xsize(xs),
+      ysize(ys),
+      zsize(zs),
+      xmin(x0),
+      zmin(z0),
+      xmax(x1),
+      zmax(z1),
+      align(align_in) {}
 
 Wedge::Wedge(double xsize, double ysize, double zsize, double xmin, double zmin, double xmax, double zmax,
              Align3 align)
     : Wedge(xsize, ysize, zsize, xmin, zmin, xmax, zmax, Rotation(), align) {}
 
-Hole::Hole(double radius, double depth)
-    : Part(base_part(Solid::make_cylinder(radius, 2 * depth, down_plane()), Rotation(), Align3(Align::CENTER))) {}
+namespace {
+/// Hole depths come from the builder when not given (`_through_hole_depth`), so algebra
+/// mode needs a depth.
+double required_depth(std::optional<double> depth) {
+    if (!depth) throw std::invalid_argument("No depth provided");
+    return *depth;
+}
+}  // namespace
 
-CounterBoreHole::CounterBoreHole(double radius, double counter_bore_radius, double counter_bore_depth, double depth)
-    : Part(base_part(Shape(fused(Solid::make_cylinder(radius, depth, down_plane()),
-                                 {Solid::make_cylinder(counter_bore_radius, counter_bore_depth + depth,
-                                                       Plane(Vector(0, 0, -counter_bore_depth)))})),
-                     Rotation(), std::nullopt)) {}
+Hole::Hole(double radius_in, std::optional<double> depth)
+    : radius(radius_in), hole_depth(2 * required_depth(depth)) {
+    assign(Solid::make_cylinder(radius_in, hole_depth, down_plane()), Rotation(), Align3(Align::CENTER));
+}
 
-CounterSinkHole::CounterSinkHole(double radius, double counter_sink_radius, double depth, double counter_sink_angle)
-    : Part(base_part(
-          Shape(fused(Solid::make_cylinder(radius, depth, down_plane()),
-                      {Solid::make_cone(counter_sink_radius, 0.0,
-                                        counter_sink_radius / std::tan(counter_sink_angle / 2.0 * DEG2RAD), down_plane()),
-                       Solid::make_cylinder(counter_sink_radius, depth)})),
-          Rotation(), std::nullopt)) {}
+CounterBoreHole::CounterBoreHole(double radius_in, double cb_radius, double cb_depth, std::optional<double> depth)
+    : radius(radius_in), counter_bore_radius(cb_radius), counter_bore_depth(cb_depth), hole_depth(required_depth(depth)) {
+    assign(Shape(fused(Solid::make_cylinder(radius_in, hole_depth, down_plane()),
+                       {Solid::make_cylinder(cb_radius, cb_depth + hole_depth, Plane(Vector(0, 0, -cb_depth)))})),
+           Rotation(), std::nullopt);
+}
+
+CounterSinkHole::CounterSinkHole(double radius_in, double cs_radius, std::optional<double> depth, double cs_angle)
+    : radius(radius_in), counter_sink_radius(cs_radius), hole_depth(required_depth(depth)), counter_sink_angle(cs_angle) {
+    const double cone_height = cs_radius / std::tan(cs_angle / 2.0 * DEG2RAD);
+    assign(Shape(fused(Solid::make_cylinder(radius_in, hole_depth, down_plane()),
+                       {Solid::make_cone(cs_radius, 0.0, cone_height, down_plane()),
+                        Solid::make_cylinder(cs_radius, hole_depth)})),
+           Rotation(), std::nullopt);
+}
 
 namespace {
 Solid convex_polyhedron(const std::vector<Vector>& points) {
@@ -200,9 +233,9 @@ Solid convex_polyhedron(const std::vector<Vector>& points) {
 }  // namespace
 
 ConvexPolyhedron::ConvexPolyhedron(const std::vector<Vector>& points, const Rotation& rotation, Align3 align)
-    : Part(base_part(convex_polyhedron(points), rotation,
+    : BasePartObject(convex_polyhedron(points), rotation,
                      (align.x == Align::NONE && align.y == Align::NONE && align.z == Align::NONE)
                          ? std::nullopt
-                         : std::optional<Align3>(align))) {}
+                         : std::optional<Align3>(align)) {}
 
 }  // namespace build123d

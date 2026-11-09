@@ -135,7 +135,7 @@ Wire fillet_polyline(std::vector<Vector> points, const std::vector<double>* radi
 
 }  // namespace
 
-Line::Line(const Vector& start, const Vector& end) : Edge(Edge::make_line(start, end)) {}
+Line::Line(const Vector& start, const Vector& end) : BaseEdgeObject(Edge::make_line(start, end)) {}
 
 Line::Line(const std::vector<Vector>& pts)
     : Line(require_count(pts, 2, "Line requires two pts")[0], pts[1]) {}
@@ -164,7 +164,7 @@ Spline::Spline(const std::vector<Vector>& pts, const std::vector<Vector>& tangen
 }
 
 Bezier::Bezier(const std::vector<Vector>& cntl_pnts, const std::vector<double>& weights)
-    : Edge(Edge::make_bezier(cntl_pnts, weights)) {}
+    : BaseEdgeObject(Edge::make_bezier(cntl_pnts, weights)) {}
 
 CenterArc::CenterArc(const Vector& center, double radius, double start_angle, double arc_size) {
     const AngularDirection direction =
@@ -176,7 +176,7 @@ CenterArc::CenterArc(const Vector& center, double radius, double start_angle, do
 }
 
 ThreePointArc::ThreePointArc(const Vector& point1, const Vector& point2, const Vector& point3)
-    : Edge(Edge::make_three_point_arc(point1, point2, point3)) {}
+    : BaseEdgeObject(Edge::make_three_point_arc(point1, point2, point3)) {}
 
 ThreePointArc::ThreePointArc(const std::vector<Vector>& pts)
     : ThreePointArc(require_count(pts, 3, "ThreePointArc requires three points")[0], pts[1], pts[2]) {}
@@ -191,10 +191,10 @@ RadiusArc::RadiusArc(const Vector& start_point, const Vector& end_point, double 
 }
 
 SagittaArc::SagittaArc(const Vector& start_point, const Vector& end_point, double sagitta)
-    : Edge(sagitta_arc(start_point, end_point, sagitta)) {}
+    : BaseEdgeObject(sagitta_arc(start_point, end_point, sagitta)) {}
 
 TangentArc::TangentArc(const Vector& start, const Vector& end, const Vector& tangent, bool tangent_from_first)
-    : Edge(tangent_from_first ? Edge::make_tangent_arc(start, tangent.normalized(), end)
+    : BaseEdgeObject(tangent_from_first ? Edge::make_tangent_arc(start, tangent.normalized(), end)
                               : Edge::make_tangent_arc(end, tangent.normalized(), start)) {}
 
 TangentArc::TangentArc(const std::vector<Vector>& pts, const Vector& tangent, bool tangent_from_first)
@@ -202,7 +202,7 @@ TangentArc::TangentArc(const std::vector<Vector>& pts, const Vector& tangent, bo
                  tangent_from_first) {}
 
 JernArc::JernArc(const Vector& start_in, const Vector& tangent, double radius, double arc_size)
-    : Edge(jern_arc(start_in, tangent, radius, arc_size)), start(start_in) {
+    : BaseEdgeObject(jern_arc(start_in, tangent, radius, arc_size)), start(start_in) {
     center_point = arc_center();
     end_of_arc = position_at(1);
 }
@@ -219,7 +219,7 @@ EllipticalCenterArc::EllipticalCenterArc(const Vector& center, double x_radius, 
 
 BSpline::BSpline(const std::vector<Vector>& control_points, const std::vector<double>& knots, int degree,
                  const std::vector<double>& weights, bool periodic)
-    : Edge(Edge::make_bspline(control_points, knots, degree, weights, periodic)) {}
+    : BaseEdgeObject(Edge::make_bspline(control_points, knots, degree, weights, periodic)) {}
 
 EllipticalStartArc::EllipticalStartArc(const Vector& start_pnt, const Vector& start_tangent, double x_radius,
                                        double y_radius, double arc_size, std::optional<double> start_angle,
@@ -283,20 +283,20 @@ HyperbolicCenterArc::HyperbolicCenterArc(const Vector& center, double x_radius, 
 
 Helix::Helix(double pitch, double height, double radius, const Vector& center, const Vector& direction,
              double cone_angle, bool lefthand)
-    : Edge(Edge::make_helix(pitch, height, radius, center, direction, cone_angle, lefthand)) {}
+    : BaseEdgeObject(Edge::make_helix(pitch, height, radius, center, direction, cone_angle, lefthand)) {}
 
 PolarLine::PolarLine(const Vector& start, double length, double angle, LengthMode length_mode)
-    : Edge(polar_line(start, length, angle, Vector(1, 0, 0).rotate(Axis::Z, angle), length_mode)) {}
+    : BaseEdgeObject(polar_line(start, length, angle, Vector(1, 0, 0).rotate(Axis::Z, angle), length_mode)) {}
 
 PolarLine::PolarLine(const Vector& start, double length, const Vector& direction, LengthMode length_mode)
-    : Edge(polar_line(start, length, Vector(1, 0, 0).get_angle(direction.normalized()), direction.normalized(),
+    : BaseEdgeObject(polar_line(start, length, Vector(1, 0, 0).get_angle(direction.normalized()), direction.normalized(),
                       length_mode)) {}
 
 FilletPolyline::FilletPolyline(const std::vector<Vector>& pts, double radius, bool close)
-    : Wire(fillet_polyline(pts, nullptr, radius, close)) {}
+    : BaseLineObject(fillet_polyline(pts, nullptr, radius, close)) {}
 
 FilletPolyline::FilletPolyline(const std::vector<Vector>& pts, const std::vector<double>& radius, bool close)
-    : Wire(fillet_polyline(pts, &radius, 0.0, close)) {}
+    : BaseLineObject(fillet_polyline(pts, &radius, 0.0, close)) {}
 
 IntersectingLine::IntersectingLine(const Vector& start, const Vector& direction, const Shape& other) {
     const Vector dir = direction.normalized();
