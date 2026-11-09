@@ -94,13 +94,13 @@ export_step(plate, "plate.step")
 
 Everything above was checked against Python build123d 0.13.0 itself, not just compiled:
 
-- `tests/compare` builds the same 861 models and values in C++ and in Python and compares them:
+- `tests/compare` builds the same 884 models and values in C++ and in Python and compares them:
   shapes by volume, area, total edge length, topology counts, bounding box and center of mass
   (to 1e-6 relative); other results value by value (points, axes, mass properties, file
   contents, …). All of them match.
 - All 24 of build123d's official algebra examples are ported in `examples/`. The 47 objects they
   show match their Python originals the same way.
-- `tests/test_*.cpp` has 62 unit tests for the C++ API itself (static result types, joints and
+- `tests/test_*.cpp` has 64 unit tests for the C++ API itself (static result types, joints and
   tree semantics, error handling, file round trips, PCBWay uploads against a local server).
 
 Python build123d 0.13 requires OCCT 8.0 (the comparisons ran it on 8.0.1). This port also
@@ -109,10 +109,10 @@ OCCT 8.0:
 
 | OCCT | unit tests | comparison cases | example objects |
 |---|---|---|---|
-| 8.0.0 | 62/62 | 861/861 | 47/47 |
-| 7.9.3 | 62/62 | 848/861 | 47/47 |
-| 7.7.2 | 62/62 | 829/861 | 47/47 |
-| 7.6.3 | 62/62 | 824/861 | 44/47 |
+| 8.0.0 | 64/64 | 884/884 | 47/47 |
+| 7.9.3 | 64/64 | 862/884 | 47/47 |
+| 7.7.2 | 64/64 | 843/884 | 47/47 |
+| 7.6.3 | 64/64 | 838/884 | 44/47 |
 
 With the older versions, results differ only where OCCT's own results differ:
 
@@ -187,6 +187,9 @@ With a Python environment that has `build123d==0.13.0` (and `vtk`, for the viewe
 python tests/compare/compare.py build/compare_cases           # the models and values
 python tests/compare/compare_examples.py build/examples       # the examples
 ```
+
+Unless `BUILD123D_TEXTURE_DIR` is set, `compare.py` gives the C++ side the textures of the
+Python environment's threejs_materials.
 
 ## From Python to C++
 
