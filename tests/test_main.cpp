@@ -275,7 +275,7 @@ TEST(io_round_trips) {
     CHECK_NEAR(import_brep(dir.file("part.brep")).volume(), part.volume(), 1e-9 * part.volume());
 
     CHECK(export_step(part, dir.file("part.step")));
-    const Compound step = import_step(dir.file("part.step"));
+    const Shape step = import_step(dir.file("part.step"));  // a Solid, as in Python
     CHECK_NEAR(step.volume(), part.volume(), 1e-6 * part.volume());
     CHECK(step.faces().size() == part.faces().size());
 
@@ -306,14 +306,15 @@ TEST(step_assembly_labels_and_colors) {
     const Compound assembly = Compound::make_assembly({red, blue}, "assembly");
     CHECK(export_step(assembly, dir.file("assembly.step")));
 
-    const Compound back = import_step(dir.file("assembly.step"));
+    // Labels come back cleaned as in Python's import_step: " .()" become "_"
+    const Compound back = cast_shape<Compound>(import_step(dir.file("assembly.step")));
     CHECK(back.label == "assembly");
     CHECK(back.children.size() == 2);
     std::set<std::string> labels;
     for (const auto& child : back.children) {
         labels.insert(child.label);
         CHECK(child.color.has_value());
-        if (child.label == "red box") {
+        if (child.label == "red_box") {
             CHECK_NEAR(child.color->red, 1, 1e-3);
             CHECK_NEAR(child.color->blue, 0, 1e-3);
             CHECK_NEAR(child.volume(), 1, 1e-6);
@@ -323,7 +324,7 @@ TEST(step_assembly_labels_and_colors) {
             CHECK(child.bounding_box().center() == Vector(3, 0, 0));
         }
     }
-    CHECK(labels == (std::set<std::string>{"red box", "blue ball"}));
+    CHECK(labels == (std::set<std::string>{"red_box", "blue_ball"}));
 }
 
 TEST(warning_handler) {

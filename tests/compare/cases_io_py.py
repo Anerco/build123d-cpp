@@ -1,5 +1,7 @@
 """Python twins of cases_io.cpp."""
 
+import datetime
+import io
 import json
 import os
 import tempfile
@@ -30,6 +32,84 @@ def fixture(name):
 def read_bytes(path):
     with open(path, "rb") as f:
         return f.read()
+
+
+def read_text(path):
+    return read_bytes(path).decode("utf-8", errors="surrogateescape")
+
+
+def py_file(name):
+    return os.path.join(exchange_dir("py"), name)
+
+
+def color_value(c):
+    return None if c is None else list(tuple(c))
+
+
+def shape_tree(s):
+    loc = s.location if s.wrapped is not None else Location()
+    return V(
+        {
+            "type": type(s).__name__ if type(s).__name__ in ("Vertex", "Edge", "Wire", "Face", "Shell", "Solid") else "Compound",
+            "label": s.label,
+            # the stored color: the getter would inherit the parent's (assembly-tree behaviour)
+            "color": color_value(s._color),
+            "position": loc.position,
+            "orientation": loc.orientation,
+            "volume": s.volume if s.wrapped is not None else 0.0,
+            "faces": len(s.faces()) if s.wrapped is not None else 0,
+            "children": [shape_tree(c) for c in s.children],
+        }
+    )
+
+
+def obj_canonical(text):
+    """See cases_io.cpp: "f" lines sorted, normals as numbers."""
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    faces = sorted(line for line in lines if line.startswith("f "))
+    normals = [[float(x) for x in line.split()[1:]] for line in lines if line.startswith("vn ")]
+    others = "".join(line + "\n" for line in lines if not line.startswith("f ") and not line.startswith("vn "))
+    return [others, "".join(f + "\n" for f in faces), normals]
+
+
+def step_canonical(text):
+    """See cases_io.cpp: the header, and the sorted entities with #N references blanked."""
+    header, data = text.split("DATA;\n", 1)
+    entities = []
+    current = ""
+    i = 0
+    while i < len(data):
+        c = data[i]
+        if c == "\n":
+            if current.endswith(";"):
+                entities.append(current)
+                current = ""
+            while i + 1 < len(data) and data[i + 1] == " ":
+                i += 1
+        elif c == "#" and i + 1 < len(data) and data[i + 1].isdigit():
+            current += "#"
+            while i + 1 < len(data) and data[i + 1].isdigit():
+                i += 1
+        else:
+            current += c
+        i += 1
+    if current:
+        entities.append(current)
+    return [header, sorted(entities)]
+
+
+def sample_assembly():
+    red = Box(2, 2, 2)
+    red.label = "red box (v1.0)"
+    red.color = Color("red")
+    ball = Pos(4, 0, 5) * Sphere(1)
+    ball.label = "ball\tone"
+    ball.color = Color(0.2, 0.4, 0.6, 0.8)
+    inner = Compound(children=[ball, Pos(0, 4, 5) * Cylinder(1, 2)], label="inner.asm")
+    inner.color = Color("green")
+    return Compound(children=[red, inner], label="outer")
 
 
 def edge_summary(e):
@@ -159,7 +239,130 @@ def persist_location_round_trip():
     return V({"position": loc.position, "orientation": loc.orientation})
 
 
+def step_text_box():
+    box = Box(1, 2, 3)
+    box.label = "my box"
+    export_step(box, py_file("box.step"), Unit.MM, True, PrecisionMode.AVERAGE, timestamp="2024-01-01T00:00:00")
+    return V(read_text(py_file("box.step")))
+
+
+def step_text_assembly():
+    export_step(sample_assembly(), py_file("assembly.step"), timestamp="2024-01-01T00:00:00")
+    return V(step_canonical(read_text(py_file("assembly.step"))))
+
+
+def step_text_options():
+    part = Cylinder(2, 5) - Box(1, 1, 5)
+    part.color = Color(0.1, 0.5, 0.9)
+    stream = io.BytesIO()
+    export_step(part, stream, Unit.IN, False, PrecisionMode.GREATEST, timestamp="2025-06-07T08:09:10")
+    export_step(Edge.make_circle(3), py_file("circle.step"), Unit.M, True, PrecisionMode.LEAST,
+                timestamp=datetime.datetime(2025, 6, 7, 8, 9, 10))
+    return V([stream.getvalue().decode(), read_text(py_file("circle.step"))])
+
+
+def step_import_cpp_assembly():
+    export_step(sample_assembly(), py_file("assembly2.step"))
+    return shape_tree(import_step(py_file("assembly2.step")))
+
+
+def step_import_single_solid():
+    s = Solid.make_box(1, 2, 3)
+    s.label = "solid one"
+    s.color = Color("red")
+    export_step(s, py_file("solid.step"))
+    return shape_tree(import_step(py_file("solid.step")))
+
+
+def brep_text():
+    part = Rot(10, 20, 30) * (Box(3, 3, 3) - Sphere(1.8))
+    export_brep(part, py_file("part.brep"))
+    stream = io.BytesIO()
+    export_brep(part, stream)
+    return V([read_text(py_file("part.brep")), stream.getvalue().decode()])
+
+
+def brep_import():
+    export_brep(Pos(1, 2, 3) * Face.make_rect(2, 3), py_file("face.brep"))
+    return shape_tree(import_brep(py_file("face.brep")))
+
+
+def stl_ascii():
+    export_stl(Box(1, 2, 3), py_file("box.stl"), 1e-3, 0.1, True)
+    return V(read_text(py_file("box.stl")))
+
+
+def stl_binary():
+    export_stl(Cylinder(2, 3), py_file("cyl.stl"), 0.05, 0.3)
+    return V(read_bytes(py_file("cyl.stl")).hex())
+
+
+def stl_import_units():
+    export_stl(Box(1, 2, 3), py_file("unit_box.stl"))
+    out = []
+    for u in [Unit.MM, Unit.MC, Unit.CM, Unit.M, Unit.IN, Unit.FT]:
+        bb = import_stl(py_file("unit_box.stl"), u).bounding_box()
+        out.append([bb.min, bb.max])
+    return V(out)
+
+
+def stl_import_bad_unit():
+    export_stl(Box(1, 2, 3), py_file("unit_box2.stl"))
+    import_stl(py_file("unit_box2.stl"), Unit.KG)
+    return V("imported")
+
+
+def obj_uvs():
+    part = Box(4, 3, 2) - Cylinder(1, 2)
+    export_obj(part, py_file("part.obj"), 0.01, 0.2)
+    return V(obj_canonical(read_text(py_file("part.obj"))))
+
+
+def obj_options():
+    part = Sphere(2) + Pos(2, 0, 0) * Box(1, 1, 1)
+    out = []
+    for kwargs in [dict(include_uvs=False), dict(atlas_packing=False), dict(atlas_gutter=0.02)]:
+        stream = io.BytesIO()
+        export_obj(part, stream, 0.05, 0.3, **kwargs)
+        out.append(obj_canonical(stream.getvalue().decode()))
+    return V(out)
+
+
+def obj_sketch():
+    stream = io.BytesIO()
+    export_obj(Circle(2) - Rectangle(1, 1), stream, 0.01)
+    return V(obj_canonical(stream.getvalue().decode()))
+
+
 CASES = {
+    # ---- STEP
+    "io_step_text_box": step_text_box,
+    "io_step_text_assembly": step_text_assembly,
+    "io_step_text_options": step_text_options,
+    "io_step_import_py_assembly": lambda: shape_tree(import_step(fixture("py_assembly.step"))),
+    "io_step_import_cpp_assembly": step_import_cpp_assembly,
+    "io_step_import_face_colors": lambda: shape_tree(import_step(fixture("py_face_colors.step"))),
+    "io_step_import_inches": lambda: shape_tree(import_step(fixture("py_cone_in.step"))),
+    "io_step_import_single_solid": step_import_single_solid,
+    "io_step_import_missing": lambda: shape_tree(import_step(py_file("missing.step"))),
+    "io_step_empty": lambda: V(export_step(Part(), py_file("empty.step"))),
+    "io_step_missing_dir": lambda: V(export_step(Box(1, 1, 1), py_file("no/dir/x.step"))),
+    # ---- BREP
+    "io_brep_text": brep_text,
+    "io_brep_import": brep_import,
+    "io_brep_missing_dir": lambda: V(export_brep(Box(1, 1, 1), py_file("no/dir/x.brep"))),
+    "io_brep_import_missing": lambda: shape_tree(import_brep(py_file("missing.brep"))),
+    # ---- STL
+    "io_stl_ascii": stl_ascii,
+    "io_stl_binary": stl_binary,
+    "io_stl_import_units": stl_import_units,
+    "io_stl_import_bad_unit": stl_import_bad_unit,
+    "io_stl_missing_dir": lambda: V(export_stl(Box(1, 1, 1), py_file("no/dir/x.stl"))),
+    # ---- OBJ
+    "io_obj_uvs": obj_uvs,
+    "io_obj_options": obj_options,
+    "io_obj_sketch": obj_sketch,
+    "io_obj_missing_dir": lambda: V(export_obj(Box(1, 1, 1), py_file("no/dir/x.obj"))),
     # ---- persistence
     "io_persist_shape_bytes": persist_shape_bytes,
     "io_persist_shape_to_py": lambda: Compound.cast(deserialize_shape(read_bytes(cpp_file("persist_shape.bin")))),
