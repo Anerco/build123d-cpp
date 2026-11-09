@@ -210,6 +210,10 @@ void write_collection(const std::vector<std::string>& files, const std::string& 
 
 std::string temp_file(const std::string& name) { return (std::filesystem::temp_directory_path() / name).string(); }
 
+V tri_values(const Triangle& t) {
+    return V::list({t.a, t.b, t.c, t.A, t.B, t.C, t.area(), V::list({t.vertex_A, t.vertex_B, t.vertex_C})});
+}
+
 // ---- drafting: the settings of upstream test_drafting.py
 
 Draft metric() {
@@ -1115,6 +1119,94 @@ COMPARE_CASES {
     });
     compare::add("obj_ops_bounding_box_shapes", [] {
         return bounding_box(std::vector<Shape>{Pos(0, 0, 3) * Box(1, 2, 3), Pos(5, 5, 5) * Sphere(1)});
+    });
+
+    // ---- objects with edge and error inputs (both sides must agree on what fails)
+    compare::add("obj_edge_line1", [] { return Line(std::vector<Vector>{{0, 0}}); });
+    compare::add("obj_edge_line3", [] { return Line(std::vector<Vector>{{0, 0}, {1, 0}, {2, 0}}); });
+    compare::add("obj_edge_line_same", [] { return Line({0, 0}, {0, 0}); });
+    compare::add("obj_edge_polyline1", [] { return Polyline({{0, 0}}); });
+    compare::add("obj_edge_polyline_close2", [] { return Polyline({{0, 0}, {1, 0}}, true); });
+    compare::add("obj_edge_tpa2", [] { return ThreePointArc(std::vector<Vector>{{0, 0}, {1, 1}}); });
+    compare::add("obj_edge_tpa_collinear", [] { return ThreePointArc({0, 0}, {1, 0}, {2, 0}); });
+    compare::add("obj_edge_spline1", [] { return Spline({{0, 0}}); });
+    compare::add("obj_edge_spline_tan1", [] { return Spline({{0, 0}, {1, 1}, {2, 0}}, {{1, 0}}); });
+    compare::add("obj_edge_spline_tan3", [] { return Spline({{0, 0}, {1, 1}, {2, 0}}, {{1, 0}, {1, 1}, {1, 0}}); });
+    compare::add("obj_edge_spline_scalars", [] { return Spline({{0, 0}, {1, 1}, {2, 0}}, {{1, 0}, {1, 0}}, {1}); });
+    compare::add("obj_edge_tangent_arc3", [] { return TangentArc(std::vector<Vector>{{0, 0}, {1, 1}, {2, 0}}, {1, 0}); });
+    compare::add("obj_edge_radius_arc_small", [] { return RadiusArc({0, 0}, {10, 0}, 2); });
+    compare::add("obj_edge_radius_arc_neg", [] { return RadiusArc({0, 0}, {10, 0}, -8); });
+    compare::add("obj_edge_sagitta_zero", [] { return SagittaArc({0, 0}, {10, 0}, 0); });
+    compare::add("obj_edge_center_arc_zero", [] { return CenterArc({0, 0}, 5, 0, 0.0); });
+    compare::add("obj_edge_center_arc_720", [] { return CenterArc({0, 0}, 5, 0, 720.0); });
+    compare::add("obj_edge_jern_zero_radius", [] { return JernArc({0, 0}, {1, 0}, 0, 90.0); });
+    compare::add("obj_edge_jern_neg", [] { return JernArc({0, 0}, {1, 0}, 2, -90.0); });
+    compare::add("obj_edge_helix_neg_pitch", [] { return Helix(-2, 10, 3); });
+    compare::add("obj_edge_helix_cone", [] { return Helix(2, 10, 3, {0, 0, 0}, {0, 0, 1}, 10, true); });
+    compare::add("obj_edge_polar_neg", [] { return PolarLine({0, 0}, -5.0, 30.0); });
+    compare::add("obj_edge_polar_vertical_0", [] { return PolarLine({0, 0}, 5.0, 0.0, LengthMode::VERTICAL); });
+    compare::add("obj_edge_polar_vertical_180", [] { return PolarLine({0, 0}, 5.0, 180.0, LengthMode::VERTICAL); });
+    compare::add("obj_edge_polar_horizontal_90", [] { return PolarLine({0, 0}, 5.0, 90.0, LengthMode::HORIZONTAL); });
+    compare::add("obj_edge_polar_direction_vertical", [] {
+        return PolarLine({0, 0}, 5.0, Vector(1, 0), LengthMode::VERTICAL);
+    });
+    compare::add("obj_edge_fillet_poly_mismatch", [] {
+        return FilletPolyline({{0, 0}, {5, 0}, {5, 5}, {0, 5}}, std::vector<double>{1, 1, 1});
+    });
+    compare::add("obj_edge_fillet_poly_zero", [] { return FilletPolyline({{0, 0}, {5, 0}, {5, 5}}, 0.0); });
+    compare::add("obj_edge_fillet_poly_two", [] { return FilletPolyline({{0, 0}, {5, 0}}, 1.0); });
+    compare::add("obj_edge_fillet_poly_close_list", [] {
+        return FilletPolyline({{0, 0}, {5, 0}, {5, 5}, {0, 5}}, std::vector<double>{1, 0.5, 0.25, 0.75}, true);
+    });
+    compare::add("obj_edge_reg_poly2", [] { return RegularPolygon(3, 2); });
+    compare::add("obj_edge_reg_poly_minor", [] { return RegularPolygon(3, 5, false); });
+    compare::add("obj_edge_trap_bad", [] { return Trapezoid(5, 2, 20); });
+    compare::add("obj_edge_trap_obtuse", [] { return Trapezoid(5, 2, 120); });
+    compare::add("obj_edge_tri_two", [] { return Triangle({.a = 3, .b = 4}); });
+    compare::add("obj_edge_tri_bad", [] { return Triangle({.a = 1, .b = 2, .c = 5}); });
+    compare::add("obj_edge_tri_aaa", [] { return Triangle({.A = 60, .B = 60, .C = 60}); });
+    compare::add("obj_edge_tri_ssa_ambiguous", [] { return Triangle({.a = 3, .b = 4, .A = 40}); });
+    compare::add_value("obj_tri_ssa_ab", [] { return tri_values(Triangle({.a = 5, .b = 3, .A = 70})); });
+    compare::add_value("obj_tri_ssa_ac", [] { return tri_values(Triangle({.a = 5, .c = 3, .A = 70})); });
+    compare::add_value("obj_tri_ssa_ba", [] { return tri_values(Triangle({.a = 3, .b = 5, .B = 70})); });
+    compare::add_value("obj_tri_ssa_bc", [] { return tri_values(Triangle({.b = 5, .c = 3, .B = 70})); });
+    compare::add_value("obj_tri_ssa_ca", [] { return tri_values(Triangle({.a = 3, .c = 5, .C = 70})); });
+    compare::add_value("obj_tri_ssa_cb", [] { return tri_values(Triangle({.b = 3, .c = 5, .C = 70})); });
+    compare::add_value("obj_tri_ssa_right", [] { return tri_values(Triangle({.a = 4, .b = 8, .A = 30})); });
+    compare::add_value("obj_tri_ssa_obtuse_only", [] { return tri_values(Triangle({.a = 6, .b = 4, .A = 120})); });
+    compare::add_value("obj_tri_ssa_none", [] { return tri_values(Triangle({.a = 2, .b = 8, .A = 60})); });
+    compare::add_value("obj_tri_sas_abC", [] { return tri_values(Triangle({.a = 3, .b = 4, .C = 90})); });
+    compare::add_value("obj_tri_sas_bcA", [] { return tri_values(Triangle({.b = 3, .c = 5, .A = 40})); });
+    compare::add_value("obj_tri_sas_caB", [] { return tri_values(Triangle({.a = 2, .c = 7, .B = 110})); });
+    compare::add_value("obj_tri_aas_c", [] { return tri_values(Triangle({.c = 5, .A = 40, .B = 60})); });
+    compare::add_value("obj_tri_aas_a", [] { return tri_values(Triangle({.a = 5, .B = 40, .C = 60})); });
+    compare::add_value("obj_tri_aas_b", [] { return tri_values(Triangle({.b = 5, .A = 30, .C = 100})); });
+    compare::add_value("obj_tri_aas_bad", [] { return tri_values(Triangle({.a = 5, .A = 100, .B = 90})); });
+    compare::add_value("obj_tri_sss", [] { return tri_values(Triangle({.a = 4, .b = 5, .c = 6})); });
+    compare::add_value("obj_tri_angle_180", [] { return tri_values(Triangle({.a = 3, .b = 4, .C = 180})); });
+    compare::add_value("obj_tri_zero_side", [] { return tri_values(Triangle({.a = 0, .b = 4, .C = 30})); });
+    compare::add("obj_edge_slot_cp_same", [] { return SlotCenterPoint({0, 0}, {0, 0}, 2); });
+    compare::add("obj_edge_slot_c2c_zero", [] { return SlotCenterToCenter(0, 2); });
+    compare::add("obj_edge_slot_overall_narrow", [] { return SlotOverall(2, 3); });
+    compare::add("obj_edge_superellipse_order1", [] { return Superellipse(4, 2, 1); });
+    compare::add("obj_edge_rect_rounded_big", [] { return RectangleRounded(4, 2, 1); });
+    compare::add("obj_edge_circle_half", [] { return Circle(2, 180); });
+    compare::add("obj_edge_convex_3", [] { return ConvexPolyhedron({{0, 0, 0}, {1, 0, 0}, {0, 1, 0}}); });
+    compare::add("obj_edge_cylinder_arc", [] { return Cylinder(2, 5, 90); });
+    compare::add("obj_edge_sphere_parts", [] { return Sphere(3, -45, 30, 200); });
+    compare::add("obj_edge_torus_partial", [] { return Torus(5, 1, 30, 270, 180); });
+    compare::add("obj_edge_wedge", [] { return Wedge(4, 3, 2, 1, 0.5, 3, 1.5); });
+    compare::add("obj_edge_cone_point", [] { return Cone(3, 0, 4); });
+    compare::add("obj_edge_text_empty", [] { return Text("", 5); });
+    compare::add("obj_edge_text_lines", [] { return Text("a\nb", 5, {.text_align = {TextAlign::LEFT, TextAlign::TOPFIRSTLINE}}); });
+    compare::add("obj_edge_bezier_weights", [] { return Bezier({{0, 0}, {1, 1}, {2, 0}}, {1, 2}); });
+    compare::add("obj_edge_bspline_bad", [] { return BSpline({{0, 0}, {1, 1}, {2, 0}}, {0, 1}, 2); });
+    compare::add("obj_edge_blend_c0", [] {
+        return BlendCurve(Line({0, 0}, {1, 0}), Line({2, 1}, {3, 1}), ContinuityLevel::C0);
+    });
+    compare::add("obj_edge_ellstart_none", [] { return EllipticalStartArc({0, 0}, {1, 0}, 4, 2, 90); });
+    compare::add("obj_edge_ellstart_dir", [] {
+        return EllipticalStartArc({0, 0}, {1, 1}, 4, 2, 120, 30.0, Vector(0, 1));
     });
 
     // ---- drafting

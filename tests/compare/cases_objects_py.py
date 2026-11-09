@@ -694,6 +694,10 @@ def obj_draft_date():
     return V([date(2024, 3, 15).isoformat(), date(1, 1, 1).isoformat(), date(2024, 2, 29).isoformat()])
 
 
+def tri_values(t):
+    return V([t.a, t.b, t.c, t.A, t.B, t.C, t.area, [list(v) for v in (t.vertex_A, t.vertex_B, t.vertex_C)]])
+
+
 def obj_full_round_flipped():
     flipped = -Face.make_rect(34, 10)
     rounded = full_round((flipped.edges() << Axis.X)[0])
@@ -1306,6 +1310,87 @@ CASES = {
         Compound([Pos(1, 2) * Face.make_rect(2, 1), Pos(-3, 0) * Circle(1).face()])
     ),
     "obj_ops_bounding_box_shapes": lambda: bounding_box([Pos(0, 0, 3) * Box(1, 2, 3), Pos(5, 5, 5) * Sphere(1)]),
+    # objects with edge and error inputs (both sides must agree on what fails)
+    "obj_edge_line1": lambda: Line((0, 0)),
+    "obj_edge_line3": lambda: Line((0, 0), (1, 0), (2, 0)),
+    "obj_edge_line_same": lambda: Line((0, 0), (0, 0)),
+    "obj_edge_polyline1": lambda: Polyline((0, 0)),
+    "obj_edge_polyline_close2": lambda: Polyline((0, 0), (1, 0), close=True),
+    "obj_edge_tpa2": lambda: ThreePointArc((0, 0), (1, 1)),
+    "obj_edge_tpa_collinear": lambda: ThreePointArc((0, 0), (1, 0), (2, 0)),
+    "obj_edge_spline1": lambda: Spline([(0, 0)]),
+    "obj_edge_spline_tan1": lambda: Spline((0, 0), (1, 1), (2, 0), tangents=[(1, 0)]),
+    "obj_edge_spline_tan3": lambda: Spline((0, 0), (1, 1), (2, 0), tangents=[(1, 0), (1, 1), (1, 0)]),
+    "obj_edge_spline_scalars": lambda: Spline((0, 0), (1, 1), (2, 0), tangents=[(1, 0), (1, 0)], tangent_scalars=[1]),
+    "obj_edge_tangent_arc3": lambda: TangentArc((0, 0), (1, 1), (2, 0), tangent=(1, 0)),
+    "obj_edge_radius_arc_small": lambda: RadiusArc((0, 0), (10, 0), 2),
+    "obj_edge_radius_arc_neg": lambda: RadiusArc((0, 0), (10, 0), -8),
+    "obj_edge_sagitta_zero": lambda: SagittaArc((0, 0), (10, 0), 0),
+    "obj_edge_center_arc_zero": lambda: CenterArc((0, 0), 5, 0, 0),
+    "obj_edge_center_arc_720": lambda: CenterArc((0, 0), 5, 0, 720),
+    "obj_edge_jern_zero_radius": lambda: JernArc((0, 0), (1, 0), 0, 90),
+    "obj_edge_jern_neg": lambda: JernArc((0, 0), (1, 0), 2, -90),
+    "obj_edge_helix_neg_pitch": lambda: Helix(-2, 10, 3),
+    "obj_edge_helix_cone": lambda: Helix(2, 10, 3, cone_angle=10, lefthand=True),
+    "obj_edge_polar_neg": lambda: PolarLine((0, 0), -5, 30),
+    "obj_edge_polar_vertical_0": lambda: PolarLine((0, 0), 5, 0, length_mode=LengthMode.VERTICAL),
+    "obj_edge_polar_vertical_180": lambda: PolarLine((0, 0), 5, 180, length_mode=LengthMode.VERTICAL),
+    "obj_edge_polar_horizontal_90": lambda: PolarLine((0, 0), 5, 90, length_mode=LengthMode.HORIZONTAL),
+    "obj_edge_polar_direction_vertical": lambda: PolarLine((0, 0), 5, direction=(1, 0), length_mode=LengthMode.VERTICAL),
+    "obj_edge_fillet_poly_mismatch": lambda: FilletPolyline((0, 0), (5, 0), (5, 5), (0, 5), radius=[1, 1, 1]),
+    "obj_edge_fillet_poly_zero": lambda: FilletPolyline((0, 0), (5, 0), (5, 5), radius=0),
+    "obj_edge_fillet_poly_two": lambda: FilletPolyline((0, 0), (5, 0), radius=1),
+    "obj_edge_fillet_poly_close_list": lambda: FilletPolyline(
+        (0, 0), (5, 0), (5, 5), (0, 5), radius=[1, 0.5, 0.25, 0.75], close=True
+    ),
+    "obj_edge_reg_poly2": lambda: RegularPolygon(3, 2),
+    "obj_edge_reg_poly_minor": lambda: RegularPolygon(3, 5, major_radius=False),
+    "obj_edge_trap_bad": lambda: Trapezoid(5, 2, 20),
+    "obj_edge_trap_obtuse": lambda: Trapezoid(5, 2, 120),
+    "obj_edge_tri_two": lambda: Triangle(a=3, b=4),
+    "obj_edge_tri_bad": lambda: Triangle(a=1, b=2, c=5),
+    "obj_edge_tri_aaa": lambda: Triangle(A=60, B=60, C=60),
+    "obj_edge_tri_ssa_ambiguous": lambda: Triangle(a=3, b=4, A=40),
+    "obj_tri_ssa_ab": lambda: tri_values(Triangle(a=5, b=3, A=70)),
+    "obj_tri_ssa_ac": lambda: tri_values(Triangle(a=5, c=3, A=70)),
+    "obj_tri_ssa_ba": lambda: tri_values(Triangle(b=5, a=3, B=70)),
+    "obj_tri_ssa_bc": lambda: tri_values(Triangle(b=5, c=3, B=70)),
+    "obj_tri_ssa_ca": lambda: tri_values(Triangle(c=5, a=3, C=70)),
+    "obj_tri_ssa_cb": lambda: tri_values(Triangle(c=5, b=3, C=70)),
+    "obj_tri_ssa_right": lambda: tri_values(Triangle(a=4, b=8, A=30)),
+    "obj_tri_ssa_obtuse_only": lambda: tri_values(Triangle(a=6, b=4, A=120)),
+    "obj_tri_ssa_none": lambda: tri_values(Triangle(a=2, b=8, A=60)),
+    "obj_tri_sas_abC": lambda: tri_values(Triangle(a=3, b=4, C=90)),
+    "obj_tri_sas_bcA": lambda: tri_values(Triangle(b=3, c=5, A=40)),
+    "obj_tri_sas_caB": lambda: tri_values(Triangle(c=7, a=2, B=110)),
+    "obj_tri_aas_c": lambda: tri_values(Triangle(c=5, A=40, B=60)),
+    "obj_tri_aas_a": lambda: tri_values(Triangle(a=5, B=40, C=60)),
+    "obj_tri_aas_b": lambda: tri_values(Triangle(b=5, A=30, C=100)),
+    "obj_tri_aas_bad": lambda: tri_values(Triangle(a=5, A=100, B=90)),
+    "obj_tri_sss": lambda: tri_values(Triangle(a=4, b=5, c=6)),
+    "obj_tri_angle_180": lambda: tri_values(Triangle(a=3, b=4, C=180)),
+    "obj_tri_zero_side": lambda: tri_values(Triangle(a=0, b=4, C=30)),
+    "obj_edge_slot_cp_same": lambda: SlotCenterPoint((0, 0), (0, 0), 2),
+    "obj_edge_slot_c2c_zero": lambda: SlotCenterToCenter(0, 2),
+    "obj_edge_slot_overall_narrow": lambda: SlotOverall(2, 3),
+    "obj_edge_superellipse_order1": lambda: Superellipse(4, 2, 1),
+    "obj_edge_rect_rounded_big": lambda: RectangleRounded(4, 2, 1),
+    "obj_edge_circle_half": lambda: Circle(2, arc_size=180),
+    "obj_edge_convex_3": lambda: ConvexPolyhedron([(0, 0, 0), (1, 0, 0), (0, 1, 0)]),
+    "obj_edge_cylinder_arc": lambda: Cylinder(2, 5, arc_size=90),
+    "obj_edge_sphere_parts": lambda: Sphere(3, -45, 30, 200),
+    "obj_edge_torus_partial": lambda: Torus(5, 1, 30, 270, 180),
+    "obj_edge_wedge": lambda: Wedge(4, 3, 2, 1, 0.5, 3, 1.5),
+    "obj_edge_cone_point": lambda: Cone(3, 0, 4),
+    "obj_edge_text_empty": lambda: Text("", 5),
+    "obj_edge_text_lines": lambda: Text("a\nb", 5, text_align=(TextAlign.LEFT, TextAlign.TOPFIRSTLINE)),
+    "obj_edge_bezier_weights": lambda: Bezier((0, 0), (1, 1), (2, 0), weights=[1, 2]),
+    "obj_edge_bspline_bad": lambda: BSpline([(0, 0), (1, 1), (2, 0)], [0, 1], 2),
+    "obj_edge_blend_c0": lambda: BlendCurve(Line((0, 0), (1, 0)), Line((2, 1), (3, 1)), ContinuityLevel.C0),
+    "obj_edge_ellstart_none": lambda: EllipticalStartArc((0, 0), (1, 0), 4, 2, 90),
+    "obj_edge_ellstart_dir": lambda: EllipticalStartArc(
+        (0, 0), (1, 1), 4, 2, 120, start_angle=30, major_axis_dir=(0, 1)
+    ),
     # drafting
     "obj_draft_numbers": obj_draft_numbers,
     "obj_draft_labels": obj_draft_labels,

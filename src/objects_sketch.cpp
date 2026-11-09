@@ -22,79 +22,135 @@ Face slot_face(double half_length, double height) {
 
 Face circle_face(double radius) { return Face(Wire::make_circle(radius)); }
 
-// ---- triangle solver (sides a, b, c opposite angles A, B, C; radians)
+// ---- triangle solver: a port of trianglesolver.solve (the package build123d uses), with
+// sides a, b, c opposite angles A, B, C in radians
 struct Tri {
     double a, b, c, A, B, C;
 };
 
-double clamp1(double x) { return std::max(-1.0, std::min(1.0, x)); }
+/// Python's assert (AssertionError).
+void tri_assert(bool condition, const char* message = "") {
+    if (!condition) throw std::invalid_argument(message);
+}
 
-Tri solve_sss(double a, double b, double c) {
-    if (a + b <= c || a + c <= b || b + c <= a) throw std::invalid_argument("Triangle sides violate the triangle inequality");
-    const double A = std::acos(clamp1((b * b + c * c - a * a) / (2 * b * c)));
-    const double B = std::acos(clamp1((a * a + c * c - b * b) / (2 * a * c)));
-    return {a, b, c, A, B, PI - A - B};
+/// math.acos, math.asin and math.sqrt raise for arguments outside their domain.
+double py_acos(double x) {
+    if (x < -1.0 || x > 1.0) throw std::invalid_argument("math domain error");
+    return std::acos(x);
+}
+double py_asin(double x) {
+    if (x < -1.0 || x > 1.0) throw std::invalid_argument("math domain error");
+    return std::asin(x);
+}
+double py_sqrt(double x) {
+    if (x < 0.0) throw std::invalid_argument("math domain error");
+    return std::sqrt(x);
+}
+double sq(double x) { return std::pow(x, 2.0); }  // Python's x**2
+
+/// (d, e, f, D, E, F) from three angles and side f.
+Tri aaas(double D, double E, double F, double f) {
+    const double d = f * std::sin(D) / std::sin(F);
+    const double e = f * std::sin(E) / std::sin(F);
+    return {d, e, f, D, E, F};
+}
+
+Tri sss(double d, double e, double f) {
+    tri_assert(d + e > f && e + f > d && f + d > e);
+    const double F = py_acos((sq(d) + sq(e) - sq(f)) / (2 * d * e));
+    const double E = py_acos((sq(d) + sq(f) - sq(e)) / (2 * d * f));
+    const double D = PI - F - E;
+    return {d, e, f, D, E, F};
+}
+
+Tri sas(double d, double e, double F) { return sss(d, e, py_sqrt(sq(d) + sq(e) - 2 * d * e * std::cos(F))); }
+
+/// Two sides and the angle opposite the first (ssa_flag 'forbid': an ambiguous case raises).
+Tri ssa(double d, double e, double D) {
+    const double sinE = std::sin(D) * e / d;
+    double E;
+    if (std::abs(sinE - 1) <= 1e-9 * std::max(std::abs(sinE), 1.0)) {  // math.isclose(sinE, 1)
+        E = PI / 2;  // a right triangle: the solution is unique
+    } else {
+        tri_assert(sinE < 1, "No such triangle");
+        const double E_acute = py_asin(sinE);
+        const double E_obtuse = PI - E_acute;
+        const bool acute_is_valid = 0 < (PI - D - E_acute) && (PI - D - E_acute) < PI;
+        const bool obtuse_is_valid = 0 < (PI - D - E_obtuse) && (PI - D - E_obtuse) < PI;
+        if (acute_is_valid && obtuse_is_valid) throw std::invalid_argument("Two different triangles fit this description");
+        if (!acute_is_valid && !obtuse_is_valid) throw std::invalid_argument("No such triangle");
+        E = acute_is_valid ? E_acute : E_obtuse;
+    }
+    const double F = PI - D - E;
+    const Tri t = aaas(E, F, D, d);  // returns (e, f, d, E, F, D)
+    return {t.c, t.a, t.b, t.C, t.A, t.B};
 }
 
 Tri solve_triangle(const TriangleParams& p) {
     const auto rad = [](std::optional<double> d) -> std::optional<double> {
         return d ? std::optional<double>(*d * DEG2RAD) : std::nullopt;
     };
-    std::optional<double> s[3] = {p.a, p.b, p.c};
-    std::optional<double> ang[3] = {rad(p.A), rad(p.B), rad(p.C)};
-    int sides = 0, angles = 0;
-    for (int i = 0; i < 3; ++i) {
-        sides += s[i] ? 1 : 0;
-        angles += ang[i] ? 1 : 0;
-    }
+    const std::optional<double> a = p.a, b = p.b, c = p.c;
+    std::optional<double> A = rad(p.A), B = rad(p.B), C = rad(p.C);
+    const int sides = (a ? 1 : 0) + (b ? 1 : 0) + (c ? 1 : 0);
+    const int angles = (A ? 1 : 0) + (B ? 1 : 0) + (C ? 1 : 0);
+    // build123d's check, then trianglesolver's
     if (sides == 0 || sides + angles != 3) throw std::invalid_argument("One length and two other values must be provided");
-    auto result = [&](std::array<double, 3> sd, std::array<double, 3> an) { return Tri{sd[0], sd[1], sd[2], an[0], an[1], an[2]}; };
-    if (sides == 3) return solve_sss(*s[0], *s[1], *s[2]);
+    for (const auto& x : {a, b, c, A, B, C}) tri_assert(!x || *x > 0);
+    for (const auto& x : {A, B, C}) tri_assert(!x || *x < PI);
+
+    if (sides == 3) return sss(*a, *b, *c);
     if (sides == 2) {
-        int missing = 0;
-        while (s[missing]) ++missing;
-        const int i = (missing + 1) % 3, j = (missing + 2) % 3;
-        if (ang[missing]) {
-            // SAS: the included angle is opposite the missing side
-            const double x = std::sqrt(*s[i] * *s[i] + *s[j] * *s[j] - 2 * *s[i] * *s[j] * std::cos(*ang[missing]));
-            std::array<double, 3> sd{};
-            sd[missing] = x;
-            sd[i] = *s[i];
-            sd[j] = *s[j];
-            return solve_sss(sd[0], sd[1], sd[2]);
+        // ssa cases
+        if (a && A && b) return ssa(*a, *b, *A);
+        if (a && A && c) {
+            const Tri t = ssa(*a, *c, *A);  // (a, c, b, A, C, B)
+            return {t.a, t.c, t.b, t.A, t.C, t.B};
         }
-        // SSA: one known angle opposite a known side
-        const int k = ang[i] ? i : j;     // known angle index (side k known)
-        const int other = k == i ? j : i;  // the other known side
-        const double sin_other = *s[other] * std::sin(*ang[k]) / *s[k];
-        if (sin_other > 1.0 + 1e-12) throw std::invalid_argument("No triangle satisfies the given values");
-        std::array<double, 3> an{};
-        an[k] = *ang[k];
-        an[other] = std::asin(clamp1(sin_other));
-        an[missing] = PI - an[k] - an[other];
-        if (an[missing] <= 0) throw std::invalid_argument("No triangle satisfies the given values");
-        std::array<double, 3> sd{};
-        sd[k] = *s[k];
-        sd[other] = *s[other];
-        sd[missing] = *s[k] * std::sin(an[missing]) / std::sin(an[k]);
-        return result(sd, an);
-    }
-    // one side and two angles
-    std::array<double, 3> an{};
-    int missing = -1;
-    for (int i = 0; i < 3; ++i) {
-        if (ang[i]) {
-            an[static_cast<std::size_t>(i)] = *ang[i];
-        } else {
-            missing = i;
+        if (b && B && a) {
+            const Tri t = ssa(*b, *a, *B);  // (b, a, c, B, A, C)
+            return {t.b, t.a, t.c, t.B, t.A, t.C};
         }
+        if (b && B && c) {
+            const Tri t = ssa(*b, *c, *B);  // (b, c, a, B, C, A)
+            return {t.c, t.a, t.b, t.C, t.A, t.B};
+        }
+        if (c && C && a) {
+            const Tri t = ssa(*c, *a, *C);  // (c, a, b, C, A, B)
+            return {t.b, t.c, t.a, t.B, t.C, t.A};
+        }
+        if (c && C && b) {
+            const Tri t = ssa(*c, *b, *C);  // (c, b, a, C, B, A)
+            return {t.c, t.b, t.a, t.C, t.B, t.A};
+        }
+        // sas cases
+        if (a && b && C) return sas(*a, *b, *C);
+        if (b && c && A) {
+            const Tri t = sas(*b, *c, *A);  // (b, c, a, B, C, A)
+            return {t.c, t.a, t.b, t.C, t.A, t.B};
+        }
+        if (c && a && B) {
+            const Tri t = sas(*c, *a, *B);  // (c, a, b, C, A, B)
+            return {t.b, t.c, t.a, t.B, t.C, t.A};
+        }
+        throw std::invalid_argument("Oops, this code should never run");
     }
-    an[static_cast<std::size_t>(missing)] = PI - an[(missing + 1) % 3] - an[(missing + 2) % 3];
-    if (an[static_cast<std::size_t>(missing)] <= 0) throw std::invalid_argument("Angles sum to 180 degrees or more");
-    int known = 0;
-    while (!s[known]) ++known;
-    const double ratio = *s[known] / std::sin(an[static_cast<std::size_t>(known)]);
-    return result({ratio * std::sin(an[0]), ratio * std::sin(an[1]), ratio * std::sin(an[2])}, an);
+    // one side and two angles: find the third angle, then solve
+    if (!A) {
+        A = PI - *B - *C;
+    } else if (!B) {
+        B = PI - *A - *C;
+    } else {
+        C = PI - *A - *B;
+    }
+    tri_assert(*A > 0 && *B > 0 && *C > 0);
+    if (c) return aaas(*A, *B, *C, *c);
+    if (a) {
+        const Tri t = aaas(*B, *C, *A, *a);  // (b, c, a, B, C, A)
+        return {t.c, t.a, t.b, t.C, t.A, t.B};
+    }
+    const Tri t = aaas(*C, *A, *B, *b);  // (c, a, b, C, A, B)
+    return {t.b, t.c, t.a, t.B, t.C, t.A};
 }
 
 }  // namespace
