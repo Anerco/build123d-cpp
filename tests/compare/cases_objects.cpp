@@ -1,7 +1,7 @@
 // Objects, operations, text and drafting compared with cases_objects_py.py.
 #include "case_registry.hpp"
 
-#include "../../src/nelder_mead.hpp"
+#include "../../src/optimize.hpp"
 
 using namespace build123d;
 using compare::V;
@@ -52,6 +52,9 @@ V edges_values(const std::vector<Edge>& edges) {
     for (const auto& e : edges) out.push_back(V::list({e.length(), e.position_at(0), e.position_at(1)}));
     return V::list(out);
 }
+
+V edge_values(const Edge& e) { return V::list({e.length(), e.position_at(0), e.position_at(1)}); }
+V optional_edge_values(const std::optional<Edge>& e) { return e ? edge_values(*e) : V(nullptr); }
 
 V nelder_mead_values(const std::function<double(const std::vector<double>&)>& f, const std::vector<double>& x0,
                      detail::NelderMeadOptions options) {
@@ -230,6 +233,19 @@ COMPARE_CASES {
             nelder_mead_values(rosen, {-1.2, 1.0}, Opt{}),
             nelder_mead_values(rosen, {0.4, 0.4}, box2),
             nelder_mead_values(rosen, {-1.2, 1.0}, capped),
+        });
+    });
+
+    compare::add_value("obj_minimize_scalar_bounded", [] {
+        auto run = [](const std::function<double(double)>& f, double lo, double hi, double xatol) {
+            const auto r = detail::minimize_scalar_bounded(f, lo, hi, xatol);
+            return V::list({r.x, r.fun, r.nfev, r.status});
+        };
+        return V::list({
+            run([](double x) { return (x - 0.3) * (x - 0.3); }, 0, 1, 5e-7),
+            run([](double x) { return std::abs(std::sin(5 * x) - 0.2); }, 0, 1, 1e-5),
+            run([](double x) { return std::cos(x); }, 0.5, 0.75, 5e-7),
+            run([](double x) { return std::exp(x); }, -2, 3, 1e-5),
         });
     });
 
@@ -484,5 +500,104 @@ COMPARE_CASES {
     compare::add("obj_clines_object_closest", [] {
         return ConstrainedLines(CenterArc({-5, 0}, 4, 0, 360), Axis::Y, {.angle = 30},
                                 [](const ShapeList<Edge>& lines) { return lines.sort_by_distance(Vector(0, 0))[0]; });
+    });
+
+    // ---- limits: Edge::trim_to_other, trim_infinite, arc_size/length limits
+    compare::add_value("obj_trim_to_other", [] {
+        const double h = std::sqrt(2.0) / 2;
+        const std::vector<Edge> bases{CenterArc({0, 0}, 1, 0, 180), CenterArc({0, 0}, 1, 0, 360)};
+        const Sketch rect = Rectangle(1, 1, Align2(Align::MAX, Align::MIN)).rotate(Axis::Z, -45);
+        std::vector<V> out;
+        for (const Edge& base : bases) {
+            out.push_back(optional_edge_values(base.trim_to_other(Line({0, 0}, {1, 1}))));
+            out.push_back(optional_edge_values(base.trim_to_other(CenterArc({0, 0}, 1, 45, 90))));
+            out.push_back(optional_edge_values(base.trim_to_other(rect.wire())));
+            out.push_back(optional_edge_values(base.trim_to_other(rect)));
+            out.push_back(optional_edge_values(base.trim_to_other(Curve(std::vector<Edge>(rect.edges())))));
+            out.push_back(optional_edge_values(
+                base.trim_to_other(Box(1, 1, 1, Align3(Align::MAX, Align::MIN, Align::CENTER)).rotate(Axis::Z, -45))));
+            out.push_back(optional_edge_values(base.trim_to_other(Axis(Vector(0, 0, 0), Vector(1, 1, 0)))));
+            out.push_back(optional_edge_values(base.trim_to_other(Location(Vector(h, h), Vector(0, 0, 1)))));
+            out.push_back(optional_edge_values(base.trim_to_other(Plane(Vector(0, 0, 0), Vector(1, 1, 0), Vector(-1, 1, 0)))));
+            out.push_back(optional_edge_values(base.trim_to_other(Vector(1, 0).rotate(Axis::Z, 45))));
+            out.push_back(optional_edge_values(base.trim_to_other(Vector(h, h))));
+            out.push_back(optional_edge_values(base.trim_to_other(Vector(0, 2))));
+            out.push_back(optional_edge_values(base.trim_to_other(Vertex(h, h, 0))));
+            out.push_back(optional_edge_values(base.trim_to_other(Pos(0, 0.5) * Circle(0.8))));
+            out.push_back(optional_edge_values(base.trim_to_other(Line({-2, 0.5}, {2, 0.5}))));
+            out.push_back(optional_edge_values(base.reversed().trim_to_other(Line({0, 0}, {1, 1}))));
+        }
+        return V::list(out);
+    });
+    compare::add_value("obj_trim_infinite", [] {
+        return V::list({edge_values(Edge(Axis::X).trim_infinite(5)),
+                        edge_values(Edge(Axis(Vector(1, 2, 3), Vector(0, 1, 1))).trim_infinite(2)),
+                        edge_values(Line({0, 0}, {1, 1}).trim_infinite(5)), Edge(Axis::Y).is_infinite()});
+    });
+    compare::add_value("obj_center_arc_limits", [] {
+        const CenterArc c1({1, 0}, 1, 0, Line({1, 0}, {2, 1}));
+        const CenterArc c2({1, 0}, 1, 0, Line({1, 0}, {2, -1}));
+        const CenterArc c3({0, 0}, 2, 30, Axis::Y);
+        const CenterArc c4({0, 0}, 2, 30, Plane::XZ);
+        const CenterArc c5({0, 0}, 2, 10, Pos(0, 3) * Circle(1.5));
+        const CenterArc c6({0, 0}, 2, 10, Vector(0, -2));
+        return V::list({edge_values(c1), c1 % 0, edge_values(c2), c2 % 0, edge_values(c3), edge_values(c4),
+                        edge_values(c5), edge_values(c6)});
+    });
+    compare::add("obj_center_arc_limit_error", [] { return CenterArc({1, 0}, 1, 0, {5, 0}); });
+    compare::add_value("obj_conic_arc_limits", [] {
+        return V::list({
+            edge_values(EllipticalCenterArc({0, 0}, 2, 1, 0, Line({0, 0}, {0, 2}))),
+            edge_values(EllipticalCenterArc({0, 0}, 2, 1, 0, Line({0, 0}, {0, -2}))),
+            edge_values(EllipticalCenterArc({1, 1}, 3, 1, 0, Axis(Vector(1, 1), Vector(1, 1)), 20)),
+            edge_values(ParabolicCenterArc({0, 0}, 0.5, 0, Line({0, 1}, {5, 1}))),
+            edge_values(ParabolicCenterArc({0, 0}, 0.5, 0, Line({1, -2}, {1, 2}))),
+            edge_values(ParabolicCenterArc({0, 0}, 0.5, -30, Axis::X, 15)),
+            edge_values(HyperbolicCenterArc({0, 0}, 2, 1, 0, Line({0, 1}, {10, 1}))),
+            edge_values(HyperbolicCenterArc({0, 0}, 2, 1, 0, Line({3, -2}, {3, 2}))),
+            edge_values(HyperbolicCenterArc({0, 0}, 1, 2, 0, Line({-5, 3}, {5, 3}), 10)),
+        });
+    });
+    compare::add("obj_elliptical_limit_error", [] { return EllipticalCenterArc({0, 0}, 2, 1, 0, {0, 5}); });
+    compare::add("obj_parabolic_limit_error", [] { return ParabolicCenterArc({0, 0}, 0.5, 0, {0, 5}); });
+    compare::add("obj_hyperbolic_limit_error", [] { return HyperbolicCenterArc({0, 0}, 2, 1, 0, {0, 5}); });
+    compare::add_value("obj_jern_arc_limits", [] {
+        const JernArc j1({1, 0}, {0, 1}, 1, Line({1, 0}, {2, 1}));
+        const JernArc j2({1, 0}, {0, 1}, 1, Line({1, 0}, {0, 1}));
+        const JernArc j3({0, 0}, {1, 1}, 3, Axis::Y);
+        const JernArc j4({0, 0, 1}, {0, 0, 1}, 2, Plane::XY.offset(3));
+        return V::list({edge_values(j1), j1.center_point, j1.end_of_arc, j1.start, edge_values(j2), j2.center_point,
+                        edge_values(j3), j3.center_point, edge_values(j4), j4.center_point});
+    });
+    compare::add("obj_jern_arc_limit_error", [] { return JernArc({1, 0}, {0, 1}, 1, {5, 0}); });
+    compare::add_value("obj_polar_line_limits", [] {
+        const double h = std::sqrt(2.0) / 2;
+        const Sketch rect = Rectangle(1, 1, Align2(Align::MAX, Align::MIN)).rotate(Axis::Z, -45);
+        const std::vector<Limit> limits{
+            Line({0, 0}, {1, 1}),
+            CenterArc({0, 0}, 1, 45, 90),
+            rect.wire(),
+            rect,
+            Curve(std::vector<Edge>(rect.edges())),
+            Box(1, 1, 1, Align3(Align::MAX, Align::MIN, Align::CENTER)).rotate(Axis::Z, -45),
+            Axis(Vector(0, 0, 0), Vector(1, 1, 0)),
+            Location(Vector(h, h), Vector(0, 0, 1)),
+            Plane(Vector(0, 0, 0), Vector(1, 1, 0), Vector(-1, 1, 0)),
+            Vector(1, 0).rotate(Axis::Z, 45),
+            Limit(h, h),
+        };
+        std::vector<V> out;
+        for (const auto& limit : limits) out.push_back(edge_values(PolarLine({std::sqrt(2.0), 0}, limit, 135)));
+        out.push_back(edge_values(PolarLine({2, 0}, Axis::Y, 135)));
+        out.push_back(edge_values(PolarLine({0, 0}, Line({3, -1}, {3, 5}), Vector(1, 1))));
+        return V::list(out);
+    });
+    compare::add("obj_polar_line_limit_point_error", [] { return PolarLine({std::sqrt(2.0), 0}, {0, 2}, 135); });
+    compare::add("obj_polar_line_limit_shape_error", [] {
+        return PolarLine({std::sqrt(2.0), 0}, Line({3, 0}, {3, 1}), 135);
+    });
+    compare::add("obj_polar_line_limit_behind_error", [] { return PolarLine({0, 0}, Axis::Y, 0.0); });
+    compare::add("obj_polar_line_limit_location_aligned", [] {
+        return PolarLine({0, 0}, Location(Plane(Vector(3, 0), std::nullopt, Vector(1, 0, 0))), 0.0);
     });
 }

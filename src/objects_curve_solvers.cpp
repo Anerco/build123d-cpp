@@ -8,7 +8,7 @@
 
 #include "build123d/objects.hpp"
 #include "internal.hpp"
-#include "nelder_mead.hpp"
+#include "optimize.hpp"
 #include "py_compat.hpp"
 
 namespace build123d {

@@ -1,6 +1,6 @@
-// Port of scipy.optimize._optimize._minimize_neldermead (scipy 1.18), step by step: the
-// same simplex construction, bound handling, update order and stopping tests.
-#include "nelder_mead.hpp"
+// Ports of scipy.optimize._optimize._minimize_neldermead and _minimize_scalar_bounded
+// (scipy 1.18), step by step: the same initial points, update order and stopping tests.
+#include "optimize.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -252,6 +252,122 @@ NelderMeadResult minimize_nelder_mead(const std::function<double(const std::vect
         result.status = 0;
     }
     result.success = result.status == 0;
+    return result;
+}
+
+namespace {
+double np_sign(double v) { return v > 0 ? 1.0 : (v < 0 ? -1.0 : 0.0); }
+}  // namespace
+
+ScalarResult minimize_scalar_bounded(const std::function<double(double)>& func, double x1, double x2, double xatol,
+                                     int maxiter) {
+    const int maxfun = maxiter;
+    if (!std::isfinite(x1) || !std::isfinite(x2)) {
+        throw std::invalid_argument("Optimization bounds must be finite scalars.");
+    }
+    if (x1 > x2) throw std::invalid_argument("The lower bound exceeds the upper bound.");
+
+    int flag = 0;
+    const double sqrt_eps = std::sqrt(2.2e-16);
+    const double golden_mean = 0.5 * (3.0 - std::sqrt(5.0));
+    double a = x1, b = x2;
+    double fulc = a + golden_mean * (b - a);
+    double nfc = fulc, xf = fulc;
+    double rat = 0.0, e = 0.0;
+    double x = xf;
+    double fx = func(x);
+    int num = 1;
+    double fu = std::numeric_limits<double>::infinity();
+
+    double ffulc = fx, fnfc = fx;
+    double xm = 0.5 * (a + b);
+    double tol1 = sqrt_eps * std::abs(xf) + xatol / 3.0;
+    double tol2 = 2.0 * tol1;
+
+    while (std::abs(xf - xm) > (tol2 - 0.5 * (b - a))) {
+        bool golden = true;
+        // Check for parabolic fit
+        if (std::abs(e) > tol1) {
+            golden = false;
+            double r = (xf - nfc) * (fx - ffulc);
+            double q = (xf - fulc) * (fx - fnfc);
+            double p = (xf - fulc) * q - (xf - nfc) * r;
+            q = 2.0 * (q - r);
+            if (q > 0.0) p = -p;
+            q = std::abs(q);
+            r = e;
+            e = rat;
+            // Check for acceptability of parabola
+            if ((std::abs(p) < std::abs(0.5 * q * r)) && (p > q * (a - xf)) && (p < q * (b - xf))) {
+                rat = (p + 0.0) / q;
+                x = xf + rat;
+                if (((x - a) < tol2) || ((b - x) < tol2)) {
+                    const double si = np_sign(xm - xf) + ((xm - xf) == 0 ? 1.0 : 0.0);
+                    rat = tol1 * si;
+                }
+            } else {  // do a golden-section step
+                golden = true;
+            }
+        }
+        if (golden) {  // do a golden-section step
+            if (xf >= xm) {
+                e = a - xf;
+            } else {
+                e = b - xf;
+            }
+            rat = golden_mean * e;
+        }
+
+        const double si = np_sign(rat) + (rat == 0 ? 1.0 : 0.0);
+        x = xf + si * std::max(std::abs(rat), tol1);
+        fu = func(x);
+        num += 1;
+
+        if (fu <= fx) {
+            if (x >= xf) {
+                a = xf;
+            } else {
+                b = xf;
+            }
+            fulc = nfc;
+            ffulc = fnfc;
+            nfc = xf;
+            fnfc = fx;
+            xf = x;
+            fx = fu;
+        } else {
+            if (x < xf) {
+                a = x;
+            } else {
+                b = x;
+            }
+            if ((fu <= fnfc) || (nfc == xf)) {
+                fulc = nfc;
+                ffulc = fnfc;
+                nfc = x;
+                fnfc = fu;
+            } else if ((fu <= ffulc) || (fulc == xf) || (fulc == nfc)) {
+                fulc = x;
+                ffulc = fu;
+            }
+        }
+
+        xm = 0.5 * (a + b);
+        tol1 = sqrt_eps * std::abs(xf) + xatol / 3.0;
+        tol2 = 2.0 * tol1;
+
+        if (num >= maxfun) {
+            flag = 1;
+            break;
+        }
+    }
+    if (std::isnan(xf) || std::isnan(fx) || std::isnan(fu)) flag = 2;
+
+    ScalarResult result;
+    result.x = xf;
+    result.fun = fx;
+    result.nfev = num;
+    result.status = flag;
     return result;
 }
 

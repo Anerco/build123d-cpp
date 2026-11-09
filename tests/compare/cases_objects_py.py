@@ -1,8 +1,8 @@
 """Python twins of cases_objects.cpp (objects, operations, text and drafting)."""
 
-from math import sin
+from math import cos, exp, sin, sqrt
 
-from scipy.optimize import minimize
+from scipy.optimize import minimize, minimize_scalar
 
 from build123d import *  # noqa: F403
 from build123d.topology.utils import tuplify
@@ -188,6 +188,97 @@ def obj_location_list_attrs():
 
 def edges_values(edges):
     return [[e.length, e @ 0, e @ 1] for e in edges]
+
+
+def edge_values(e):
+    return [e.length, e @ 0, e @ 1]
+
+
+def optional_edge_values(e):
+    return None if e is None else edge_values(e)
+
+
+def obj_trim_to_other():
+    h = sqrt(2) / 2
+    bases = [CenterArc((0, 0), 1, 0, 180), CenterArc((0, 0), 1, 0, 360)]
+    rect = Rectangle(1, 1, align=(Align.MAX, Align.MIN)).rotate(Axis.Z, -45)
+    out = []
+    for base in bases:
+        others = [
+            Line((0, 0), (1, 1)),
+            CenterArc((0, 0), 1, 45, 90),
+            rect.wire(),
+            rect,
+            Curve(rect.edges()),
+            Box(1, 1, 1, align=(Align.MAX, Align.MIN, Align.CENTER)).rotate(Axis.Z, -45),
+            Axis((0, 0, 0), (1, 1, 0)),
+            Location((h, h), (0, 0, 1)),
+            Plane((0, 0, 0), (1, 1, 0), (-1, 1, 0)),
+            Vector(1, 0).rotate(Axis.Z, 45),
+            (h, h),
+            (0, 2),
+            Vertex(h, h, 0),
+            Pos(0, 0.5) * Circle(0.8),
+            Line((-2, 0.5), (2, 0.5)),
+        ]
+        out.extend(optional_edge_values(base.trim_to_other(o)) for o in others)
+        out.append(optional_edge_values(base.reversed().trim_to_other(Line((0, 0), (1, 1)))))
+    return V(out)
+
+
+def obj_center_arc_limits():
+    c1 = CenterArc((1, 0), 1, 0, Line((1, 0), (2, 1)))
+    c2 = CenterArc((1, 0), 1, 0, Line((1, 0), (2, -1)))
+    c3 = CenterArc((0, 0), 2, 30, Axis.Y)
+    c4 = CenterArc((0, 0), 2, 30, Plane.XZ)
+    c5 = CenterArc((0, 0), 2, 10, Pos(0, 3) * Circle(1.5))
+    c6 = CenterArc((0, 0), 2, 10, (0, -2))
+    return V(
+        [edge_values(c1), c1 % 0, edge_values(c2), c2 % 0, edge_values(c3), edge_values(c4), edge_values(c5), edge_values(c6)]
+    )
+
+
+def obj_jern_arc_limits():
+    j1 = JernArc((1, 0), (0, 1), 1, Line((1, 0), (2, 1)))
+    j2 = JernArc((1, 0), (0, 1), 1, Line((1, 0), (0, 1)))
+    j3 = JernArc((0, 0), (1, 1), 3, Axis.Y)
+    j4 = JernArc((0, 0, 1), (0, 0, 1), 2, Plane.XY.offset(3))
+    return V(
+        [
+            edge_values(j1),
+            j1.center_point,
+            j1.end_of_arc,
+            j1.start,
+            edge_values(j2),
+            j2.center_point,
+            edge_values(j3),
+            j3.center_point,
+            edge_values(j4),
+            j4.center_point,
+        ]
+    )
+
+
+def obj_polar_line_limits():
+    h = sqrt(2) / 2
+    rect = Rectangle(1, 1, align=(Align.MAX, Align.MIN)).rotate(Axis.Z, -45)
+    limits = [
+        Line((0, 0), (1, 1)),
+        CenterArc((0, 0), 1, 45, 90),
+        rect.wire(),
+        rect,
+        Curve(rect.edges()),
+        Box(1, 1, 1, align=(Align.MAX, Align.MIN, Align.CENTER)).rotate(Axis.Z, -45),
+        Axis((0, 0, 0), (1, 1, 0)),
+        Location((h, h), (0, 0, 1)),
+        Plane((0, 0, 0), (1, 1, 0), (-1, 1, 0)),
+        Vector(1, 0).rotate(Axis.Z, 45),
+        (h, h),
+    ]
+    out = [edge_values(PolarLine((sqrt(2), 0), length=limit, angle=135)) for limit in limits]
+    out.append(edge_values(PolarLine(start=(2, 0), length=Axis.Y, angle=135)))
+    out.append(edge_values(PolarLine((0, 0), Line((3, -1), (3, 5)), direction=(1, 1))))
+    return V(out)
 
 
 def nelder_mead_values(f, x0, bounds=None, tol=None, maxiter=None):
@@ -434,6 +525,17 @@ CASES = {
     "obj_location_list_attrs": obj_location_list_attrs,
     # scipy's Nelder-Mead
     "obj_nelder_mead": obj_nelder_mead,
+    "obj_minimize_scalar_bounded": lambda: V(
+        [
+            [float(r.x), float(r.fun), int(r.nfev), int(r.status)]
+            for r in [
+                minimize_scalar(lambda x: (x - 0.3) * (x - 0.3), bounds=(0, 1), method="bounded", options={"xatol": 5e-7}),
+                minimize_scalar(lambda x: abs(sin(5 * x) - 0.2), bounds=(0, 1), method="bounded", options={"xatol": 1e-5}),
+                minimize_scalar(lambda x: cos(x), bounds=(0.5, 0.75), method="bounded", options={"xatol": 5e-7}),
+                minimize_scalar(lambda x: exp(x), bounds=(-2, 3), method="bounded", options={"xatol": 1e-5}),
+            ]
+        ]
+    ),
     # BlendCurve
     "obj_blend_c0": lambda: BlendCurve(Line((0, 0), (1, 0)), Line((2, 0), (2, 1)), ContinuityLevel.C0),
     "obj_blend_c2_auto": lambda: BlendCurve(*blend_edges()),
@@ -532,5 +634,42 @@ CASES = {
     ),
     "obj_clines_object_closest": lambda: ConstrainedLines(
         CenterArc((-5, 0), 4, 0, 360), Axis.Y, angle=30, selector=lambda lines: lines.sort_by_distance((0, 0))[0]
+    ),
+    # limits
+    "obj_trim_to_other": obj_trim_to_other,
+    "obj_trim_infinite": lambda: V(
+        [
+            edge_values(Edge(Axis.X).trim_infinite(5)),
+            edge_values(Edge(Axis((1, 2, 3), (0, 1, 1))).trim_infinite(2)),
+            edge_values(Line((0, 0), (1, 1)).trim_infinite(5)),
+            Edge(Axis.Y).is_infinite,
+        ]
+    ),
+    "obj_center_arc_limits": obj_center_arc_limits,
+    "obj_center_arc_limit_error": lambda: CenterArc((1, 0), 1, 0, (5, 0)),
+    "obj_conic_arc_limits": lambda: V(
+        [
+            edge_values(EllipticalCenterArc((0, 0), 2, 1, 0, arc_size=Line((0, 0), (0, 2)))),
+            edge_values(EllipticalCenterArc((0, 0), 2, 1, 0, arc_size=Line((0, 0), (0, -2)))),
+            edge_values(EllipticalCenterArc((1, 1), 3, 1, 0, arc_size=Axis((1, 1), (1, 1)), rotation=20)),
+            edge_values(ParabolicCenterArc((0, 0), 0.5, 0, arc_size=Line((0, 1), (5, 1)))),
+            edge_values(ParabolicCenterArc((0, 0), 0.5, 0, arc_size=Line((1, -2), (1, 2)))),
+            edge_values(ParabolicCenterArc((0, 0), 0.5, -30, arc_size=Axis.X, rotation=15)),
+            edge_values(HyperbolicCenterArc((0, 0), 2, 1, 0, arc_size=Line((0, 1), (10, 1)))),
+            edge_values(HyperbolicCenterArc((0, 0), 2, 1, 0, arc_size=Line((3, -2), (3, 2)))),
+            edge_values(HyperbolicCenterArc((0, 0), 1, 2, 0, arc_size=Line((-5, 3), (5, 3)), rotation=10)),
+        ]
+    ),
+    "obj_elliptical_limit_error": lambda: EllipticalCenterArc((0, 0), 2, 1, 0, arc_size=(0, 5)),
+    "obj_parabolic_limit_error": lambda: ParabolicCenterArc((0, 0), 0.5, 0, arc_size=(0, 5)),
+    "obj_hyperbolic_limit_error": lambda: HyperbolicCenterArc((0, 0), 2, 1, 0, arc_size=(0, 5)),
+    "obj_jern_arc_limits": obj_jern_arc_limits,
+    "obj_jern_arc_limit_error": lambda: JernArc((1, 0), (0, 1), 1, (5, 0)),
+    "obj_polar_line_limits": obj_polar_line_limits,
+    "obj_polar_line_limit_point_error": lambda: PolarLine((sqrt(2), 0), length=(0, 2), angle=135),
+    "obj_polar_line_limit_shape_error": lambda: PolarLine((sqrt(2), 0), length=Line((3, 0), (3, 1)), angle=135),
+    "obj_polar_line_limit_behind_error": lambda: PolarLine((0, 0), Axis.Y, 0.0),
+    "obj_polar_line_limit_location_aligned": lambda: PolarLine(
+        (0, 0), Location(Plane((3, 0), z_dir=(1, 0, 0))), 0.0
     ),
 }

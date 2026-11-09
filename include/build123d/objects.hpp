@@ -8,6 +8,7 @@
 #include <string>
 #include <tuple>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "build123d/topology.hpp"
@@ -71,6 +72,24 @@ protected:
 // 1D objects
 // ---------------------------------------------------------------------------
 
+/// What an arc's arc_size or PolarLine's length can be instead of a number: a Shape, Axis,
+/// Location, Plane or point. The curve is trimmed where it first meets it
+/// (Edge::trim_to_other).
+class Limit {
+public:
+    Limit(const Shape& shape);        // NOLINT(google-explicit-constructor)
+    Limit(const Axis& axis);          // NOLINT
+    Limit(const Location& location);  // NOLINT
+    Limit(const Plane& plane);        // NOLINT
+    Limit(const Vector& point);       // NOLINT
+    Limit(double x, double y, double z = 0.0);
+    /// edge.trim_to_other(the limit)
+    std::optional<Edge> trim(const Edge& edge) const;
+    std::string to_string() const;
+
+    std::variant<Shape, Axis, Location, Plane, Vector> value;
+};
+
 /// Straight line between two points.
 class Line : public BaseEdgeObject {
 public:
@@ -105,10 +124,12 @@ public:
             const std::vector<double>& weights = {}, bool periodic = false);
 };
 
-/// Circular arc from a center, radius, start angle and (signed) arc size in degrees.
+/// Circular arc from a center, radius, start angle and (signed) arc size in degrees, or an
+/// arc limit: the arc then runs from the start to the limit, the shorter way round.
 class CenterArc : public BaseEdgeObject {
 public:
     CenterArc(const Vector& center, double radius, double start_angle, double arc_size);
+    CenterArc(const Vector& center, double radius, double start_angle, const Limit& arc_size);
 };
 
 /// Circular arc through three points.
@@ -140,10 +161,12 @@ public:
                bool tangent_from_first = true);
 };
 
-/// Circular arc from a start point and tangent, with a radius and (signed) arc size.
+/// Circular arc from a start point and tangent, with a radius and (signed) arc size or an
+/// arc limit.
 class JernArc : public BaseEdgeObject {
 public:
     JernArc(const Vector& start, const Vector& tangent, double radius, double arc_size);
+    JernArc(const Vector& start, const Vector& tangent, double radius, const Limit& arc_size);
     Vector start;
     Vector end_of_arc;
     Vector center_point;
@@ -154,6 +177,8 @@ class EllipticalCenterArc : public BaseEdgeObject {
 public:
     EllipticalCenterArc(const Vector& center, double x_radius, double y_radius,
                         double start_angle = 0.0, double arc_size = 90.0, double rotation = 0.0);
+    EllipticalCenterArc(const Vector& center, double x_radius, double y_radius, double start_angle,
+                        const Limit& arc_size, double rotation = 0.0);
 };
 
 /// Elliptical arc from a start point and tangent; give either the start angle on the
@@ -170,6 +195,8 @@ class ParabolicCenterArc : public BaseEdgeObject {
 public:
     ParabolicCenterArc(const Vector& vertex, double focal_length, double start_angle = 0.0,
                        double arc_size = 90.0, double rotation = 0.0);
+    ParabolicCenterArc(const Vector& vertex, double focal_length, double start_angle,
+                       const Limit& arc_size, double rotation = 0.0);
 };
 
 /// Hyperbolic arc around a center.
@@ -177,6 +204,8 @@ class HyperbolicCenterArc : public BaseEdgeObject {
 public:
     HyperbolicCenterArc(const Vector& center, double x_radius, double y_radius, double start_angle = 0.0,
                         double arc_size = 90.0, double rotation = 0.0);
+    HyperbolicCenterArc(const Vector& center, double x_radius, double y_radius, double start_angle,
+                        const Limit& arc_size, double rotation = 0.0);
 };
 
 /// Helix (conical if cone_angle != 0).
@@ -187,12 +216,17 @@ public:
           bool lefthand = false);
 };
 
-/// Straight line from a start point, a length and an angle (degrees) or direction.
+/// Straight line from a start point, a length and an angle (degrees) or direction. The
+/// length can be a limit instead: the line then runs until it meets it.
 class PolarLine : public BaseEdgeObject {
 public:
     PolarLine(const Vector& start, double length, double angle,
               LengthMode length_mode = LengthMode::DIAGONAL);
     PolarLine(const Vector& start, double length, const Vector& direction,
+              LengthMode length_mode = LengthMode::DIAGONAL);
+    PolarLine(const Vector& start, const Limit& length, double angle,
+              LengthMode length_mode = LengthMode::DIAGONAL);
+    PolarLine(const Vector& start, const Limit& length, const Vector& direction,
               LengthMode length_mode = LengthMode::DIAGONAL);
 };
 

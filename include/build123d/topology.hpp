@@ -411,6 +411,16 @@ public:
     Edge trim(double start, double end) const;
     Edge trim(const Vector& start, const Vector& end) const;
     Edge trim_to_length(double start, double length) const;
+    /// The shortest part of this edge from its start to where it meets `other` (a Shape, Axis,
+    /// Location, Plane or point), or nothing when they don't meet.
+    std::optional<Edge> trim_to_other(const Shape& other) const;
+    std::optional<Edge> trim_to_other(const Axis& other) const;
+    std::optional<Edge> trim_to_other(const Location& other) const;
+    std::optional<Edge> trim_to_other(const Plane& other) const;
+    std::optional<Edge> trim_to_other(const Vector& other) const;
+    /// An infinite line trimmed to `half_length` on each side of its center; other edges are
+    /// returned unchanged.
+    Edge trim_infinite(double half_length) const;
     /// OCCT curve parameter at a normalized arc-length position.
     double param_at(double position) const;
     Wire close() const;

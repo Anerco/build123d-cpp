@@ -121,3 +121,34 @@ TEST(objects_airfoil) {
     CHECK_THROWS(Airfoil("2"), std::out_of_range);
     CHECK_THROWS(Airfoil("24x2"), std::invalid_argument);
 }
+
+// ---------------------------------------------------------------------------
+// Limits
+// ---------------------------------------------------------------------------
+
+static_assert(std::is_convertible_v<Line, Limit>);
+static_assert(std::is_convertible_v<Box, Limit>);
+static_assert(std::is_convertible_v<Axis, Limit>);
+static_assert(std::is_convertible_v<Pos, Limit>);
+static_assert(std::is_convertible_v<Plane, Limit>);
+static_assert(std::is_convertible_v<Vector, Limit>);
+static_assert(!std::is_convertible_v<double, Limit>);
+static_assert(std::is_same_v<decltype(Edge().trim_to_other(Axis::X)), std::optional<Edge>>);
+
+TEST(objects_limits) {
+    // a number is still an angle, a shape a limit
+    const CenterArc numeric({0, 0}, 1, 0, 90);
+    CHECK_NEAR(numeric.length(), PI / 2, 1e-9);
+    const CenterArc limited({1, 0}, 1, 0, Line({1, 0}, {2, 1}));
+    CHECK_NEAR(limited.length(), PI / 4, 1e-6);
+    const PolarLine to_axis({2, 0}, Axis::Y, 135);
+    CHECK_NEAR(to_axis.position_at(1).X, 0, 1e-9);
+    // no intersection: nothing, and the objects throw invalid_argument (Python's ValueError)
+    CHECK(!Line({0, 0}, {1, 0}).trim_to_other(Vector(5, 5)));
+    CHECK_THROWS(CenterArc({1, 0}, 1, 0, {5, 0}), std::invalid_argument);
+    CHECK_THROWS(PolarLine({0, 0}, Axis::Y, 0.0), std::invalid_argument);
+    CHECK_THROWS(JernArc({1, 0}, {0, 1}, 1, {5, 0}), std::invalid_argument);
+    // trim_infinite only changes infinite lines
+    CHECK_NEAR(Edge(Axis::X).trim_infinite(3).length(), 6, 1e-9);
+    CHECK_NEAR(Line({0, 0}, {1, 0}).trim_infinite(3).length(), 1, 1e-12);
+}
