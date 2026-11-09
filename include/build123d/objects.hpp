@@ -3,8 +3,10 @@
 // objects are Parts, so they combine with the algebra operators directly.
 #pragma once
 
+#include <functional>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -206,6 +208,76 @@ public:
 class IntersectingLine : public BaseEdgeObject {
 public:
     IntersectingLine(const Vector& start, const Vector& direction, const Shape& other);
+};
+
+/// Smooth Bezier transition between two edges: a line (C0), a cubic (C1) or a quintic
+/// (C2) matching the end positions, derivatives and curvatures. `end_points` picks the
+/// ends to join (default: the closest pair); `tangent_scalars` scale the end derivatives.
+class BlendCurve : public BaseEdgeObject {
+public:
+    BlendCurve(const Edge& curve0, const Edge& curve1, ContinuityLevel continuity = ContinuityLevel::C2,
+               std::optional<std::pair<Vector, Vector>> end_points = std::nullopt,
+               std::optional<std::pair<double, double>> tangent_scalars = std::nullopt);
+};
+
+/// Arc from a point and tangent that is also tangent to another curve (an Edge or a Wire);
+/// keep picks Keep::TOP or Keep::BOTTOM when there are two. Contains a solver.
+class DoubleTangentArc : public BaseEdgeObject {
+public:
+    DoubleTangentArc(const Vector& pnt, const Vector& tangent, const Shape& other, Keep keep = Keep::TOP);
+};
+
+/// NACA 4-digit (or fractional, e.g. "2213.323") airfoil profile of unit chord.
+class Airfoil : public BaseLineObject {
+public:
+    explicit Airfoil(const std::string& airfoil_code, int n_points = 50, bool finite_te = false);
+    /// The code as a number, like Python's Airfoil(2412).
+    explicit Airfoil(double airfoil_code, int n_points = 50, bool finite_te = false);
+    /// (max camber, its position, thickness) as fractions of the chord.
+    static std::tuple<double, double, double> parse_naca4(const std::string& value);
+    static std::tuple<double, double, double> parse_naca4(double value);
+    /// The camber line of the airfoil.
+    Edge camber_line() const;
+
+    std::string code;   ///< NACA code string (e.g. "2412")
+    double max_camber;  ///< maximum camber as fraction of chord
+    double camber_pos;  ///< chordwise position of max camber (0-1)
+    double thickness;   ///< maximum thickness as fraction of chord
+    bool finite_te;     ///< if true, the trailing edge is finite
+
+private:
+    std::vector<Vector> camber_points_;
+};
+
+/// What a ConstrainedArcs/ConstrainedLines selector returns: one Edge or a list of them.
+class EdgeSelection : public ShapeList<Edge> {
+public:
+    EdgeSelection(const Edge& edge) : ShapeList<Edge>{edge} {}                    // NOLINT
+    EdgeSelection(const ShapeList<Edge>& edges) : ShapeList<Edge>(edges) {}       // NOLINT
+    EdgeSelection(const std::vector<Edge>& edges) : ShapeList<Edge>(edges) {}     // NOLINT
+};
+/// Chooses some of the solutions, e.g. [](const ShapeList<Edge>& arcs) { return arcs[0]; }.
+using EdgeSelector = std::function<EdgeSelection(const ShapeList<Edge>&)>;
+
+/// Arcs constrained by other objects (see Edge::make_constrained_arcs), filtered by an
+/// optional selector. Always a Curve.
+class ConstrainedArcs : public BaseCurveObject {
+public:
+    ConstrainedArcs(const TangencyTarget& tangency_one, const ConstrainedArcOptions& options,
+                    const EdgeSelector& selector = {});
+    ConstrainedArcs(const TangencyTarget& tangency_one, const TangencyTarget& tangency_two,
+                    const ConstrainedArcOptions& options, const EdgeSelector& selector = {});
+    ConstrainedArcs(const TangencyTarget& tangency_one, const TangencyTarget& tangency_two,
+                    const TangencyTarget& tangency_three, const ConstrainedArcOptions& options = {},
+                    const EdgeSelector& selector = {});
+};
+
+/// Lines constrained by other objects (see Edge::make_constrained_lines), filtered by an
+/// optional selector. Always a Curve.
+class ConstrainedLines : public BaseCurveObject {
+public:
+    ConstrainedLines(const TangencyTarget& tangency_one, const TangencyTarget& tangency_two,
+                     const ConstrainedLineOptions& options = {}, const EdgeSelector& selector = {});
 };
 
 // ---------------------------------------------------------------------------
