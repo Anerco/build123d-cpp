@@ -468,3 +468,125 @@ COMPARE_CASES {
         return V::obj({{"position", loc.position()}, {"orientation", loc.orientation()}});
     });
 }
+
+// ---- 2D export: SVG
+namespace {
+
+std::string svg_text(const ExportSVG& svg) { return svg.to_string(); }
+
+}  // namespace
+
+COMPARE_CASES {
+    compare::add_value("io_svg_basic", [] {
+        ExportSVG e;
+        e.add_layer("hid", {.fill_color = std::nullopt, .line_color = Color(1, 0, 0), .line_type = LineType::HIDDEN});
+        Sketch s = Circle(5) - Rectangle(2, 2);
+        s.color = Color(0.1, 0.5, 0.9, 0.5);
+        e.add_shape(s);
+        e.add_shape(Line({0, 0}, {10, 5}), "hid");
+        e.write(cpp_file("basic.svg"));
+        return V(read_text(cpp_file("basic.svg")));
+    });
+    compare::add_value("io_svg_drawing", [] {
+        const Part part = Box(10, 8, 4) - Pos(2, 0, 0) * Cylinder(2, 4) + Pos(-3, 0, 2) * Sphere(2);
+        const Drawing view(part, {.look_from = Vector(1, -2, 1.5)});
+        ExportSVG e({.unit = Unit::IN, .scale = 2, .margin = 5, .fit_to_stroke = false, .precision = 3,
+                     .line_weight = 0.3});
+        e.add_layer("hidden", {.line_color = Color("gray"), .line_weight = 0.2, .line_type = LineType::ISO_DOT});
+        e.add_shape(view.visible_lines);
+        e.add_shape(view.hidden_lines, "hidden");
+        return V(svg_text(e));
+    });
+    compare::add_value("io_svg_viewport", [] {
+        const Part part = Cylinder(5, 10) - Pos(0, 0, 5) * Box(3, 12, 4);
+        const auto [visible, hidden] = part.project_to_viewport(Vector(20, -30, 25));
+        ExportSVG e({.unit = Unit::CM, .dot_length = DotLength::QCAD_IMPERIAL});
+        e.add_layer("hidden", {.line_type = LineType::DASHDOT2});
+        e.add_layer("other", {.line_type = LineType::DIVIDE});
+        e.add_shape(visible);
+        e.add_shape(hidden, "hidden");
+        e.add_shape(Edge::make_line({0, 0}, {1, 1}), "other");
+        return V(svg_text(e));
+    });
+    compare::add_value("io_svg_curves", [] {
+        ExportSVG e({.precision = 4, .dot_length = 0.05});
+        e.add_layer("dots", {.line_type = LineType::DOT});
+        e.add_shape(Edge::make_ellipse(5, 2, Plane::XY, 30, 250));
+        e.add_shape(Edge::make_ellipse(3, 1, Plane::XY.rotated(Vector(0, 0, 25))));
+        e.add_shape(Edge::make_circle(4, Plane::XY.offset(0).moved(Pos(10, 0)), 20, 300));
+        e.add_shape(Edge::make_circle(2, Plane::XY.moved(Pos(-10, 0))));
+        e.add_shape(Edge::make_circle(2, Plane::YX.moved(Pos(-10, 5)), 0, 120));
+        e.add_shape(Edge::make_spline({{0, 0}, {3, 4}, {6, -1}, {9, 2}}), "dots");
+        e.add_shape(Edge::make_bezier({{0, 5}, {2, 9}, {5, 5}}), "dots");
+        e.add_shape(Wire::make_polygon({{0, -5}, {4, -5}, {4, -8}}, false), "dots");
+        e.add_shape(Polyline({{-2, -2}, {-4, -6}, {-1, -7}}).edges()[0].reversed(), "dots");
+        e.add_shape(Edge::make_helix(2, 4, 1).moved(Pos(15, 15)));
+        return V(svg_text(e));
+    });
+    compare::add_value("io_svg_faces", [] {
+        ExportSVG e({.fill_color = Color("yellow")});
+        e.add_layer("holes", {.fill_color = std::nullopt});
+        e.add_layer("wires", {.line_color = Color(0.0, 0.5, 0.0, 0.25)});
+        Sketch holed = Rectangle(20, 10) - GridLocations(5, 3, 3, 2) * Circle(1) - Pos(8, 0) * Ellipse(1.5, 1);
+        holed.color = Color("blue");
+        e.add_shape(holed, "holes");
+        e.add_shape(Pos(30, 0) * (Circle(4) + Pos(3, 0) * Rectangle(4, 4)), "", true);
+        e.add_shape(Pos(0, 20) * SlotOverall(10, 3), "wires", true);
+        Curve c = Pos(0, -20) * Curve(std::vector<Edge>(Wire::make_rect(6, 3).edges()));
+        c.color = Color("red");
+        e.add_shape(c, "wires");
+        e.add_shape(Pos(20, 20) * Text("b3d", 6));
+        return V(svg_text(e));
+    });
+    compare::add_value("io_svg_colors", [] {
+        std::vector<V> out;
+        for (const SvgColor& c : std::vector<SvgColor>{Color("red"), Color(0.2, 0.4, 0.6, 0.123456), "#0080FF",
+                                                       Color(255, 128, 0), ColorIndex::GRAY, ColorIndex::BLACK,
+                                                       std::nullopt, INHERIT_COLOR}) {
+            ExportSVG e({.fill_color = c, .line_color = c});
+            Sketch s = Rectangle(1, 1);
+            s.color = Color(1, 1, 1);
+            e.add_shape(s);
+            e.add_shape(Edge::make_line({0, 0}, {1, 1}));
+            out.push_back(V(svg_text(e)));
+        }
+        return V::list(out);
+    });
+    compare::add_value("io_svg_line_types", [] {
+        std::vector<V> out;
+        for (LineType lt : {LineType::CONTINUOUS, LineType::BORDER, LineType::CENTERX2, LineType::DOT2,
+                            LineType::PHANTOM2, LineType::ISO_DASH, LineType::ISO_LONG_DASH_TRIPLE_DOT,
+                            LineType::ISO_DOUBLE_DASH_TRIPLE_DOT}) {
+            for (double dot : {0.0, 0.01, 0.2}) {
+                ExportSVG e({.unit = Unit::IN, .scale = 0.5, .line_weight = 0.25, .line_type = lt, .dot_length = dot});
+                e.add_shape(Edge::make_line({0, 0}, {1, 1}));
+                out.push_back(V(svg_text(e)));
+            }
+        }
+        return V::list(out);
+    });
+    compare::add_value("io_svg_non_planar", [] {
+        ExportSVG e;
+        e.add_shape(Box(1, 2, 3));
+        return V(svg_text(e));
+    });
+    compare::add_value("io_svg_bad_unit", [] {
+        ExportSVG e({.unit = Unit::M});
+        return V("created");
+    });
+    compare::add_value("io_svg_duplicate_layer", [] {
+        ExportSVG e;
+        e.add_layer("a");
+        e.add_layer("a");
+        return V("added");
+    });
+    compare::add_value("io_svg_undefined_layer", [] {
+        ExportSVG e;
+        e.add_shape(Box(1, 1, 1), "nope");
+        return V("added");
+    });
+    compare::add_value("io_svg_empty", [] {
+        ExportSVG e;
+        return V(svg_text(e));
+    });
+}

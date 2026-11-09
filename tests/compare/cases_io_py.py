@@ -433,3 +433,154 @@ CASES = {
     "io_json_roundtrip": json_roundtrip,
     "io_json_malformed": json_malformed,
 }
+
+
+# ---- 2D export: SVG
+from build123d.exporters import ColorIndex, Drawing  # noqa: E402
+
+
+def svg_text(e):
+    stream = io.BytesIO()
+    e.write(stream)
+    return stream.getvalue().decode()
+
+
+def svg_basic():
+    e = ExportSVG()
+    e.add_layer("hid", fill_color=None, line_color=(1, 0, 0), line_type=LineType.HIDDEN)
+    s = Circle(5) - Rectangle(2, 2)
+    s.color = Color(0.1, 0.5, 0.9, 0.5)
+    e.add_shape(s)
+    e.add_shape(Line((0, 0), (10, 5)), layer="hid")
+    e.write(py_file("basic.svg"))
+    return V(read_text(py_file("basic.svg")))
+
+
+def svg_drawing():
+    part = Box(10, 8, 4) - Pos(2, 0, 0) * Cylinder(2, 4) + Pos(-3, 0, 2) * Sphere(2)
+    view = Drawing(part, look_from=(1, -2, 1.5))
+    e = ExportSVG(unit=Unit.IN, scale=2, margin=5, fit_to_stroke=False, precision=3, line_weight=0.3)
+    e.add_layer("hidden", line_color=Color("gray"), line_weight=0.2, line_type=LineType.ISO_DOT)
+    e.add_shape(view.visible_lines)
+    e.add_shape(view.hidden_lines, layer="hidden")
+    return V(svg_text(e))
+
+
+def svg_viewport():
+    part = Cylinder(5, 10) - Pos(0, 0, 5) * Box(3, 12, 4)
+    visible, hidden = part.project_to_viewport((20, -30, 25))
+    e = ExportSVG(unit=Unit.CM, dot_length=DotLength.QCAD_IMPERIAL)
+    e.add_layer("hidden", line_type=LineType.DASHDOT2)
+    e.add_layer("other", line_type=LineType.DIVIDE)
+    e.add_shape(visible)
+    e.add_shape(hidden, layer="hidden")
+    e.add_shape(Edge.make_line((0, 0), (1, 1)), layer="other")
+    return V(svg_text(e))
+
+
+def svg_curves():
+    e = ExportSVG(precision=4, dot_length=0.05)
+    e.add_layer("dots", line_type=LineType.DOT)
+    e.add_shape(Edge.make_ellipse(5, 2, Plane.XY, 30, 250))
+    e.add_shape(Edge.make_ellipse(3, 1, Plane.XY.rotated((0, 0, 25))))
+    e.add_shape(Edge.make_circle(4, Plane.XY.offset(0).moved(Pos(10, 0)), 20, 300))
+    e.add_shape(Edge.make_circle(2, Plane.XY.moved(Pos(-10, 0))))
+    e.add_shape(Edge.make_circle(2, Plane.YX.moved(Pos(-10, 5)), 0, 120))
+    e.add_shape(Edge.make_spline([(0, 0), (3, 4), (6, -1), (9, 2)]), layer="dots")
+    e.add_shape(Edge.make_bezier((0, 5), (2, 9), (5, 5)), layer="dots")
+    e.add_shape(Wire.make_polygon([(0, -5), (4, -5), (4, -8)], close=False), layer="dots")
+    e.add_shape(Polyline((-2, -2), (-4, -6), (-1, -7)).edges()[0].reversed(), layer="dots")
+    e.add_shape(Edge.make_helix(2, 4, 1).moved(Pos(15, 15)))
+    return V(svg_text(e))
+
+
+def svg_faces():
+    e = ExportSVG(fill_color=Color("yellow"))
+    e.add_layer("holes", fill_color=None)
+    e.add_layer("wires", line_color=Color(0.0, 0.5, 0.0, 0.25))
+    holed = Rectangle(20, 10) - GridLocations(5, 3, 3, 2) * Circle(1) - Pos(8, 0) * Ellipse(1.5, 1)
+    holed.color = Color("blue")
+    e.add_shape(holed, layer="holes")
+    e.add_shape(Pos(30, 0) * (Circle(4) + Pos(3, 0) * Rectangle(4, 4)), reverse_wires=True)
+    e.add_shape(Pos(0, 20) * SlotOverall(10, 3), layer="wires", reverse_wires=True)
+    c = Pos(0, -20) * Curve(Wire.make_rect(6, 3).edges())
+    c.color = Color("red")
+    e.add_shape(c, layer="wires")
+    e.add_shape(Pos(20, 20) * Text("b3d", 6))
+    return V(svg_text(e))
+
+
+def svg_colors():
+    out = []
+    for c in [Color("red"), Color(0.2, 0.4, 0.6, 0.123456), "#0080FF", (255, 128, 0), ColorIndex.GRAY,
+              ColorIndex.BLACK, None]:
+        e = ExportSVG(fill_color=c, line_color=c)
+        s = Rectangle(1, 1)
+        s.color = Color(1, 1, 1)
+        e.add_shape(s)
+        e.add_shape(Edge.make_line((0, 0), (1, 1)))
+        out.append(svg_text(e))
+    e = ExportSVG()
+    s = Rectangle(1, 1)
+    s.color = Color(1, 1, 1)
+    e.add_shape(s)
+    e.add_shape(Edge.make_line((0, 0), (1, 1)))
+    out.append(svg_text(e))
+    return V(out)
+
+
+def svg_line_types():
+    out = []
+    for lt in [LineType.CONTINUOUS, LineType.BORDER, LineType.CENTERX2, LineType.DOT2, LineType.PHANTOM2,
+               LineType.ISO_DASH, LineType.ISO_LONG_DASH_TRIPLE_DOT, LineType.ISO_DOUBLE_DASH_TRIPLE_DOT]:
+        for dot in [0.0, 0.01, 0.2]:
+            e = ExportSVG(unit=Unit.IN, scale=0.5, line_weight=0.25, line_type=lt, dot_length=dot)
+            e.add_shape(Edge.make_line((0, 0), (1, 1)))
+            out.append(svg_text(e))
+    return V(out)
+
+
+def svg_non_planar():
+    e = ExportSVG()
+    e.add_shape(Box(1, 2, 3))
+    return V(svg_text(e))
+
+
+def svg_bad_unit():
+    ExportSVG(unit=Unit.M)
+    return V("created")
+
+
+def svg_duplicate_layer():
+    e = ExportSVG()
+    e.add_layer("a")
+    e.add_layer("a")
+    return V("added")
+
+
+def svg_undefined_layer():
+    e = ExportSVG()
+    e.add_shape(Box(1, 1, 1), layer="nope")
+    return V("added")
+
+
+def svg_empty():
+    return V(svg_text(ExportSVG()))
+
+
+CASES.update(
+    {
+        "io_svg_basic": svg_basic,
+        "io_svg_drawing": svg_drawing,
+        "io_svg_viewport": svg_viewport,
+        "io_svg_curves": svg_curves,
+        "io_svg_faces": svg_faces,
+        "io_svg_colors": svg_colors,
+        "io_svg_line_types": svg_line_types,
+        "io_svg_non_planar": svg_non_planar,
+        "io_svg_bad_unit": svg_bad_unit,
+        "io_svg_duplicate_layer": svg_duplicate_layer,
+        "io_svg_undefined_layer": svg_undefined_layer,
+        "io_svg_empty": svg_empty,
+    }
+)

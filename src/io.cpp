@@ -420,10 +420,11 @@ std::string get_name(const TDF_Label& label) {
     return clean;
 }
 
+/// A color as Python reads it (tuple(Color(c))): sRGB, each value rounded to 7 digits.
 Color to_color(const Quantity_ColorRGBA& c) {
     double r, g, b;
     c.GetRGB().Values(r, g, b, Quantity_TOC_sRGB);
-    return Color(r, g, b, c.Alpha());
+    return Color(pyfmt::round(r, 7), pyfmt::round(g, 7), pyfmt::round(b, 7), pyfmt::round(c.Alpha(), 7));
 }
 
 class StepReader {

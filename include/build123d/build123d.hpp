@@ -11,6 +11,7 @@
 
 #include "build123d/cast.hpp"
 #include "build123d/enums.hpp"
+#include "build123d/exporters.hpp"
 #include "build123d/geometry.hpp"
 #include "build123d/io.hpp"
 #include "build123d/json.hpp"
