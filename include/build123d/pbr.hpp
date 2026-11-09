@@ -7,8 +7,9 @@
 //   PbrProperties red = pbr_preset("plastic", "plastic").override({.color = "red", .roughness = 0.3});
 //   auto [r, g, b, a] = look.interpolate_color();
 //
-// Textures (CC0) aren't part of the sources: they're looked up at run time in
-// $BUILD123D_TEXTURE_DIR, <prefix>/share/build123d/textures or data/textures (see
+// The presets' textures (threejs_materials' pbr_properties/_assets, from ambientCG, AMD GPUOpen
+// and the threejs_materials project) aren't part of the sources: they're looked up at run time
+// in $BUILD123D_TEXTURE_DIR, <prefix>/share/build123d/textures or data/textures (see
 // scripts/fetch-textures.sh). Using a texture that isn't there raises std::runtime_error.
 #pragma once
 

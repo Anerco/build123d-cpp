@@ -140,7 +140,7 @@ install(DIRECTORY data/fonts DESTINATION ${CMAKE_INSTALL_DATADIR}/build123d)
 target_compile_definitions(build123d PRIVATE
   BUILD123D_INSTALL_FONT_DIR="${CMAKE_INSTALL_FULL_DATADIR}/build123d/fonts"
   BUILD123D_SOURCE_FONT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data/fonts")
-# The textures of the PBR material presets (threejs_materials' CC0 textures, ~87 MB) aren't part
+# The textures of the PBR material presets (threejs_materials' textures, ~87 MB) aren't part
 # of the sources: scripts/fetch-textures.sh downloads them into data/textures (git-ignored). The
 # library looks for them at run time in $BUILD123D_TEXTURE_DIR, ../share/build123d/textures next
 # to itself, the install prefix and this source tree.

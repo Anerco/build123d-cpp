@@ -309,3 +309,134 @@ TEST(io_detect_primitives) {
     CHECK_NEAR(cylinders[0].area(), 2 * 3.141592653589793 * 0.5 * 1, 1e-2);
     CHECK_THROWS(detect_primitives(Cylinder(1, 2)), std::out_of_range);  // circular edges: one vertex
 }
+
+// ---- PBR materials ----------------------------------------------------------------------
+
+namespace {
+
+/// Sets an environment variable for the scope of the object.
+struct ScopedEnv {
+    std::string name;
+    std::optional<std::string> previous;
+    ScopedEnv(const std::string& n, const std::string& value) : name(n) {
+        if (const char* old = std::getenv(n.c_str())) previous = old;
+        set(value);
+    }
+    ~ScopedEnv() {
+        if (previous) {
+            set(*previous);
+        } else {
+#ifdef _WIN32
+            _putenv_s(name.c_str(), "");
+#else
+            unsetenv(name.c_str());
+#endif
+        }
+    }
+    void set(const std::string& value) const {
+#ifdef _WIN32
+        _putenv_s(name.c_str(), value.c_str());
+#else
+        setenv(name.c_str(), value.c_str(), 1);
+#endif
+    }
+};
+
+std::string read_all(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    std::stringstream ss;
+    ss << in.rdbuf();
+    return ss.str();
+}
+
+}  // namespace
+
+static_assert(!std::is_constructible_v<ColorSpec, bool>);
+static_assert(std::is_same_v<decltype(FinishedMaterial("oak").pbr()), PbrProperties>);
+static_assert(std::is_same_v<decltype(pbr_preset("wood", "oak").interpolated_color()), Color>);
+
+TEST(io_pbr_material_api) {
+    // core's API
+    const FinishedMaterial alu = "aluminum";
+    CHECK(alu.name() == "Alu_G6061_T6");
+    CHECK_NEAR(alu.material.density, 2700.0, 1e-12);
+    CHECK(!alu.color);
+    CHECK_THROWS(resolve_material("unobtainium"), std::invalid_argument);
+    CHECK(material_names().size() == 156);
+    Part box = Box(1, 1, 1);
+    box.material = "oak";
+    CHECK(box.material->name() == "Hardwood_OAK");
+
+    // the override is one object, shared by copies (one glTF material, as in Python)
+    const auto look = std::make_shared<const PbrProperties>(pbr_preset("metal", "copper"));
+    const FinishedMaterial a(alu.material, {.pbr = look});
+    const FinishedMaterial b = a;
+    CHECK(a.pbr_ptr() == look && b.pbr_ptr() == look);
+    CHECK(a.repr() == "FinishedMaterial(Alu_G6061_T6, pbr=<override>)");
+    // a computed look is a new object at each call
+    CHECK(alu.pbr_ptr() != alu.pbr_ptr());
+    CHECK(alu.pbr().id == alu.pbr().id);
+    FinishedMaterial c = a;
+    c.set_pbr(nullptr);
+    CHECK(!c.pbr_override() && c.pbr().id == alu.pbr().id);
+
+    // options and their checks
+    CHECK_THROWS(FinishedMaterial(alu.material, finishes::brushed(), {.pbr = look}), std::invalid_argument);
+    CHECK_THROWS(FinishedMaterial(alu.material, finishes::brushed(), {.process = processes::cast()}), std::invalid_argument);
+    CHECK_THROWS(registry::factory("aluminum")({.color = "red"}), std::invalid_argument);
+    CHECK(registry::factory("Alu_G7075_T6")({.density = 3000}).material.density == 3000);
+    CHECK(FinishSpec(finishes::brushed()).repr().rfind("AppliedFinish(", 0) == 0);
+    CHECK(FinishSpec{finishes::brushed()}.repr().rfind("[AppliedFinish(", 0) == 0);
+    std::vector<std::string> warnings;
+    const WarningHandler previous = set_warning_handler([&](const std::string& m) { warnings.push_back(m); });
+    const FinishedMaterial deprecated = plastics::pla({.process = processes::Process::FDM});
+    set_warning_handler(previous);
+    CHECK(warnings.size() == 1 && deprecated.process && deprecated.process->process == processes::Process::FDM);
+    CHECK(metals::ALU_MATERIALS.at(metals::Alu::G7075_T6).name == "Alu_G7075_T6");
+    CHECK(ALL_MATERIALS.size() == 95);
+
+    // the examples of the docs
+    Part part = Box(1, 1, 1);
+    part.material = metals::aluminum(metals::Alu::G7075_T6, {.finish = finishes::anodize("black")});
+    part.material = metals::stainless({.finish = FinishSpec{finishes::brushed({2, 2}, 45), finishes::pvd("gold")}});
+    part.material = plastics::petg({.color = "#336699", .process = processes::fdm(0.1, 90)});
+    part.material = glass::soda_lime({.thickness_mm = 3, .opacity = 0.4});
+    part.material = wood::oak({.scale = {2, 2}, .rotation = 30});
+    part.material = metals::custom_metal("Inconel", 8440, {.family = "stainless", .tensile_strength = Range(900, 1100)});
+    CHECK(part.material->material.tensile_strength->max == 1100);
+    const FinishedMaterial m(alu.material, finishes::brushed(), {.color = "red"});
+    const FinishedMaterial n = registry::factory("Alu_G7075_T6")({.density = 2800});
+    CHECK(m.repr().find("color='red'") != std::string::npos && n.material.density == 2800);
+}
+
+TEST(io_pbr_missing_textures) {
+    IoTempDir dir("pbr_textures");
+    const ScopedEnv env("BUILD123D_TEXTURE_DIR", (dir.path / "none").string());
+    // a texture directory beside the library or in the source tree would still be found
+    if (!pbr_preset("wood", "oak").maps_dir->empty() &&
+        pbr_preset("wood", "oak").maps_dir->find("$BUILD123D_TEXTURE_DIR") == std::string::npos) {
+        std::cout << "  (textures installed: skipping the missing-texture checks)\n";
+        return;
+    }
+    // looks without textures need none
+    Part plain = Box(1, 2, 3);
+    plain.material = glass::soda_lime({.opacity = 0.5});
+    CHECK(export_gltf(plain, dir.file("glass.gltf")));
+    CHECK(read_all(dir.file("glass.gltf")).find("KHR_materials_transmission") != std::string::npos);
+    Part metal = Box(1, 2, 3);
+    metal.material = metals::aluminum();
+    CHECK(export_gltf(metal, dir.file("metal.glb"), Unit::MM, true));
+    // textured looks: the error tells how to get the textures
+    Part oak = Box(1, 2, 3);
+    oak.material.set_raw(wood::oak());
+    bool named = false;
+    try {
+        export_gltf(oak, dir.file("oak.gltf"));
+    } catch (const std::runtime_error& e) {
+        const std::string what = e.what();
+        named = what.find("scripts/fetch-textures.sh") != std::string::npos &&
+                what.find("BUILD123D_TEXTURE_DIR") != std::string::npos;
+    }
+    CHECK(named);
+    CHECK_THROWS(wood::oak().pbr().interpolate_color(), std::runtime_error);
+}

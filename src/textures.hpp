@@ -1,5 +1,5 @@
-// Where the textures of threejs_materials' material presets are found at run time (they're
-// CC0 data, ~87 MB, not part of the sources: scripts/fetch-textures.sh downloads them).
+// Where the textures of threejs_materials' material presets are found at run time (~87 MB, not
+// part of the sources: scripts/fetch-textures.sh downloads them).
 #pragma once
 
 #include <string>
