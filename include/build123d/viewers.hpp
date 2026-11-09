@@ -23,7 +23,8 @@ struct ShapeMesh {
 };
 
 /// Mesher._mesh_shape: mesh the shape (BRepMesh_IncrementalMesh with a deflection relative to
-/// the edge sizes) and collect the triangulations of its faces.
+/// the edge sizes) and collect the triangulations of its faces (std::runtime_error if a face
+/// can't be meshed).
 ShapeMesh mesh_shape(const Shape& shape, double linear_deflection, double angular_deflection);
 
 /// The arrays of build123d's to_vtk_poly_data: points as float, triangles, and with `normals`

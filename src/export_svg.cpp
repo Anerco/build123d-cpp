@@ -353,7 +353,7 @@ private:
 
     std::vector<Segment> bspline_segments(const Edge& edge_in, bool reverse) {
         // Reduce to degree 3 B-splines (converts almost any edge)
-        const Edge edge(to_splines(edge_in.wrapped()));
+        const Edge edge = edge_in.to_splines();
         if (edge.is_null()) throw std::invalid_argument("Edge is empty");
         const BRepAdaptor_Curve adaptor(TopoDS::Edge(edge.wrapped()));
         Handle(Geom_BSplineCurve) spline =

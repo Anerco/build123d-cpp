@@ -5,6 +5,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <sstream>
 #include <string>
 #include <type_traits>
@@ -94,6 +95,20 @@ TEST(io_cast_shape) {
     CHECK(cast_shape<Sketch>(Shape((Circle(1) + Pos(3, 0) * Circle(1)).wrapped())).faces().size() == 2);
 }
 
+namespace {
+// OCCT reports unreadable data on std::cout, as it does under Python; keep it out of the test output.
+template <class F>
+auto quiet_cout(F&& f) {
+    std::ostringstream sink;
+    std::streambuf* const old = std::cout.rdbuf(sink.rdbuf());
+    struct Restore {
+        std::streambuf* old;
+        ~Restore() { std::cout.rdbuf(old); }
+    } restore{old};
+    return f();
+}
+}  // namespace
+
 TEST(io_persistence) {
     // Payloads as Python's persistence.py
     const Part box = Box(1, 2, 3);
@@ -102,7 +117,7 @@ TEST(io_persistence) {
     CHECK_NEAR(Shape(deserialize_shape(payload)).volume(), 6.0, 1e-9);
     CHECK(serialize_shape(TopoDS_Shape()).empty());
     CHECK(deserialize_shape(Bytes()).IsNull());
-    CHECK_THROWS(deserialize_shape(Bytes{1, 2, 3}), std::runtime_error);
+    CHECK_THROWS(quiet_cout([] { return deserialize_shape(Bytes{1, 2, 3}); }), std::runtime_error);
     const Bytes loc_bytes = serialize_location(Location(Vector(1, 2, 3), Vector(0, 0, 90)).wrapped());
     CHECK(loc_bytes.size() == 28);
     const Location loc(deserialize_location(loc_bytes));

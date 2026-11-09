@@ -28,6 +28,7 @@
 #include <TopoDS_Solid.hxx>
 #include <lib3mf_implicit.hpp>
 
+#include "build123d/viewers.hpp"
 #include "build123d/warnings.hpp"
 #include "internal.hpp"
 #include "io_internal.hpp"
@@ -97,51 +98,17 @@ MeshType to_b3d_type(Lib3MF::eObjectType type) {
 /// os.path.splitext(file_name)[1]
 std::string extension(const std::string& file_name) { return std::filesystem::path(file_name).extension().string(); }
 
-struct Triangle {
-    int a, b, c;
-};
-
-/// Mesher._mesh_shape: the vertices and triangles of the shape's faces.
-std::pair<std::vector<std::array<double, 3>>, std::vector<Triangle>> mesh_shape(const TopoDS_Shape& ocp_mesh,
-                                                                                 double linear_deflection,
-                                                                                 double angular_deflection) {
-    BRepMesh_IncrementalMesh(ocp_mesh, linear_deflection, true, angular_deflection, true);
-    std::vector<std::array<double, 3>> vertices;
-    std::vector<Triangle> triangles;
-    int offset = 0;
-    for (const TopoDS_Shape& facet : entities(ocp_mesh, TopAbs_FACE)) {
-        TopLoc_Location loc;
-        const Handle(Poly_Triangulation) poly = BRep_Tool::Triangulation(TopoDS::Face(facet), loc);
-        if (poly.IsNull()) throw std::runtime_error("Mesher: a face could not be meshed");
-        const gp_Trsf trsf = loc.Transformation();
-        const int node_count = poly->NbNodes();
-        for (int i = 1; i <= node_count; ++i) {
-            const gp_Pnt p = poly->Node(i).Transformed(trsf);
-            vertices.push_back({p.X(), p.Y(), p.Z()});
-        }
-        const bool facet_reversed = facet.Orientation() == TopAbs_REVERSED;
-        for (int i = 1; i <= poly->NbTriangles(); ++i) {
-            int n1, n2, n3;
-            poly->Triangle(i).Get(n1, n2, n3);
-            if (facet_reversed) std::swap(n2, n3);  // order [1, 3, 2]
-            triangles.push_back({n1 + offset - 1, n2 + offset - 1, n3 + offset - 1});
-        }
-        offset += node_count;
-    }
-    return {vertices, triangles};
-}
-
 /// Mesher._create_3mf_mesh: vertices merged after rounding to TOLERANCE, degenerate
 /// triangles dropped.
-std::pair<std::vector<Lib3MF::sPosition>, std::vector<Lib3MF::sTriangle>> create_3mf_mesh(
-    const std::vector<std::array<double, 3>>& ocp_mesh_vertices, const std::vector<Triangle>& triangles) {
+std::pair<std::vector<Lib3MF::sPosition>, std::vector<Lib3MF::sTriangle>> create_3mf_mesh(const ShapeMesh& mesh) {
+    const std::vector<Vector>& ocp_mesh_vertices = mesh.vertices;
     const int digits = -static_cast<int>(pyfmt::round(std::log10(TOLERANCE), 1));
     std::map<std::array<double, 3>, int> vertex_to_idx;
     std::vector<std::array<double, 3>> keys;
     std::vector<int> vert_table(ocp_mesh_vertices.size());
     for (std::size_t i = 0; i < ocp_mesh_vertices.size(); ++i) {
-        const auto& [x, y, z] = ocp_mesh_vertices[i];
-        const std::array<double, 3> key{pyfmt::round(x, digits), pyfmt::round(y, digits), pyfmt::round(z, digits)};
+        const Vector& v = ocp_mesh_vertices[i];
+        const std::array<double, 3> key{pyfmt::round(v.X, digits), pyfmt::round(v.Y, digits), pyfmt::round(v.Z, digits)};
         const auto it = vertex_to_idx.find(key);
         if (it == vertex_to_idx.end()) {
             vertex_to_idx.emplace(key, static_cast<int>(keys.size()));
@@ -158,10 +125,10 @@ std::pair<std::vector<Lib3MF::sPosition>, std::vector<Lib3MF::sTriangle>> create
         vertices_3mf.push_back(p);
     }
     std::vector<Lib3MF::sTriangle> triangles_3mf;
-    for (const Triangle& tri : triangles) {
-        const int a = vert_table[static_cast<std::size_t>(tri.a)];
-        const int b = vert_table[static_cast<std::size_t>(tri.b)];
-        const int c = vert_table[static_cast<std::size_t>(tri.c)];
+    for (const auto& tri : mesh.triangles) {
+        const int a = vert_table[static_cast<std::size_t>(tri[0])];
+        const int b = vert_table[static_cast<std::size_t>(tri[1])];
+        const int c = vert_table[static_cast<std::size_t>(tri[2])];
         if (a != b && b != c && c != a) {
             Lib3MF::sTriangle t;
             t.m_Indices[0] = static_cast<Lib3MF_uint32>(a);
@@ -401,18 +368,18 @@ void Mesher::add_shapes(const std::vector<Shape>& input_shapes, double linear_de
 
         // Mesh a copy of the shape (without its triangulation)
         if (b3d_shape.is_null()) throw std::invalid_argument("Cannot mesh an empty shape");
-        const auto [ocp_mesh_vertices, triangles] = occt("Mesher.add_shape", [&] {
-            const TopoDS_Shape copy = BRepBuilderAPI_Copy(b3d_shape.wrapped(), true, false).Shape();
+        const ShapeMesh mesh = occt("Mesher.add_shape", [&] {
+            const Shape copy(BRepBuilderAPI_Copy(b3d_shape.wrapped(), true, false).Shape());
             return mesh_shape(copy, linear_deflection, angular_deflection);
         });
 
         // Skip invalid meshes
-        if (ocp_mesh_vertices.size() < 3 || triangles.empty()) {
+        if (mesh.vertices.size() < 3 || mesh.triangles.empty()) {
             warn(std::string("Degenerate shape ") + type_name(b3d_shape.wrapped()) + " - skipped");
             continue;
         }
 
-        const auto [vertices_3mf, triangles_3mf] = create_3mf_mesh(ocp_mesh_vertices, triangles);
+        const auto [vertices_3mf, triangles_3mf] = create_3mf_mesh(mesh);
         lib3mf("Mesher.add_shape", [&] {
             mesh_3mf->SetGeometry(vertices_3mf, triangles_3mf);
             // The mesh properties

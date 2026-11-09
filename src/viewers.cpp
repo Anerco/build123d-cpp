@@ -189,7 +189,8 @@ ShapeMesh mesh_shape(const Shape& shape, double linear_deflection, double angula
         TopLoc_Location loc;
         const TopoDS_Face& face = TopoDS::Face(facet.wrapped());
         const Handle(Poly_Triangulation) triangulation = BRep_Tool::Triangulation(face, loc);
-        if (triangulation.IsNull()) continue;
+        // build123d fails here too (None.NbNodes())
+        if (triangulation.IsNull()) throw std::runtime_error("Mesher: a face could not be meshed");
         const gp_Trsf trsf = loc.Transformation();
         const int node_count = triangulation->NbNodes();
         for (int i = 1; i <= node_count; ++i) mesh.vertices.emplace_back(triangulation->Node(i).Transformed(trsf));

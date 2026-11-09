@@ -775,7 +775,7 @@ struct ExportDXF::Impl {
 
     void convert_bspline(const Edge& edge_in, const std::string& layer) {
         // Reduce to degree 3 B-splines (converts almost any edge)
-        const Edge edge(to_splines(edge_in.wrapped()));
+        const Edge edge = edge_in.to_splines();
         if (edge.is_null()) throw std::invalid_argument("Edge is empty");
         const BRepAdaptor_Curve adaptor(TopoDS::Edge(edge.wrapped()));
         const Handle(Geom_BSplineCurve) curve = Handle(Geom_BSplineCurve)::DownCast(adaptor.Curve().Curve());

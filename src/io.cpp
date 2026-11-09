@@ -292,13 +292,17 @@ bool export_gltf(const Shape& to_export, const std::string& file_path, Unit unit
 bool export_obj(const Shape& to_export, std::ostream& stream, double linear_deflection, double angular_deflection,
                 bool include_uvs, bool atlas_packing, double atlas_gutter) {
     if (to_export.is_null()) throw std::invalid_argument("Cannot tessellate an empty shape");
-    UvMesh mesh;
+    struct {
+        std::vector<Vector> vertices;
+        std::vector<std::array<int, 3>> triangles;
+        std::vector<Vector> normals;
+        std::vector<std::array<double, 2>> uvs;
+    } mesh;
     if (include_uvs) {
-        mesh = tessellate_with_uvs(to_export, linear_deflection, angular_deflection, atlas_packing, atlas_gutter);
+        std::tie(mesh.vertices, mesh.triangles, mesh.normals, mesh.uvs) =
+            to_export.tessellate_with_uvs(linear_deflection, angular_deflection, atlas_packing, atlas_gutter);
     } else {
-        auto [vertices, triangles] = to_export.tessellate(linear_deflection, angular_deflection);
-        mesh.vertices = std::move(vertices);
-        mesh.triangles = std::move(triangles);
+        std::tie(mesh.vertices, mesh.triangles) = to_export.tessellate(linear_deflection, angular_deflection);
     }
     std::string content = "# Wavefront OBJ exported by build123d\n";
     auto g = [](double x) { return pyfmt::format_g(x, 9); };
