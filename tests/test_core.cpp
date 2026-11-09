@@ -171,7 +171,7 @@ TEST(core_geometry_helpers) {
     CHECK(Color(0).to_tuple() == (std::array<double, 4>{0, 0, 0, 1}));
     CHECK(Color().to_tuple() == (std::array<double, 4>{1, 1, 1, 1}));
     CHECK_THROWS(Color(1.5, 0, 0), std::runtime_error);
-    CHECK_THROWS(Vector(1, 2, 3) / 0.0, std::invalid_argument);
+    CHECK_THROWS(Vector(1, 2, 3) / 0.0, std::domain_error);
     // BoundBox predicates on void boxes are false
     CHECK(!BoundBox().contains_properly(Box(1, 1, 1).bounding_box()));
     CHECK(!BoundBox().touches(Box(1, 1, 1).bounding_box()));

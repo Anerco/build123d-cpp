@@ -120,7 +120,7 @@ public:
     Vector operator+(const Vector& o) const { return {X + o.X, Y + o.Y, Z + o.Z}; }
     Vector operator-(const Vector& o) const { return {X - o.X, Y - o.Y, Z - o.Z}; }
     Vector operator*(double s) const { return {X * s, Y * s, Z * s}; }
-    /// build123d's division: multiplication by 1 / s (std::invalid_argument for s == 0,
+    /// build123d's division: multiplication by 1 / s (std::domain_error for s == 0,
     /// Python's ZeroDivisionError).
     Vector operator/(double s) const { return *this * reciprocal(s); }
     Vector operator-() const { return {-X, -Y, -Z}; }

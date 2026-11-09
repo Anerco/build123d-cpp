@@ -84,7 +84,7 @@ Vector Vector::normalized() const {
 }
 
 double Vector::reciprocal(double s) {
-    if (s == 0.0) throw std::invalid_argument("float division by zero");
+    if (s == 0.0) throw std::domain_error("float division by zero");
     return 1.0 / s;
 }
 
