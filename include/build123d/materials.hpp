@@ -11,7 +11,6 @@
 //   PbrProperties look = a.pbr();                     // its physically based look
 #pragma once
 
-#include <functional>
 #include <initializer_list>
 #include <map>
 #include <memory>
