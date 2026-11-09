@@ -324,30 +324,7 @@ Solid Solid::extrude_until(const Face& profile, const Shape& target, const Vecto
 
 Solid Solid::extrude_linear_with_rotation(const Face& section, const Vector& center, const Vector& normal,
                                           double angle) {
-    auto extrude_aux_spine = [](const TopoDS_Wire& wire, const TopoDS_Wire& spine, const TopoDS_Wire& aux) {
-        BRepOffsetAPI_MakePipeShell builder(spine);
-        builder.SetMode(aux, false);
-        builder.Add(wire);
-        builder.Build();
-        builder.MakeSolid();
-        return builder.Shape();
-    };
-    return Solid(occt("extrude_linear_with_rotation", [&] {
-        const Wire outer = section.outer_wire();
-        const auto inner = section.inner_wires();
-        const Wire straight = Wire::combine({Edge::make_line(center, center + normal)})[0];
-        const double pitch = 360.0 / angle * normal.length();
-        const Wire aux(Edge::make_helix(pitch, normal.length(), 1, center, normal));
-        const TopoDS_Shape outer_solid = extrude_aux_spine(TopoDS::Wire(outer.wrapped()),
-                                                           TopoDS::Wire(straight.wrapped()), TopoDS::Wire(aux.wrapped()));
-        std::vector<TopoDS_Shape> inner_solids;
-        for (const auto& w : inner) {
-            inner_solids.push_back(extrude_aux_spine(TopoDS::Wire(w.wrapped()), TopoDS::Wire(straight.wrapped()),
-                                                     TopoDS::Wire(aux.wrapped())));
-        }
-        if (inner_solids.empty()) return unwrap(outer_solid, true);
-        return unwrap(BRepAlgoAPI_Cut(outer_solid, make_compound(inner_solids)).Shape(), true);
-    }));
+    return extrude_linear_with_rotation(section.outer_wire(), center, normal, angle, section.inner_wires());
 }
 
 Solid Solid::revolve(const Face& section, double angle, const Axis& axis) {

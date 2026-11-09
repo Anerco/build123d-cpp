@@ -174,7 +174,10 @@ std::vector<Face> as_faces(const Shape& shape);
 /// topo_path to `to` where `to` has none set (joints: see the marked spot in the
 /// definition). `exceptions` names attributes not to copy ("label", "color",
 /// "material", "topo_path", "joints").
-void copy_attributes_to(const Shape& from, Shape& to, std::initializer_list<const char*> exceptions = {});
+void copy_attributes_to(const Shape& from, Shape& to, const std::vector<std::string>& exceptions);
+inline void copy_attributes_to(const Shape& from, Shape& to, std::initializer_list<const char*> exceptions = {}) {
+    copy_attributes_to(from, to, std::vector<std::string>(exceptions.begin(), exceptions.end()));
+}
 
 /// A TopoDS boolean and the record of what it did (build123d's Shape._bool_op without
 /// the result typing). `shape` is null for a COMMON with an empty side (build123d

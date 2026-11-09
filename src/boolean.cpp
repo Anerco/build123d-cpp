@@ -17,10 +17,11 @@
 
 namespace build123d::detail {
 
-void copy_attributes_to(const Shape& from, Shape& to, std::initializer_list<const char*> exceptions) {
+void copy_attributes_to(const Shape& from, Shape& to, const std::vector<std::string>& exceptions) {
     const auto excluded = [&](const char* name) {
-        for (const char* e : exceptions) {
-            if (std::strcmp(e, name) == 0) return true;
+        for (const auto& e : exceptions) {
+            // the C++ names, or build123d's attribute names ("_color", "_material")
+            if (e == name || e == std::string("_") + name) return true;
         }
         return false;
     };

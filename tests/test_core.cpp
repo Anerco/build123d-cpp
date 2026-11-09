@@ -185,3 +185,24 @@ TEST(core_geometry_helpers) {
     CHECK(messages.size() == 1 && messages[0] == "Trying to set a left-handed plane");
     CHECK(fixed.z_dir == Vector(0, 0, 1) && fixed.y_dir == Vector(0, 1, 0));
 }
+
+TEST(core_topology_members) {
+    // split_by_perimeter unpacks like build123d's (inside, outside) tuple
+    const Face square = Face::make_rect(10, 10);
+    const auto [inside, outside] = square.split_by_perimeter(Wire(Edge::make_circle(2)), Keep::BOTH);
+    CHECK(inside.size() == 1 && outside.size() == 1);
+    CHECK_NEAR(inside[0].area(), PI * 4, 1e-6);
+    CHECK_THROWS(square.split_by_perimeter(Wire(Edge::make_circle(2)), Keep::TOP), std::invalid_argument);
+    // positions takes build123d's keyword arguments as an option struct
+    CHECK(Edge::make_line({0, 0}, {10, 0}).positions({.distances = std::vector<double>{0, 1}}).size() == 2);
+    // copy_attributes_to keeps what the target already has
+    Shape source = Box(1, 1, 1);
+    source.label = "a";
+    source.color = Color("red");
+    Shape target = Box(1, 1, 1);
+    target.color = Color("blue");
+    source.copy_attributes_to(target);
+    CHECK(target.label == "a" && target.color == Color("blue"));
+    // the triad is a Curve of the axes, arrows and labels
+    CHECK(Compound::make_triad(1).edges().size() > 9);
+}

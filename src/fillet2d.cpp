@@ -374,16 +374,6 @@ Wire fillet_wire_corner(const Wire& wire, const Vertex& vertex, double radius, b
                                 std::to_string(radius));
 }
 
-/// Wire.order_chamfer_edges: the reference edge first.
-std::pair<Edge, Edge> order_chamfer_edges(const std::optional<Edge>& reference_edge, const Edge& e1, const Edge& e2) {
-    if (reference_edge) {
-        if (e1.is_same(*reference_edge)) return {e1, e2};
-        if (e2.is_same(*reference_edge)) return {e2, e1};
-        throw std::invalid_argument("reference edge not in edges");
-    }
-    return {e1, e2};
-}
-
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -447,7 +437,7 @@ Wire Wire::chamfer_2d(double distance, double distance2, const std::vector<Verte
             if (v.is_null()) continue;
             const OccShapeList& edge_list = vertex_edge_map.FindFromKey(v.wrapped());
             const auto [edge1, edge2] =
-                order_chamfer_edges(reference_edge, Edge(edge_list.First()), Edge(edge_list.Last()));
+                Wire::order_chamfer_edges(reference_edge, {Edge(edge_list.First()), Edge(edge_list.Last())});
             chamfer_builder.AddChamfer(TopoDS::Edge(edge1.wrapped()), TopoDS::Edge(edge2.wrapped()), distance,
                                        distance2);
         }
@@ -513,7 +503,7 @@ Face Face::chamfer_2d(double distance, double distance2, const std::vector<Verte
         for (const auto& v : vertices) {
             const OccShapeList& edge_list = vertex_edge_map.FindFromKey(v.wrapped());
             const auto [edge1, edge2] =
-                order_chamfer_edges(reference_edge, Edge(edge_list.First()), Edge(edge_list.Last()));
+                Wire::order_chamfer_edges(reference_edge, {Edge(edge_list.First()), Edge(edge_list.Last())});
             chamfer_builder.AddChamfer(TopoDS::Edge(edge1.wrapped()), TopoDS::Edge(edge2.wrapped()), distance,
                                        distance2);
         }

@@ -724,6 +724,236 @@ def geom_color():
               raises(lambda: Color.categorical_set(3, -1))])
 
 
+def shape_members11():
+    box = Box(2, 2, 2)
+    distances = list(box.distances(Pos(5, 0, 0) * Box(1, 1, 1), Pos(0, 0, 3) * Sphere(0.5), Box(1, 1, 1)))
+    labeled = Box(1, 1, 1)
+    labeled.label = "src"
+    labeled.color = Color("red")
+    target = Cylinder(1, 1)
+    labeled.copy_attributes_to(target, ["_color", "wrapped", "_NodeMixin__children"])
+    target2 = Cylinder(1, 1)
+    target2.label = "keep"
+    labeled.copy_attributes_to(target2, ["wrapped", "_NodeMixin__children"])
+    return V([distances, len(box.entities("Face")), len(box.entities("Edge")), len(box.entities("Vertex")),
+              isinstance(Shape.as_shape(Vector(1, 2, 3)), Vertex), isinstance(Shape.as_shape(Axis.X), Edge),
+              isinstance(Shape.as_shape(Plane.XY), Face), target.label, target.color is not None, target2.label,
+              target2.color is not None])
+
+
+def positions_deflection():
+    spline = Edge.make_spline([(0, 0, 0), (3, 2, 0), (6, -1, 1), (9, 0, 0)])
+    circle = Edge.make_circle(5)
+    wire = Wire.make_polygon([(0, 0, 0), (5, 0, 0), (5, 5, 0)], close=False)
+
+    def summary(pts):
+        total = sum(pts, Vector(0, 0, 0))
+        return [len(pts), total, pts[0] if pts else None, pts[-1] if pts else None]
+
+    try:
+        spline.positions()
+        missing = False
+    except ValueError:
+        missing = True
+    return V([summary(spline.positions(deflection=0.01)), summary(circle.positions(deflection=0.05)),
+              summary(wire.positions(deflection=0.1)), summary(spline.positions([0, 2, 4], PositionMode.LENGTH)), missing])
+
+
+def curvature_comb_case():
+    spline = Edge.make_spline([(0, 0, 0), (3, 2, 0), (6, -1, 0), (9, 0, 0)])
+    ring = Wire(Edge.make_circle(4))
+    try:
+        Edge.make_circle(1, Plane.XZ).curvature_comb()
+        not_xy = False
+    except ValueError:
+        not_xy = True
+    return V([describe(spline.curvature_comb(20)), describe(ring.curvature_comb(12, 1.0)),
+              len(Edge.make_line((0, 0), (5, 0)).curvature_comb()), not_xy])
+
+
+def edge_members11():
+    arc = Edge.make_circle(5, Plane.XY, 0, 270)
+    spline = Edge.make_spline([(0, 0, 0), (3, 3, 0), (6, 0, 0), (9, 3, 0)])
+    locs = [geom(loc) for loc in spline.distribute_locations(4, 0.1, 0.9)]
+    flat = [geom(loc) for loc in arc.distribute_locations(3, 0, 1, positions_only=True)]
+    try:
+        arc.distribute_locations(1)
+        few = False
+    except ValueError:
+        few = True
+    loop = Edge.make_spline([(0, 0, 0), (4, 4, 0), (4, 0, 0), (0, 4, 0)])
+    return V([locs, flat, few, arc.find_tangent(180), Edge.make_circle(3).find_tangent(45), spline.find_tangent(0),
+              Edge.make_line((0, 0), (1, 1)).find_tangent(45), Edge.make_line((0, 0), (1, 1)).find_tangent(10),
+              describe([arc.trim((5, 0, 0), (-5, 0, 0)), arc.trim(0.1, (0, 5, 0)), arc.trim_to_length((0, 5, 0), 3)]),
+              list(loop.find_intersection_points()),
+              list(spline.find_intersection_points(Edge.make_line((0, 1.5), (9, 1.5)))),
+              list(spline.find_intersection_points(Axis((0, 1), (1, 0))))])
+
+
+def wire_members11():
+    wire = Wire.make_polygon([(0, 0, 0), (4, 0, 0), (4, 3, 0), (0, 3, 0)], close=False)
+    twin = Wire.make_polygon([(0, 0, 0), (4, 0, 0), (4, 3, 0), (0, 3, 0)], close=False)
+    other = Wire.make_polygon([(0, 0, 0), (4, 0, 0), (4, 3.5, 0)], close=False)
+    edges = wire.edges()
+    first, second = Wire.order_chamfer_edges(edges[1], (edges[0], edges[1]))
+    try:
+        Wire.order_chamfer_edges(edges[2], (edges[0], edges[1]))
+        not_in = False
+    except ValueError:
+        not_in = True
+    return V([describe(wire.trim(0.2, 0.7).edges()), describe(wire.trim(0.7, 0.2).edges()),
+              describe(wire.trim((1, 0, 0), (4, 2, 0)).edges()), describe(wire.trim(0.0, (2, 3, 0)).edges()),
+              wire.geom_equal(twin), wire.geom_equal(other), wire.param_at(0.0), wire.param_at(0.5), wire.param_at(1.0),
+              first.is_same(edges[1]), second.is_same(edges[0]), not_in])
+
+
+def face_members11():
+    torus = Torus(5, 1).faces()[0]
+    cyl_face = Cylinder(2, 4).faces().filter_by(GeomType.CYLINDER)[0]
+    cone_face = Cone(2, 1, 3).faces().filter_by(GeomType.CONE)[0]
+    r = torus.radii
+    plain = Face.make_rect(2, 2).radii
+    sewn = Face.sew_faces([Face.make_rect(1, 1), Face.make_rect(1, 1, Plane((1, 0, 0))),
+                           Face.make_rect(1, 1, Plane((5, 0, 0)))])
+    groups = sorted(float(len(g)) for g in sewn)
+    patch = Face.make_surface_patch(
+        edge_constraints=Wire.make_polygon([(0, 0, 0), (4, 0, 1), (4, 4, 0), (0, 4, 1)]).edges(),
+        point_constraints=[(2, 2, 1.5)])
+    base = Box(4, 4, 2, align=Align.MIN)
+    top = base.faces().sort_by(Axis.Z)[-1]
+    side = base.faces().sort_by(Axis.X)[0]
+    filled = Face.make_surface_patch(edge_face_constraints=[(top.edges().sort_by(Axis.X)[0], top, ContinuityLevel.C0)],
+                                     point_constraints=[(-1, 2, 3)])
+    return V([list(r) if r else None, True if plain else None, describe(cyl_face.seams), cone_face.semi_angle,
+              Face.make_rect(1, 1).semi_angle is not None, describe([cyl_face.uv_face, Sphere(1).faces()[0].uv_face]),
+              describe([Face.make_rect(2, 2).offset(3), side.offset(-1)]), groups, describe([patch, filled]),
+              patch.is_valid])
+
+
+def axes_of_symmetry_case():
+    def dirs(f):
+        rows = sorted((rnd(a.direction.X, 5), rnd(a.direction.Y, 5), rnd(a.direction.Z, 5)) for a in f.axes_of_symmetry)
+        return [list(r) for r in rows]
+
+    ell = Rectangle(4, 4) - Pos(1, 1) * Rectangle(2, 2)
+    holed = Rectangle(6, 4) - Pos(1.5, 0) * Circle(0.5)
+    slot = SlotOverall(8, 2)
+    return V([dirs(Face.make_rect(4, 2)), dirs(Face.make_rect(3, 3)), dirs(ell.faces()[0]), dirs(holed.faces()[0]),
+              dirs(slot.faces()[0]), dirs(Triangle(a=3, b=4, c=5).faces()[0])])
+
+
+def side_list(x):
+    if x is None:
+        return []
+    if isinstance(x, list):
+        return list(x)
+    return [x]
+
+
+def split_by_perimeter_case():
+    square = Face.make_rect(10, 10)
+    circle = Wire(Edge.make_circle(2))
+    inside = square.split_by_perimeter(circle)
+    outside = square.split_by_perimeter(circle, Keep.OUTSIDE)
+    in_both, out_both = square.split_by_perimeter(circle, Keep.BOTH)
+    box_shell = Box(4, 4, 4).shells()[0]
+    band = Wire.make_rect(1, 1, Plane((0, 0, 2)))
+    shell_inside = box_shell.split_by_perimeter(band)
+    try:
+        square.split_by_perimeter(Edge.make_line((0, 0), (1, 0)))
+        open_ = False
+    except ValueError:
+        open_ = True
+    return V([describe(side_list(inside)), describe(side_list(outside)), describe(side_list(in_both)),
+              describe(side_list(out_both)), describe(side_list(shell_inside)), open_])
+
+
+def wrap_case():
+    surface = Cylinder(10, 30).faces().filter_by(GeomType.CYLINDER)[0]
+    loc = Location(Plane((10, 0, 0), x_dir=(0, 1, 0), z_dir=(1, 0, 0)))
+    wrapped_edge = surface.wrap(Edge.make_line((0, 0), (5, 0)), loc)
+    wrapped_wire = surface.wrap(Wire.make_polygon([(0, 0, 0), (4, 0, 0), (4, 3, 0)], close=False), loc)
+    wrapped_face = surface.wrap(Face.make_rect(4, 2), loc)
+    faces = surface.wrap_faces([Face.make_rect(2, 1), Face.make_rect(1, 1, Plane((3, 0, 0)))], Edge.make_circle(10), 0.0)
+    return V([wrapped_edge.length, wrapped_edge @ 1, wrapped_wire.length, wrapped_wire @ 1, wrapped_face.area,
+              wrapped_face.center(), len(wrapped_face.edges()), describe(faces)])
+
+
+def dprism_faces():
+    box = Solid.make_box(10, 10, 10)
+    top = box.faces().sort_by(Axis.Z)[-1]
+    return box.dprism(top, [Face.make_rect(4, 4, Plane((5, 5, 10)))], 3.0, 5.0, None, thru_all=False, additive=False)
+
+
+def dprism_wires():
+    box = Solid.make_box(10, 10, 10)
+    return box.dprism(None, [Wire.make_rect(6, 6, Plane((5, 5, 10))), Wire.make_circle(1, Plane((5, 5, 10)))],
+                      None, 0.0, None, thru_all=True, additive=False)
+
+
+def hollow_open():
+    box = Solid.make_box(10, 10, 10)
+    return box.hollow([box.faces().sort_by(Axis.Z)[-1]], -1.0)
+
+
+def sweep_inner():
+    path = Wire(Edge.make_three_point_arc((0, 0, 0), (5, 0, 5), (10, 0, 0)))
+    return Solid.sweep(Wire.make_circle(2, Plane.YZ), path, [Wire.make_circle(1, Plane.YZ)])
+
+
+def compound_members11():
+    a = Box(2, 2, 2)
+    b = Pos(1, 0, 0) * Box(2, 2, 2)
+    c = Pos(10, 0, 0) * Box(1, 1, 1)
+    overlapping = Compound(children=[a, b, c])
+    hit, pair, volume = overlapping.do_children_intersect()
+    a2 = Box(2, 2, 2)
+    c2 = Pos(10, 0, 0) * Box(1, 1, 1)
+    apart = Compound(children=[a2, c2])
+    miss, none, zero = apart.do_children_intersect()
+    prism = Compound.extrude(Box(1, 1, 1).shells()[0], (0, 0, 2))
+    triad = Compound.make_triad(10)
+    return V([hit, pair[0].center() if pair[0] else None, pair[1].center() if pair[1] else None, volume, miss,
+              none[0] is not None, zero, len(prism.faces()), len(prism.compounds()), describe(triad.edges()[:9])])
+
+
+def sort_wires_case():
+    from build123d.topology import sort_wires_by_build_order
+    groups = sort_wires_by_build_order([Wire.make_rect(10, 10), Wire.make_circle(1), Wire.make_rect(2, 2, Plane((3, 3, 0)))])
+    return V([len(groups), [describe(g) for g in groups], len(sort_wires_by_build_order([Wire.make_circle(1)]))])
+
+
+def attributes_survive():
+    def attrs(x):
+        return [x.label, list(tuple(x.color)) if x.color is not None else None,
+                x.material.name if x.material is not None else None]
+
+    b = Box(1, 1, 1)
+    b.label = "box"
+    b.material = "aluminum"
+    b.color = Color("red")
+    s = Pos(0.5, 0, 0) * Sphere(0.6)
+    far = Pos(5, 0, 0) * Box(1, 1, 1)
+    r = Rectangle(2, 2)
+    r.label = "rect"
+    r.color = Color("blue")
+    l = Line((0, 0), (1, 0))
+    l.label = "line"
+    c = Compound([Box(1, 1, 1)])
+    c.label = "single"
+    c.color = Color("green")
+    nested = Compound([Compound([Box(1, 1, 1)])])
+    nested.label = "nested"
+    return V([attrs(b + s), attrs(b + far), attrs(b - s), attrs(b & s), attrs(Pos(1, 0, 0) * b),
+              attrs(b.moved(Location((1, 2, 3)))), attrs(b.located(Location((1, 2, 3)))), attrs(b.rotate(Axis.Z, 30)),
+              attrs(b.translate((1, 0, 0))), attrs(b.mirror(Plane.YZ)), attrs(b.scale(2)), attrs(b.clean()),
+              attrs(b.solid()), attrs(b.unwrap()), attrs(r + Circle(1.5)), attrs(r - Circle(0.5)),
+              attrs(r & Circle(1.2)), attrs(l + Line((1, 0), (1, 1))), attrs(c.unwrap()), attrs(c.unwrap(False)),
+              attrs(nested.unwrap()), attrs(nested.unwrap(False)), attrs(b - [s, far]),
+              attrs(fillet(b.edges().filter_by(Axis.Z), 0.1)), attrs(b.transform_geometry(Matrix())),
+              attrs(-r.faces()[0])])
+
+
 CASES = {
     # 1a
     "core_and_list_part": lambda: Box(4, 4, 4) & [Pos(1, 0, 0) * Box(4, 4, 4), Sphere(2.5)],
@@ -820,4 +1050,26 @@ CASES = {
     "core_geom_plane_lists": geom_plane_lists,
     "core_geom_bound_box": geom_bound_box,
     "core_geom_color": geom_color,
+    # 11: topology members
+    "core_shape_members11": shape_members11,
+    "core_positions_deflection": positions_deflection,
+    "core_curvature_comb": curvature_comb_case,
+    "core_edge_members11": edge_members11,
+    "core_wire_members11": wire_members11,
+    "core_face_members11": face_members11,
+    "core_axes_of_symmetry": axes_of_symmetry_case,
+    "core_split_by_perimeter": split_by_perimeter_case,
+    "core_wrap": wrap_case,
+    "core_dprism_faces": dprism_faces,
+    "core_dprism_wires": dprism_wires,
+    "core_hollow_open": hollow_open,
+    "core_hollow_closed": lambda: Solid.make_box(10, 10, 10).hollow([], 1.0, 1e-4, Kind.INTERSECTION),
+    "core_twist_wire": lambda: Solid.extrude_linear_with_rotation(Wire.make_rect(4, 4), (0, 0, 0), (0, 0, 10), 45,
+                                                                 [Wire.make_circle(1)]),
+    "core_revolve_wire": lambda: Solid.revolve(Wire.make_rect(2, 2, Plane((5, 0, 0))), 270, Axis.Y,
+                                               [Wire.make_circle(0.5, Plane((5, 0, 0)))]),
+    "core_sweep_inner": sweep_inner,
+    "core_compound_members11": compound_members11,
+    "core_sort_wires_by_build_order": sort_wires_case,
+    "core_attributes_survive": attributes_survive,
 }

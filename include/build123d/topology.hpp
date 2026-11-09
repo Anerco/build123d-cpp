@@ -243,6 +243,8 @@ public:
     void set_history(std::shared_ptr<ShapeHistory> history) { history_ = std::move(history); }
 
     double distance(const Shape& other) const;
+    /// The minimum distance to each of the other shapes (build123d's distances()).
+    std::vector<double> distances(const std::vector<Shape>& others) const;
     double distance_to(const Shape& other) const;
     double distance_to(const Vector& point) const;
     std::tuple<double, Vector, Vector> distance_to_with_closest_points(const Shape& other) const;
@@ -304,6 +306,16 @@ public:
     /// otherwise. (The addresses printed are those of the C++ objects.)
     std::string show_topology(ShapeType limit_class = ShapeType::VERTEX,
                               std::optional<bool> show_center = std::nullopt) const;
+    /// build123d's copy_attributes_to: give `target` this shape's label, color, material and
+    /// topo_path where it has none of its own; `exceptions` names attributes not to copy, by
+    /// their C++ or build123d names ("label", "color"/"_color", "material"/"_material",
+    /// "topo_path", "joints").
+    void copy_attributes_to(Shape& target, const std::vector<std::string>& exceptions = {}) const;
+    /// The distinct TopoDS sub-shapes of a type (build123d's entities()).
+    std::vector<TopoDS_Shape> entities(ShapeType topo_type) const;
+    /// build123d's Shape.as_shape: a Vector or Location becomes a Vertex, an Axis an
+    /// (infinite) Edge, a Plane an (infinite) Face; a Shape is returned unchanged.
+    static Shape as_shape(const IntersectArg& obj);
     std::string to_string() const;
     /// build123d's __hash__: the OCCT shape (TShape and location); see std::hash<Shape>.
     std::size_t hash() const;
@@ -427,6 +439,14 @@ public:
 // ---------------------------------------------------------------------------
 
 /// Methods shared by Edge and Wire.
+/// The keyword arguments of Mixin1D::positions (build123d's positions(distances=None,
+/// position_mode=PARAMETER, deflection=None)): `edge.positions({.deflection = 0.01})`.
+struct PositionsOptions {
+    std::optional<std::vector<double>> distances;
+    PositionMode position_mode = PositionMode::PARAMETER;
+    std::optional<double> deflection;
+};
+
 class Mixin1D : public Shape {
 public:
     static constexpr int kDim = 1;
@@ -443,6 +463,13 @@ public:
     Vector position_at(double position, PositionMode mode = PositionMode::PARAMETER) const;
     std::vector<Vector> positions(const std::vector<double>& distances,
                                   PositionMode mode = PositionMode::PARAMETER) const;
+    /// Positions at `distances`, or points within `deflection` of the curve
+    /// (GCPnts_UniformDeflection / QuasiUniformDeflection).
+    std::vector<Vector> positions(const PositionsOptions& options) const;
+    /// build123d's curvature_comb: lines along the left normal sized by the signed curvature,
+    /// for a curve on Plane.XY (`count` samples; the largest tooth is `max_tooth_size`,
+    /// default a tenth of the curve's size).
+    ShapeList<Edge> curvature_comb(int count = 100, std::optional<double> max_tooth_size = std::nullopt) const;
     Vector tangent_at(double position = 0.5, PositionMode mode = PositionMode::PARAMETER) const;
     /// Tangent at the point on the curve closest to `point`.
     Vector tangent_at(const Vector& point) const;
@@ -538,7 +565,16 @@ public:
     /// Keep the section between normalized positions `start` and `end`.
     Edge trim(double start, double end) const;
     Edge trim(const Vector& start, const Vector& end) const;
+    Edge trim(double start, const Vector& end) const;
+    Edge trim(const Vector& start, double end) const;
     Edge trim_to_length(double start, double length) const;
+    Edge trim_to_length(const Vector& start, double length) const;
+    /// `count` locations from `start` to `stop` (normalized parameters); `positions_only`
+    /// zeroes their orientation.
+    std::vector<Location> distribute_locations(int count, double start = 0.0, double stop = 1.0,
+                                               bool positions_only = false) const;
+    /// The normalized parameters where the tangent angle (on Plane.XY) equals `angle` degrees.
+    std::vector<double> find_tangent(double angle) const;
     /// OCCT curve parameter at a normalized arc-length position.
     double param_at(double position) const;
     Wire close() const;
@@ -551,6 +587,8 @@ public:
                                                  double tolerance = TOLERANCE) const;
     std::vector<Vector> find_intersection_points(const Axis& axis,
                                                  double tolerance = TOLERANCE) const;
+    /// The points where this (planar) edge crosses itself.
+    std::vector<Vector> find_intersection_points(double tolerance = TOLERANCE) const;
 
     BUILD123D_TYPED_OPS(Edge)
 };
@@ -590,7 +628,19 @@ public:
     Wire close() const;
     Wire fix_degenerate_edges(double precision) const;
     Wire stitch(const Wire& other) const;
+    /// The part between normalized positions (or points on the wire) `start` and `end`.
     Wire trim(double start, double end) const;
+    Wire trim(const Vector& start, const Vector& end) const;
+    Wire trim(double start, const Vector& end) const;
+    Wire trim(const Vector& start, double end) const;
+    /// Geometric equality: the ordered edges pairwise geom_equal.
+    bool geom_equal(const Wire& other, double tol = 1e-6, int num_interpolation_points = 5) const;
+    /// The BRepAdaptor_CompCurve parameter at a normalized position.
+    double param_at(double position) const;
+    /// The two edges of a chamfer with `reference_edge` first (std::invalid_argument if it is
+    /// neither of them).
+    static std::pair<Edge, Edge> order_chamfer_edges(const std::optional<Edge>& reference_edge,
+                                                     const std::pair<Edge, Edge>& edges);
 
     BUILD123D_TYPED_OPS(Wire)
 };
@@ -599,11 +649,18 @@ public:
 // 2D
 // ---------------------------------------------------------------------------
 
+class PerimeterSplit;
+
 /// Methods shared by Face and Shell.
 class Mixin2D : public Shape {
 public:
     static constexpr int kDim = 2;
     using Shape::Shape;
+
+    /// Divide the faces by a closed perimeter (build123d's split_by_perimeter): the kept
+    /// side(s), each a Face, a Shell or several Faces (nothing for None); Keep::BOTH gives
+    /// `auto [inside, outside] = face.split_by_perimeter(perimeter, Keep::BOTH)`.
+    PerimeterSplit split_by_perimeter(const Mixin1D& perimeter, Keep keep = Keep::INSIDE) const;
 };
 
 class Face : public Mixin2D {
@@ -674,6 +731,34 @@ public:
                     std::optional<Edge> edge = std::nullopt) const;
     Face make_holes(const std::vector<Wire>& interior_wires) const;
     Face without_holes() const;
+    /// A copy moved along the normal by `amount` (build123d's Mixin2D.offset).
+    Face offset(double amount) const;
+    /// The axes of symmetry through the center of a planar face (in no particular order).
+    std::vector<Axis> axes_of_symmetry() const;
+    /// Major and minor radius of a torus.
+    std::optional<std::pair<double, double>> radii() const;
+    /// The seam edges of the face.
+    ShapeList<Edge> seams() const;
+    /// The semi angle (degrees) of a cone.
+    std::optional<double> semi_angle() const;
+    /// The face's boundary in its (u, v) parameter space, as a face on Plane.XY.
+    Face uv_face() const;
+    /// Group faces into contiguous (sewn) sets.
+    static std::vector<ShapeList<Face>> sew_faces(const std::vector<Face>& faces);
+    /// A (possibly non-planar) patch bounded by edges (with a support face and continuity,
+    /// or alone) and refined by points (BRepOffsetAPI_MakeFilling).
+    static Face make_surface_patch(
+        const std::vector<std::tuple<Edge, Face, ContinuityLevel>>& edge_face_constraints = {},
+        const std::vector<Edge>& edge_constraints = {}, const std::vector<Vector>& point_constraints = {});
+    /// Wrap a planar (XY) Edge, Wire or Face onto this surface starting at `surface_loc`.
+    Edge wrap(const Edge& planar_shape, const Location& surface_loc, double tolerance = 0.001,
+              double extension_factor = 0.1) const;
+    Wire wrap(const Wire& planar_shape, const Location& surface_loc, double tolerance = 0.001,
+              double extension_factor = 0.1) const;
+    Face wrap(const Face& planar_shape, const Location& surface_loc, double tolerance = 0.001,
+              double extension_factor = 0.1) const;
+    /// Wrap planar faces onto this surface along `path`, spaced by their X positions.
+    ShapeList<Face> wrap_faces(const std::vector<Face>& faces, const Mixin1D& path, double start = 0.0) const;
     /// Project onto a target along `direction`. Results are sorted along the direction;
     /// each is a Face, or a Shell where the projection spans several target faces.
     ShapeList<Shape> project_to_shape(const Shape& target, const Vector& direction) const;
@@ -701,11 +786,17 @@ public:
 
     /// Enclosed volume of a closed shell, else 0.
     double volume() const;
+    /// The location on the face closest to `surface_point`.
+    Location location_at(const Vector& surface_point, std::optional<Vector> x_dir = std::nullopt) const;
 
     Shell operator-() const;
 
     BUILD123D_TYPED_OPS(Shell)
 };
+
+/// build123d's sort_wires_by_build_order: the wires grouped into faces, each group the
+/// outer wire followed by its holes (the first wire is the outer one of the set).
+std::vector<std::vector<Wire>> sort_wires_by_build_order(const std::vector<Wire>& wire_list);
 
 // ---------------------------------------------------------------------------
 // 3D
@@ -730,6 +821,10 @@ protected:
                                 std::shared_ptr<ShapeHistory>* history = nullptr) const;
     TopoDS_Shape offset_3d_topods(const std::vector<Face>& openings, double thickness,
                                   double tolerance, Kind kind) const;
+    TopoDS_Shape dprism_topods(const std::optional<Face>& basis, const std::vector<Face>& faces,
+                               std::optional<double> depth, double taper, const std::optional<Face>& up_to_face,
+                               bool thru_all, bool additive) const;
+    TopoDS_Shape hollow_topods(const std::vector<Face>& faces, double thickness, double tolerance, Kind kind) const;
 };
 
 #define BUILD123D_3D_OPS(T)                                                                    \
@@ -752,6 +847,29 @@ public:                                                                         
     T offset_3d(const std::vector<Face>& openings, double thickness, double tolerance = 1e-4,  \
                 Kind kind = Kind::ARC) const {                                                 \
         return T(offset_3d_topods(openings, thickness, tolerance, kind));                     \
+    }                                                                                          \
+    /** Prismatic feature (BRepFeat_MakeDPrism), additive or subtractive, of face profiles. */ \
+    T dprism(const std::optional<Face>& basis, const std::vector<Face>& bounds,               \
+             std::optional<double> depth = std::nullopt, double taper = 0.0,                  \
+             const std::optional<Face>& up_to_face = std::nullopt, bool thru_all = true,      \
+             bool additive = true) const {                                                    \
+        return T(dprism_topods(basis, bounds, depth, taper, up_to_face, thru_all, additive)); \
+    }                                                                                          \
+    /** dprism of wire profiles (outer wires followed by their holes). */                     \
+    T dprism(const std::optional<Face>& basis, const std::vector<Wire>& bounds,               \
+             std::optional<double> depth = std::nullopt, double taper = 0.0,                  \
+             const std::optional<Face>& up_to_face = std::nullopt, bool thru_all = true,      \
+             bool additive = true) const {                                                    \
+        std::vector<Face> faces;                                                               \
+        for (const auto& profile : sort_wires_by_build_order(bounds)) {                        \
+            faces.emplace_back(profile[0], std::vector<Wire>(profile.begin() + 1, profile.end())); \
+        }                                                                                      \
+        return T(dprism_topods(basis, faces, depth, taper, up_to_face, thru_all, additive));  \
+    }                                                                                          \
+    /** The outer shelled solid: `faces` removed (may be empty), positive thickness outward. */ \
+    T hollow(const std::vector<Face>& faces, double thickness, double tolerance = 1e-4,       \
+             Kind kind = Kind::ARC) const {                                                   \
+        return T(hollow_topods(faces, thickness, tolerance, kind));                           \
     }
 
 class Solid : public Mixin3D {
@@ -787,11 +905,23 @@ public:
                                Until until = Until::NEXT);
     static Solid extrude_linear_with_rotation(const Face& section, const Vector& center,
                                               const Vector& normal, double angle);
+    /// A wire section with optional holes.
+    static Solid extrude_linear_with_rotation(const Wire& section, const Vector& center,
+                                              const Vector& normal, double angle,
+                                              const std::vector<Wire>& inner_wires = {});
     static Solid revolve(const Face& section, double angle, const Axis& axis);
+    static Solid revolve(const Wire& section, double angle, const Axis& axis,
+                         const std::vector<Wire>& inner_wires = {});
     /// Sweep a face (or closed wire) along a path. `binormal` fixes the profile
     /// orientation (a fixed direction or an auxiliary wire).
     static Solid sweep(const Shape& section, const Shape& path, bool make_solid = true,
                        bool is_frenet = false, std::optional<Vector> binormal_dir = std::nullopt,
+                       const std::optional<Wire>& binormal_wire = std::nullopt,
+                       Transition transition = Transition::TRANSFORMED);
+    /// Sweep a wire section with holes (`inner_wires`), build123d's parameter order.
+    static Solid sweep(const Wire& section, const Shape& path, const std::vector<Wire>& inner_wires,
+                       bool make_solid = true, bool is_frenet = false,
+                       std::optional<Vector> binormal_dir = std::nullopt,
                        const std::optional<Wire>& binormal_wire = std::nullopt,
                        Transition transition = Transition::TRANSFORMED);
     static Solid sweep_multi(const std::vector<Shape>& profiles, const Shape& path,
@@ -853,6 +983,14 @@ public:
     /// Remove unnecessary compound wrappers.
     Shape unwrap(bool fully = true) const;
     double volume() const;
+    /// Do any two of the assembly's shapes (pre-order, without this one unless
+    /// `include_parent`) share more than `tolerance` volume? (yes, the pair, the volume)
+    std::tuple<bool, std::pair<std::optional<Shape>, std::optional<Shape>>, double> do_children_intersect(
+        bool include_parent = false, double tolerance = 1e-5) const;
+    /// Extrude a Shell into a Compound.
+    static Compound extrude(const Shell& obj, const Vector& direction);
+    /// The coordinate system triad: X, Y and Z axes with arrows and single-line labels.
+    static Curve make_triad(double axes_scale);
 
     /// Text as faces. See Text in objects.hpp for the full set of options.
     static Compound make_text(const std::string& txt, double font_size,
@@ -1410,6 +1548,26 @@ public:
     ShapeList<Shape> bottom;
 };
 
+/// The result of split_by_perimeter: the kept side(s) (inside then outside for Keep::BOTH)
+/// with each side apart, `auto [inside, outside] = face.split_by_perimeter(p, Keep::BOTH);`.
+class PerimeterSplit : public ShapeList<Shape> {
+public:
+    using ShapeList<Shape>::ShapeList;
+    PerimeterSplit() = default;
+    ShapeList<Shape> inside;
+    ShapeList<Shape> outside;
+};
+
+template <std::size_t I>
+const ShapeList<Shape>& get(const PerimeterSplit& r) {
+    static_assert(I < 2, "PerimeterSplit unpacks into (inside, outside)");
+    if constexpr (I == 0) {
+        return r.inside;
+    } else {
+        return r.outside;
+    }
+}
+
 template <std::size_t I>
 const ShapeList<Shape>& get(const SplitResult& r) {
     static_assert(I < 2, "SplitResult unpacks into (top, bottom)");
@@ -1771,6 +1929,12 @@ ShapeList<typename T::topo_type> operator*(const Plane& plane, const std::vector
 
 template <>
 struct std::tuple_size<build123d::SplitResult> : std::integral_constant<std::size_t, 2> {};
+template <std::size_t I>
+struct std::tuple_element<I, build123d::PerimeterSplit> {
+    using type = const build123d::ShapeList<build123d::Shape>;
+};
+template <>
+struct std::tuple_size<build123d::PerimeterSplit> : std::integral_constant<std::size_t, 2> {};
 template <std::size_t I>
 struct std::tuple_element<I, build123d::SplitResult> {
     using type = const build123d::ShapeList<build123d::Shape>;

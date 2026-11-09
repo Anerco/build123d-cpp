@@ -862,6 +862,254 @@ COMPARE_CASES {
                         raises([] { Color::categorical_set(3, -1); })});
     });
 
+    // ---- 11: missing topology members
+    add_value("core_shape_members11", [] {
+        const Part box = Box(2, 2, 2);
+        const auto distances = box.distances({Pos(5, 0, 0) * Box(1, 1, 1), Pos(0, 0, 3) * Sphere(0.5), Box(1, 1, 1)});
+        Part labeled = Box(1, 1, 1);
+        labeled.label = "src";
+        labeled.color = Color("red");
+        Part target = Cylinder(1, 1);
+        labeled.copy_attributes_to(target, {"_color"});
+        Part target2 = Cylinder(1, 1);
+        target2.label = "keep";
+        labeled.copy_attributes_to(target2);
+        return V::list({V::list_of(distances), V(box.entities(ShapeType::FACE).size()),
+                        V(box.entities(ShapeType::EDGE).size()), V(box.entities(ShapeType::VERTEX).size()),
+                        V(Shape::as_shape(Vector(1, 2, 3)).shape_type() == ShapeType::VERTEX),
+                        V(Shape::as_shape(Axis::X).shape_type() == ShapeType::EDGE),
+                        V(Shape::as_shape(Plane::XY).shape_type() == ShapeType::FACE), V(target.label),
+                        V(target.color.has_value()), V(target2.label), V(target2.color.has_value())});
+    });
+    add_value("core_positions_deflection", [] {
+        const Edge spline = Edge::make_spline({{0, 0, 0}, {3, 2, 0}, {6, -1, 1}, {9, 0, 0}});
+        const Edge circle = Edge::make_circle(5);
+        const Wire wire = Wire::make_polygon({{0, 0, 0}, {5, 0, 0}, {5, 5, 0}}, false);
+        const auto summary = [](const std::vector<Vector>& pts) {
+            Vector sum;
+            for (const auto& p : pts) sum += p;
+            return V::list({V(pts.size()), V(sum), pts.empty() ? V() : V(pts.front()), pts.empty() ? V() : V(pts.back())});
+        };
+        bool missing = false;
+        try {
+            (void)spline.positions(PositionsOptions{});
+        } catch (const std::invalid_argument&) {
+            missing = true;
+        }
+        return V::list({summary(spline.positions({.deflection = 0.01})), summary(circle.positions({.deflection = 0.05})),
+                        summary(wire.positions({.deflection = 0.1})),
+                        summary(spline.positions({.distances = std::vector<double>{0, 2, 4}, .position_mode = PositionMode::LENGTH})),
+                        V(missing)});
+    });
+    add_value("core_curvature_comb", [] {
+        const Edge spline = Edge::make_spline({{0, 0, 0}, {3, 2, 0}, {6, -1, 0}, {9, 0, 0}});
+        const Wire ring(Edge::make_circle(4));
+        bool not_xy = false;
+        try {
+            (void)Edge::make_circle(1, Plane::XZ).curvature_comb();
+        } catch (const std::invalid_argument&) {
+            not_xy = true;
+        }
+        return V::list({describe(spline.curvature_comb(20)), describe(ring.curvature_comb(12, 1.0)),
+                        V(Edge::make_line({0, 0}, {5, 0}).curvature_comb().size()), V(not_xy)});
+    });
+    add_value("core_edge_members11", [] {
+        const Edge arc = Edge::make_circle(5, Plane::XY, 0, 270);
+        const Edge spline = Edge::make_spline({{0, 0, 0}, {3, 3, 0}, {6, 0, 0}, {9, 3, 0}});
+        std::vector<V> locs;
+        for (const auto& l : spline.distribute_locations(4, 0.1, 0.9)) locs.push_back(loc_v(l));
+        std::vector<V> flat;
+        for (const auto& l : arc.distribute_locations(3, 0, 1, true)) flat.push_back(loc_v(l));
+        bool few = false;
+        try {
+            (void)arc.distribute_locations(1);
+        } catch (const std::invalid_argument&) {
+            few = true;
+        }
+        const Edge loop = Edge::make_spline({{0, 0, 0}, {4, 4, 0}, {4, 0, 0}, {0, 4, 0}});
+        return V::list({V::list(locs), V::list(flat), V(few), V::list_of(arc.find_tangent(180)),
+                        V::list_of(Edge::make_circle(3).find_tangent(45)), V::list_of(spline.find_tangent(0)),
+                        V::list_of(Edge::make_line({0, 0}, {1, 1}).find_tangent(45)),
+                        V::list_of(Edge::make_line({0, 0}, {1, 1}).find_tangent(10)),
+                        describe(std::vector<Edge>{arc.trim(Vector(5, 0, 0), Vector(-5, 0, 0)), arc.trim(0.1, Vector(0, 5, 0)),
+                                                   arc.trim_to_length(Vector(0, 5, 0), 3)}),
+                        V::list_of(loop.find_intersection_points()),
+                        V::list_of(spline.find_intersection_points(Edge::make_line({0, 1.5}, {9, 1.5}))),
+                        V::list_of(spline.find_intersection_points(Axis({0, 1}, {1, 0})))});
+    });
+    add_value("core_wire_members11", [] {
+        const Wire wire = Wire::make_polygon({{0, 0, 0}, {4, 0, 0}, {4, 3, 0}, {0, 3, 0}}, false);
+        const Wire twin = Wire::make_polygon({{0, 0, 0}, {4, 0, 0}, {4, 3, 0}, {0, 3, 0}}, false);
+        const Wire other = Wire::make_polygon({{0, 0, 0}, {4, 0, 0}, {4, 3.5, 0}}, false);
+        const auto edges = wire.edges();
+        const auto [first, second] = Wire::order_chamfer_edges(edges[1], {edges[0], edges[1]});
+        bool not_in = false;
+        try {
+            (void)Wire::order_chamfer_edges(edges[2], {edges[0], edges[1]});
+        } catch (const std::invalid_argument&) {
+            not_in = true;
+        }
+        return V::list({describe(wire.trim(0.2, 0.7).edges()), describe(wire.trim(0.7, 0.2).edges()),
+                        describe(wire.trim(Vector(1, 0, 0), Vector(4, 2, 0)).edges()), describe(wire.trim(0.0, Vector(2, 3, 0)).edges()),
+                        V(wire.geom_equal(twin)), V(wire.geom_equal(other)), V(wire.param_at(0.0)), V(wire.param_at(0.5)),
+                        V(wire.param_at(1.0)), V(first.is_same(edges[1])), V(second.is_same(edges[0])), V(not_in)});
+    });
+    add_value("core_face_members11", [] {
+        const auto torus = Torus(5, 1).faces()[0];
+        const auto cyl_face = Cylinder(2, 4).faces().filter_by(GeomType::CYLINDER)[0];
+        const auto cone_face = Cone(2, 1, 3).faces().filter_by(GeomType::CONE)[0];
+        const auto r = torus.radii();
+        const auto plain = Face::make_rect(2, 2).radii();
+        std::vector<ShapeList<Face>> sewn = Face::sew_faces(
+            {Face::make_rect(1, 1), Face::make_rect(1, 1, Plane(Vector(1, 0, 0))), Face::make_rect(1, 1, Plane(Vector(5, 0, 0)))});
+        std::vector<double> group_sizes;
+        for (const auto& g : sewn) group_sizes.push_back(static_cast<double>(g.size()));
+        std::sort(group_sizes.begin(), group_sizes.end());
+        const V groups = V::list_of(group_sizes);
+        const Face patch = Face::make_surface_patch({}, Wire::make_polygon({{0, 0, 0}, {4, 0, 1}, {4, 4, 0}, {0, 4, 1}}).edges(),
+                                                    {Vector(2, 2, 1.5)});
+        const Part base = Box(4, 4, 2, Align::MIN);
+        const Face top = base.faces().sort_by(Axis::Z)[-1];
+        const Face side = base.faces().sort_by(Axis::X)[0];
+        const Face filled = Face::make_surface_patch({{top.edges().sort_by(Axis::X)[0], top, ContinuityLevel::C0}},
+                                                     {}, {Vector(-1, 2, 3)});
+        return V::list({r ? V::list({V(r->first), V(r->second)}) : V(), plain ? V(true) : V(),
+                        describe(cyl_face.seams()), V(cone_face.semi_angle() ? V(*cone_face.semi_angle()) : V()),
+                        V(Face::make_rect(1, 1).semi_angle().has_value()), describe(std::vector<Face>{cyl_face.uv_face(), Sphere(1).faces()[0].uv_face()}),
+                        describe(std::vector<Face>{Face::make_rect(2, 2).offset(3), side.offset(-1)}), groups,
+                        describe(std::vector<Face>{patch, filled}), V(patch.is_valid())});
+    });
+    add_value("core_axes_of_symmetry", [] {
+        const auto dirs = [](const Face& f) {
+            std::vector<std::array<double, 3>> rows;
+            for (const auto& a : f.axes_of_symmetry()) {
+                Vector d = a.direction;
+                rows.push_back({rnd(d.X, 5), rnd(d.Y, 5), rnd(d.Z, 5)});
+            }
+            std::sort(rows.begin(), rows.end());
+            std::vector<V> out;
+            for (const auto& r : rows) out.push_back(V::list({r[0], r[1], r[2]}));
+            return V::list(out);
+        };
+        const Sketch ell = Rectangle(4, 4) - Pos(1, 1) * Rectangle(2, 2);
+        const Sketch holed = Rectangle(6, 4) - Pos(1.5, 0) * Circle(0.5);
+        const Sketch slot = SlotOverall(8, 2);
+        return V::list({dirs(Face::make_rect(4, 2)), dirs(Face::make_rect(3, 3)), dirs(ell.faces()[0]), dirs(holed.faces()[0]),
+                        dirs(slot.faces()[0]), dirs(Triangle({.a = 3, .b = 4, .c = 5}).faces()[0])});
+    });
+    add_value("core_split_by_perimeter", [] {
+        const Face square = Face::make_rect(10, 10);
+        const Wire circle(Edge::make_circle(2));
+        const auto inside = square.split_by_perimeter(circle);
+        const auto outside = square.split_by_perimeter(circle, Keep::OUTSIDE);
+        const auto [in_both, out_both] = square.split_by_perimeter(circle, Keep::BOTH);
+        const Shell box_shell = Box(4, 4, 4).shells()[0];
+        const Wire band = Wire::make_rect(1, 1, Plane(Vector(0, 0, 2)));
+        const auto shell_inside = box_shell.split_by_perimeter(band);
+        bool open = false;
+        try {
+            (void)square.split_by_perimeter(Edge::make_line({0, 0}, {1, 0}));
+        } catch (const std::invalid_argument&) {
+            open = true;
+        }
+        return V::list({describe(inside), describe(outside), describe(in_both), describe(out_both), describe(shell_inside),
+                        V(open)});
+    });
+    add_value("core_wrap", [] {
+        const Face surface = Cylinder(10, 30).faces().filter_by(GeomType::CYLINDER)[0];
+        const Location loc(Plane(Vector(10, 0, 0), Vector(0, 1, 0), Vector(1, 0, 0)));
+        const Edge wrapped_edge = surface.wrap(Edge::make_line({0, 0}, {5, 0}), loc);
+        const Wire wrapped_wire = surface.wrap(Wire::make_polygon({{0, 0, 0}, {4, 0, 0}, {4, 3, 0}}, false), loc);
+        const Face wrapped_face = surface.wrap(Face::make_rect(4, 2), loc);
+        const auto faces = surface.wrap_faces({Face::make_rect(2, 1), Face::make_rect(1, 1, Plane(Vector(3, 0, 0)))},
+                                              Edge::make_circle(10), 0.0);
+        return V::list({V(wrapped_edge.length()), V(wrapped_edge.position_at(1)), V(wrapped_wire.length()),
+                        V(wrapped_wire.position_at(1)), V(wrapped_face.area()), V(wrapped_face.center()),
+                        V(wrapped_face.edges().size()), describe(faces)});
+    });
+    add("core_dprism_faces", [] {
+        const Solid box = Solid::make_box(10, 10, 10);
+        const Face top = box.faces().sort_by(Axis::Z)[-1];
+        return box.dprism(top, std::vector<Face>{Face::make_rect(4, 4, Plane(Vector(5, 5, 10)))}, 3.0, 5.0, std::nullopt,
+                          false, false);
+    });
+    add("core_dprism_wires", [] {
+        const Solid box = Solid::make_box(10, 10, 10);
+        return box.dprism(std::nullopt,
+                          std::vector<Wire>{Wire::make_rect(6, 6, Plane(Vector(5, 5, 10))), Wire::make_circle(1, Plane(Vector(5, 5, 10)))},
+                          std::nullopt, 0.0, std::nullopt, true, false);
+    });
+    add("core_hollow_open", [] {
+        const Solid box = Solid::make_box(10, 10, 10);
+        return box.hollow({box.faces().sort_by(Axis::Z)[-1]}, -1.0);
+    });
+    add("core_hollow_closed", [] { return Solid::make_box(10, 10, 10).hollow({}, 1.0, 1e-4, Kind::INTERSECTION); });
+    add("core_twist_wire", [] {
+        return Solid::extrude_linear_with_rotation(Wire::make_rect(4, 4), {0, 0, 0}, {0, 0, 10}, 45,
+                                                   {Wire::make_circle(1)});
+    });
+    add("core_revolve_wire", [] {
+        return Solid::revolve(Wire::make_rect(2, 2, Plane(Vector(5, 0, 0))), 270, Axis::Y,
+                              {Wire::make_circle(0.5, Plane(Vector(5, 0, 0)))});
+    });
+    add("core_sweep_inner", [] {
+        const Wire path(Edge::make_three_point_arc({0, 0, 0}, {5, 0, 5}, {10, 0, 0}));
+        return Solid::sweep(Wire::make_circle(2, Plane::YZ), path, {Wire::make_circle(1, Plane::YZ)});
+    });
+    add_value("core_compound_members11", [] {
+        const Shape a = Box(2, 2, 2);
+        const Shape b = Pos(1, 0, 0) * Box(2, 2, 2);
+        const Shape c = Pos(10, 0, 0) * Box(1, 1, 1);
+        const Compound overlapping = Compound::make_assembly({a, b, c});
+        const Compound apart = Compound::make_assembly({a, c});
+        const auto [hit, pair, volume] = overlapping.do_children_intersect();
+        const auto [miss, none, zero] = apart.do_children_intersect();
+        const Compound prism = Compound::extrude(Box(1, 1, 1).shells()[0], Vector(0, 0, 2));
+        const Curve triad = Compound::make_triad(10);
+        return V::list({V(hit), pair.first ? V(pair.first->center()) : V(), pair.second ? V(pair.second->center()) : V(),
+                        V(volume), V(miss), V(none.first.has_value()), V(zero), V(prism.faces().size()),
+                        V(prism.compounds().size()), describe(triad.edges().slice(0, 9))});
+    });
+    add_value("core_sort_wires_by_build_order", [] {
+        const auto groups = sort_wires_by_build_order(
+            {Wire::make_rect(10, 10), Wire::make_circle(1), Wire::make_rect(2, 2, Plane(Vector(3, 3, 0)))});
+        std::vector<V> out;
+        for (const auto& g : groups) out.push_back(describe(g));
+        return V::list({V(groups.size()), V::list(out), V(sort_wires_by_build_order({Wire::make_circle(1)}).size())});
+    });
+
+    // ---- copy_attributes_to: label, color and material survive like in build123d
+    add_value("core_attributes_survive", [] {
+        const auto attrs = [](const Shape& s) {
+            return V::list({V(s.label), s.color ? V::list_of(s.color->to_tuple()) : V(),
+                            s.material ? V(s.material->name()) : V()});
+        };
+        Part b = Box(1, 1, 1);
+        b.label = "box";
+        b.material = "aluminum";  // (build123d recolors from the material's PBR look; the color follows)
+        b.color = Color("red");
+        const Part s = Pos(0.5, 0, 0) * Sphere(0.6);
+        const Part far = Pos(5, 0, 0) * Box(1, 1, 1);
+        Sketch r = Rectangle(2, 2);
+        r.label = "rect";
+        r.color = Color("blue");
+        Curve l = Line({0, 0}, {1, 0});
+        l.label = "line";
+        Compound c(std::vector<Shape>{Box(1, 1, 1)});
+        c.label = "single";
+        c.color = Color("green");
+        Compound nested(std::vector<Shape>{Compound(std::vector<Shape>{Box(1, 1, 1)})});
+        nested.label = "nested";
+        return V::list({attrs(b + s), attrs(b + far), attrs(b - s), attrs(b & s), attrs(Pos(1, 0, 0) * b),
+                        attrs(b.moved(Location(Vector(1, 2, 3)))), attrs(b.located(Location(Vector(1, 2, 3)))),
+                        attrs(b.rotate(Axis::Z, 30)), attrs(b.translate(Vector(1, 0, 0))), attrs(b.mirror(Plane::YZ)),
+                        attrs(b.scale(2)), attrs(b.clean()), attrs(b.solid()), attrs(b.unwrap()), attrs(r + Circle(1.5)),
+                        attrs(r - Circle(0.5)), attrs(r & Circle(1.2)), attrs(l + Line({1, 0}, {1, 1})),
+                        attrs(c.unwrap()), attrs(c.unwrap(false)), attrs(nested.unwrap()), attrs(nested.unwrap(false)),
+                        attrs(b - std::vector<Part>{s, far}), attrs(fillet(b.edges().filter_by(Axis::Z), 0.1)),
+                        attrs(b.transform_geometry(Matrix())), attrs(-r.faces()[0])});
+    });
+
     add_value("core_geom_with_shape", [] {
         const Part b = Box(2, 2, 2);
         return V::list({describe(Vector(0, 0, 0) & b), describe(Axis::Z & b), describe(Plane::XY & b),
