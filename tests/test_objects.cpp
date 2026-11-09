@@ -296,3 +296,39 @@ TEST(objects_text_fonts) {
     CHECK_THROWS(Text("Hi", 5, {.single_line_width = 0}), std::invalid_argument);
     CHECK_THROWS(FontManager().register_font("/nonexistent/font.ttf"), std::runtime_error);
 }
+
+// ---------------------------------------------------------------------------
+// Drafting
+// ---------------------------------------------------------------------------
+
+static_assert(std::is_base_of_v<BaseSketchObject, ArrowHead>);
+static_assert(std::is_base_of_v<BaseSketchObject, Arrow>);
+static_assert(std::is_base_of_v<BaseSketchObject, DimensionLine>);
+static_assert(std::is_base_of_v<BaseSketchObject, ExtensionLine>);
+static_assert(std::is_base_of_v<BaseSketchObject, TechnicalDrawing>);
+static_assert(std::is_base_of_v<DraftOptions, Draft>);
+static_assert(std::is_same_v<decltype(Draft::_process_path(Edge())), std::variant<Edge, Wire>>);
+
+TEST(objects_drafting) {
+    const Draft draft({.font_size = 3, .line_width = 0.25});
+    CHECK(draft.font_size == 3 && draft.is_metric() && draft.fractional_precision == 64);
+    CHECK_THROWS(Draft({.fractional_precision = 12}), std::invalid_argument);
+
+    CHECK(!DimensionTolerance().has_value());
+    CHECK(DimensionTolerance(0.1).symmetric() == 0.1);
+    CHECK((DimensionTolerance{0.1, 0.2}.plus_minus() == std::make_pair(0.1, 0.2)));
+    CHECK(draft._number_with_units(3.14159, {0.01, 0.02}) == "3.14 +0.01 -0.02mm");
+
+    const DimensionLine d_line({{0, 0}, {50, 0}}, draft, {.label = "L", .arrows = {true, false}});
+    CHECK_NEAR(d_line.dimension, 50, 1e-12);
+    CHECK(!d_line.faces().empty());
+    const ExtensionLine e_line(Edge::make_line({0, 0}, {30, 0}), Vector(0, 8), draft);
+    CHECK_NEAR(e_line.dimension, 30, 1e-9);
+    CHECK(e_line.bounding_box().min.Y > 0);  // the side the offset points to
+
+    CHECK(Date(2024, 2, 29).isoformat() == "2024-02-29");
+    CHECK_THROWS(Date(2023, 2, 29), std::invalid_argument);
+    CHECK(TechnicalDrawing::page_sizes.at(PageSize::A4) == std::make_pair(297.0, 210.0));
+    const TechnicalDrawing page({.design_date = Date(2024, 1, 1), .page_size = PageSize::A5});
+    CHECK(page.faces().size() > 50);
+}

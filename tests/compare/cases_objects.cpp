@@ -210,6 +210,25 @@ void write_collection(const std::vector<std::string>& files, const std::string& 
 
 std::string temp_file(const std::string& name) { return (std::filesystem::temp_directory_path() / name).string(); }
 
+// ---- drafting: the settings of upstream test_drafting.py
+
+Draft metric() {
+    return Draft({.font_size = 3.0, .font = "Arial", .font_style = FontStyle::REGULAR, .head_type = HeadType::CURVED,
+                  .arrow_length = 3.0, .line_width = 0.25, .unit = Unit::MM, .number_display = NumberDisplay::DECIMAL,
+                  .display_units = true, .decimal_precision = 2, .fractional_precision = 64, .extension_gap = 2.0});
+}
+
+/// create_test_sketch's outer face.
+Sketch test_sketch_outer() {
+    const Polyline l1({{10, 20}, {-20, 20}, {-20, -20}, {10, -20}});
+    return make_face(l1 + RadiusArc(l1.position_at(0), l1.position_at(1), 25));
+}
+
+Sketch test_sketch_shape() {
+    const Sketch outer = test_sketch_outer();
+    return outer - offset(outer, -0.5);
+}
+
 /// (width, length) pairs drawn with random.seed(123456) as in upstream test_pack.py.
 const std::vector<std::pair<double, double>> random_boxes{
     {10, 1}, {6, 1},   {3, 2},   {9, 1},   {4, 8},   {16, 6}, {1, 17},  {5, 13},  {12, 2},  {6, 2},
@@ -1091,6 +1110,244 @@ COMPARE_CASES {
                      {.binormal = Wire(Edge::make_line({0, 0, 0}, {0, 0, 10}))});
     });
     compare::add("obj_ops_sweep_empty_list", [=] { return sweep(std::vector<Face>{}, z5()); });
+
+    // ---- drafting
+    compare::add_value("obj_draft_numbers", [] {
+        const Draft d2({.decimal_precision = 2});
+        const Draft whole({.decimal_precision = -1});
+        const Draft zero({.decimal_precision = 0});
+        const Draft inch({.unit = Unit::IN});
+        const Draft frac({.unit = Unit::IN, .number_display = NumberDisplay::FRACTION, .fractional_precision = 64});
+        const Draft frac16({.unit = Unit::IN, .number_display = NumberDisplay::FRACTION, .fractional_precision = 16});
+        const Draft no_units({.display_units = false, .decimal_precision = 3});
+        const Draft cm({.unit = Unit::CM});
+        return V::list({d2._number_with_units(3.141),
+                        d2._number_with_units(3.149),
+                        d2._number_with_units(0),
+                        d2._number_with_units(3.14, 0.01),
+                        d2._number_with_units(3.14, {0.01, 0}),
+                        d2._number_with_units(2.675),
+                        d2._number_with_units(0.125),
+                        d2._number_with_units(0.375),
+                        d2._number_with_units(-0.001),
+                        d2._number_with_units(-12.345678),
+                        d2._number_with_units(1e20),
+                        d2._number_with_units(3.14, {}, false),
+                        d2._number_with_units(3.14, 0.05, true),
+                        whole._number_with_units(314.1),
+                        whole._number_with_units(315.0),
+                        whole._number_with_units(325.0),
+                        zero._number_with_units(2.5),
+                        zero._number_with_units(3.5),
+                        zero._number_with_units(-0.4),
+                        inch._number_with_units((5.0 / 8) * IN),
+                        inch._number_with_units(10.0, {0.5, 0.25}),
+                        frac._number_with_units((5.0 / 8) * IN),
+                        frac._number_with_units(M_PI * IN),
+                        frac16._number_with_units(M_PI * IN),
+                        frac._number_with_units(2 * IN),
+                        frac._number_with_units(IN / 128),
+                        frac._number_with_units(3 * IN / 128),
+                        frac._number_with_units(-1.5 * IN),
+                        frac._number_with_units(0.999 * IN),
+                        frac._number_with_units(2.5 * IN, 0.125 * IN),
+                        no_units._number_with_units(7.0 / 3),
+                        cm._number_with_units(12.5),
+                        d2._round_to_str(1.005),
+                        zero._round_to_str(-0.5)});
+    });
+    compare::add_value("obj_draft_labels", [] {
+        const Draft d0({.decimal_precision = 0});
+        const Draft d2({.decimal_precision = 2});
+        const Edge arc1 = Edge::make_circle(100, Plane::XY, 0, 30);
+        const Wire arc_wire(std::vector<Edge>{Edge::make_line({10, -5}, {10, 0}), Edge::make_circle(10, Plane::XY, 0, 60)});
+        return V::list({d0._label_to_str(std::nullopt, arc1, true, {}),
+                        d2._label_to_str(std::nullopt, arc_wire, true, {}),
+                        d2._label_to_str(std::nullopt, Edge::make_circle(7, Plane::XY, 10, 123), true, {}),
+                        d2._label_to_str("Given", arc1, true, 0.1),
+                        d2._label_to_str(std::nullopt, Edge::make_line({0, 0}, {12.5, 0}), false, 0.1),
+                        d2._label_to_str(std::nullopt, Polyline({{0, 0}, {3, 0}, {3, 4}}), false, {0.2, 0.1})});
+    });
+    compare::add_value("obj_draft_label_angle_line", [] {
+        return V(Draft({.decimal_precision = 0})._label_to_str(std::nullopt, Edge::make_line({0, 0, 0}, {100, 0, 0}), true, 0));
+    });
+    compare::add_value("obj_draft_bad_precision", [] { return V(Draft({.fractional_precision = 37}).fractional_precision); });
+    compare::add_value("obj_draft_zero_precision", [] { return V(Draft({.fractional_precision = 0}).fractional_precision); });
+    compare::add_value("obj_draft_attrs", [] {
+        const Draft d({.font_size = 4, .unit = Unit::IN, .number_display = NumberDisplay::FRACTION, .fractional_precision = 32});
+        return V::list({d.font_size, d.font, "REGULAR", d.head_type == HeadType::CURVED ? "CURVED" : "?", d.arrow_length,
+                        d.line_width, d.pad_around_text, d.unit == Unit::IN ? "IN" : "?",
+                        d.number_display == NumberDisplay::FRACTION ? "FRACTION" : "?", d.display_units, d.decimal_precision,
+                        d.fractional_precision, d.extension_gap, d.is_metric(), Draft().is_metric(),
+                        Draft({.unit = Unit::M}).is_metric(), Draft::unit_LUT.at(true), Draft::unit_LUT.at(false)});
+    });
+    compare::add_value("obj_draft_paths", [] {
+        std::vector<V> out;
+        for (const PathDescriptor& path : std::vector<PathDescriptor>{
+                 PathDescriptor({{0, 0, 0}, {100, 0, 0}}), PathDescriptor({{0, 0}, {5, 0}, {5, 5}, {0, 9}}),
+                 Edge::make_line({1, 2}, {3, 4}), Polyline({{0, 0}, {1, 0}, {1, 1}})}) {
+            const auto p = Draft::_process_path(path);
+            std::visit([&](const auto& x) {
+                out.push_back(V::list({x.shape_type() == ShapeType::WIRE ? "Wire" : "Edge", x.length(), x.position_at(0),
+                                       x.position_at(1)}));
+            }, p);
+        }
+        return V::list(out);
+    });
+    compare::add_value("obj_draft_sketch_location", [] {
+        std::vector<V> out;
+        const auto add = [&](const Mixin1D& path, double u, bool flip) {
+            const Location loc = Draft::_sketch_location(path, u, flip);
+            out.push_back(V::list({loc.position(), loc.orientation()}));
+        };
+        add(Edge::make_line({0, 0}, {10, 0}), 0.5, false);
+        add(Edge::make_line({0, 0}, {10, 5}), 0.25, true);
+        add(Edge::make_circle(5, Plane::XY, 0, 180), 0.5, false);
+        add(Polyline({{0, 0}, {10, 0}, {10, 10}}), 0.75, true);
+        add(Edge::make_line({0, 0}, {10, 0}), -0.4, false);
+        add(Edge::make_line({0, 0}, {10, 0}), 1.3, true);
+        return V::list(out);
+    });
+    compare::add("obj_draft_arrowhead_curved", [] { return ArrowHead(10, HeadType::CURVED); });
+    compare::add("obj_draft_arrowhead_filleted", [] { return ArrowHead(10, HeadType::FILLETED); });
+    compare::add("obj_draft_arrowhead_straight", [] { return ArrowHead(10, HeadType::STRAIGHT); });
+    compare::add("obj_draft_arrowhead_rotated", [] { return ArrowHead(4, HeadType::FILLETED, 120); });
+    compare::add("obj_draft_arrow_start", [] { return Arrow(3, Edge::make_line({0, 0}, {20, 0}), 0.5); });
+    compare::add("obj_draft_arrow_end", [] { return Arrow(3, Edge::make_line({0, 0}, {20, 10}), 0.5, false); });
+    compare::add("obj_draft_arrow_wire", [] {
+        return Arrow(2, Polyline({{0, 0}, {10, 0}, {10, 10}}), 0.3, false, HeadType::STRAIGHT);
+    });
+    compare::add("obj_draft_arrow_arc", [] {
+        return Arrow(2, Edge::make_circle(10, Plane::XY, 0, 120), 0.4, true, HeadType::FILLETED);
+    });
+    compare::add("obj_draft_dim_two_points", [] { return DimensionLine({{0, 0, 0}, {100, 0, 0}}, metric()); });
+    compare::add("obj_draft_dim_three_points", [] { return DimensionLine({{0, 0, 0}, {50, 0, 0}, {50, 50, 0}}, metric()); });
+    compare::add("obj_draft_dim_edge", [] { return DimensionLine(Edge::make_line({0, 0}, {100, 0}), metric()); });
+    compare::add("obj_draft_dim_vertices", [] {
+        return DimensionLine(std::vector<Vertex>(Edge::make_line({0, 0}, {100, 0}).vertices()), metric());
+    });
+    compare::add("obj_draft_dim_label", [] { return DimensionLine({{0, 0, 0}, {100, 0, 0}}, metric(), {.label = "Test"}); });
+    compare::add("obj_draft_dim_outside_arrows", [] { return DimensionLine({{0, 0, 0}, {15, 0, 0}}, metric()); });
+    compare::add("obj_draft_dim_outside_label", [] { return DimensionLine({{0, 0, 0}, {5, 0, 0}}, metric()); });
+    compare::add("obj_draft_dim_single_outside", [] {
+        return DimensionLine({{0, 0, 0}, {5, 0, 0}}, metric(), {.arrows = {false, true}});
+    });
+    compare::add("obj_draft_dim_first_arrow", [] {
+        return DimensionLine({{0, 0, 0}, {40, 0, 0}}, metric(), {.arrows = {true, false}});
+    });
+    compare::add("obj_draft_dim_no_arrows", [] {
+        return DimensionLine({{0, 0, 0}, {5, 0, 0}}, metric(), {.arrows = {false, false}});
+    });
+    compare::add("obj_draft_dim_vertical", [] { return DimensionLine({{0, 0}, {0, 100}}, Draft()); });
+    compare::add("obj_draft_dim_reversed", [] { return DimensionLine({{60, 10}, {0, 10}}, metric()); });
+    compare::add("obj_draft_dim_diagonal", [] { return DimensionLine({{0, 0}, {30, -40}}, metric(), {.tolerance = 0.05}); });
+    compare::add("obj_draft_dim_tolerance_pair", [] {
+        return DimensionLine({{0, 0}, {80, 0}}, metric(), {.tolerance = {0.1, 0.2}});
+    });
+    compare::add("obj_draft_dim_arc_angle", [] {
+        return DimensionLine(Edge::make_circle(20, Plane::XY, 0, 75), metric(), {.label_angle = true});
+    });
+    compare::add("obj_draft_dim_wire", [] { return DimensionLine(Polyline({{0, 0}, {30, 0}, {30, 30}}), metric()); });
+    compare::add("obj_draft_dim_imperial", [] {
+        return DimensionLine({{0, 0}, {3 * IN, 0}}, Draft({.font_size = 5.0, .unit = Unit::IN, .number_display = NumberDisplay::FRACTION}));
+    });
+    compare::add("obj_draft_dim_avoid_sketch", [] {
+        return DimensionLine({{45, 45}, {-45, -45}}, metric(), {.sketch = Rectangle(100, 100) - Rectangle(90, 90)});
+    });
+    compare::add("obj_draft_dim_padding", [] {
+        return DimensionLine(Edge::make_line({0, 0}, {Text("Test", 3.0).bounding_box().size.X + 4, 0}), metric(),
+                             {.label = "Test", .arrows = {false, true}});
+    });
+    compare::add("obj_draft_dim_min_shaft", [] {
+        return DimensionLine(Edge::make_line({0, 0}, {Text("Test", 3.0).bounding_box().size.X + 7, 0}), metric(),
+                             {.label = "Test"});
+    });
+    compare::add("obj_draft_dim_singleline", [] {
+        return DimensionLine({{0, 0}, {50, 0}}, Draft({.font = "singleline", .head_type = HeadType::STRAIGHT}));
+    });
+    compare::add("obj_draft_ext_min_x", [] { return ExtensionLine(test_sketch_outer().edges().sort_by(Axis::X)[0], 10, metric()); });
+    compare::add("obj_draft_ext_zero", [] { return ExtensionLine(test_sketch_outer().edges().sort_by(Axis::X)[0], 0, metric()); });
+    compare::add("obj_draft_ext_sketch", [] {
+        return ExtensionLine(test_sketch_outer().edges().sort_by(Axis::Y)[0], 10, metric(), {.sketch = test_sketch_shape()});
+    });
+    const auto diagonal = [] { return Edge::make_line({100, 100}, {200, 200}); };
+    compare::add("obj_draft_ext_vertical_out", [=] {
+        return ExtensionLine(diagonal(), -10, metric(), {.measurement_direction = Vector(0, 1, 0)});
+    });
+    compare::add("obj_draft_ext_vertical_in", [=] {
+        return ExtensionLine(diagonal(), 10, metric(), {.measurement_direction = Vector(0, 1, 0)});
+    });
+    compare::add("obj_draft_ext_otherside", [=] {
+        return ExtensionLine(diagonal(), 110, metric(), {.measurement_direction = Vector(0, 1, 0)});
+    });
+    compare::add("obj_draft_ext_vertical_line", [] {
+        return ExtensionLine(Edge::make_line({100, 100}, {100, 200}), 10, metric(), {.measurement_direction = Vector(0, 1, 0)});
+    });
+    compare::add("obj_draft_ext_horizontal", [=] {
+        return ExtensionLine(diagonal(), 10, metric(), {.measurement_direction = Vector(1, 0, 0)});
+    });
+    compare::add("obj_draft_ext_angled", [=] {
+        return ExtensionLine(diagonal(), 10, metric(), {.measurement_direction = Vector(1, 1, 0)});
+    });
+    compare::add("obj_draft_ext_half_circle", [] {
+        return ExtensionLine(Edge::make_circle(50, Plane::XY, 0, 180), -10, metric(), {.measurement_direction = Vector(1, 0, 0)});
+    });
+    compare::add("obj_draft_ext_full_circle", [] {
+        return ExtensionLine(Edge::make_circle(50), 10, metric(), {.measurement_direction = Vector(0, 1, 0)});
+    });
+    compare::add("obj_draft_ext_vector_above", [] { return ExtensionLine(Edge::make_line({0, 0}, {40, 0}), Vector(0, 10), metric()); });
+    compare::add("obj_draft_ext_vector_below", [] { return ExtensionLine(Edge::make_line({0, 0}, {40, 0}), Vector(0, -10), metric()); });
+    compare::add("obj_draft_ext_vector_right", [] { return ExtensionLine(Edge::make_line({0, 0}, {0, 40}), Vector(10, 0), metric()); });
+    compare::add("obj_draft_ext_vector_left", [] { return ExtensionLine(Edge::make_line({0, 0}, {0, 40}), Vector(-10, 0), metric()); });
+    compare::add("obj_draft_ext_scalar_up", [] { return ExtensionLine(Edge::make_line({0, 0}, {40, 0}), -10, metric()); });
+    compare::add("obj_draft_ext_vector_infers", [] { return ExtensionLine(Edge::make_line({0, 0}, {10, 10}), Vector(0, 5), metric()); });
+    compare::add("obj_draft_ext_vector_measure", [] {
+        return ExtensionLine(Edge::make_line({0, 0}, {10, 10}), Vector(0, 5), metric(), {.measurement_direction = Vector(1, 0, 0)});
+    });
+    compare::add("obj_draft_ext_vector_parallel", [] {
+        return ExtensionLine(Edge::make_line({0, 0}, {10, 10}), Vector(5, 0), metric(), {.measurement_direction = Vector(1, 0, 0)});
+    });
+    compare::add("obj_draft_ext_vector_zero", [] { return ExtensionLine(Edge::make_line({0, 0}, {40, 0}), Vector(0, 0, 0), metric()); });
+    compare::add("obj_draft_ext_vector_out_of_plane", [] {
+        return ExtensionLine(Edge::make_line({0, 0}, {40, 0}), Vector(0, 10, 0.1), metric());
+    });
+    compare::add("obj_draft_ext_direction_out_of_plane", [] {
+        return ExtensionLine(Edge::make_line({0, 0}, {40, 40}), Vector(0, 10), metric(), {.measurement_direction = Vector(1, 0, 0.1)});
+    });
+    compare::add("obj_draft_ext_direction_zero", [] {
+        return ExtensionLine(Edge::make_line({0, 0}, {40, 40}), 10, metric(), {.measurement_direction = Vector(0, 0, 0)});
+    });
+    compare::add("obj_draft_ext_same_ends", [] { return ExtensionLine(Edge::make_circle(5), 3, metric()); });
+    compare::add("obj_draft_ext_points_label", [] {
+        return ExtensionLine({{0, 0}, {20, 0}, {20, 15}}, 8, metric(), {.label = "W", .arrows = {true, false}});
+    });
+    compare::add("obj_draft_ext_tolerance", [] {
+        return ExtensionLine({{0, 0}, {60, 0}}, -12, metric(), {.tolerance = {0.1, 0.05}});
+    });
+    compare::add_value("obj_draft_dimension_values", [=] {
+        const Draft d = metric();
+        return V::list({DimensionLine({{0, 0, 0}, {100, 0, 0}}, d).dimension, DimensionLine({{0, 0, 0}, {15, 0, 0}}, d).dimension,
+                        DimensionLine(Edge::make_circle(20, Plane::XY, 0, 75), d, {.label_angle = true}).dimension,
+                        ExtensionLine(diagonal(), -10, d, {.measurement_direction = Vector(0, 1, 0)}).dimension,
+                        ExtensionLine(diagonal(), 10, d, {.measurement_direction = Vector(1, 1, 0)}).dimension,
+                        ExtensionLine(Edge::make_circle(50, Plane::XY, 0, 180), -10, d, {.measurement_direction = Vector(1, 0, 0)})
+                            .dimension,
+                        ExtensionLine(Edge::make_line({0, 0}, {10, 10}), Vector(0, 5), d).dimension});
+    });
+    compare::add("obj_draft_drawing_a4", [] { return TechnicalDrawing({.design_date = Date(2024, 3, 15)}); });
+    compare::add("obj_draft_drawing_a3", [] {
+        return TechnicalDrawing({.designed_by = "me", .design_date = Date(2023, 11, 9), .page_size = PageSize::A3,
+                                 .title = "Bracket", .sub_title = "Left side", .drawing_number = "B-7", .sheet_number = 2,
+                                 .drawing_scale = 0.5, .nominal_text_size = 8, .line_width = 0.35});
+    });
+    compare::add("obj_draft_drawing_letter", [] {
+        return TechnicalDrawing({.design_date = Date(2020, 1, 2), .page_size = PageSize::LETTER, .sheet_number = 12});
+    });
+    compare::add_value("obj_draft_date", [] {
+        return V::list({Date(2024, 3, 15).isoformat(), Date(1, 1, 1).isoformat(), Date(2024, 2, 29).isoformat()});
+    });
+    compare::add_value("obj_draft_bad_date", [] { return V(Date(2023, 2, 29).isoformat()); });
+    compare::add_value("obj_draft_today", [] { return V(Date::today().isoformat()); });
 
     // ---- text and fonts (the cases that change the font database last)
     compare::add_value("obj_text_available_fonts", [] { return font_info_values(available_fonts()); });

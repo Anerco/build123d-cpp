@@ -1,13 +1,16 @@
 """Python twins of cases_objects.cpp (objects, operations, text and drafting)."""
 
+import math
 import os
 import tempfile
+from datetime import date
 from math import cos, exp, sin, sqrt
 
 from scipy.optimize import minimize, minimize_scalar
 from scipy.spatial import Voronoi
 
 from build123d import *  # noqa: F403
+from build123d.drafting import ArrowHead, DimensionLine, Draft, ExtensionLine, TechnicalDrawing
 from build123d.pack_utils import _pack2d
 from build123d.text import FONT_ASPECT, FontInfo, FontManager
 from OCP.TCollection import TCollection_AsciiString
@@ -545,6 +548,150 @@ def obj_text_system_fonts_rebuilt():
     manager.register_system_fonts()
     manager.__init__()
     return font_info_values(manager.available_fonts())
+
+
+# drafting: the settings of upstream test_drafting.py
+METRIC = dict(
+    font_size=3.0, font="Arial", font_style=FontStyle.REGULAR, head_type=HeadType.CURVED, arrow_length=3.0,
+    line_width=0.25, unit=Unit.MM, number_display=NumberDisplay.DECIMAL, display_units=True,
+    decimal_precision=2, fractional_precision=64, extension_gap=2.0,
+)  # fmt: skip
+
+
+def metric():
+    return Draft(**METRIC)
+
+
+def test_sketch_outer():
+    """create_test_sketch's outer face."""
+    l1 = Polyline((10, 20), (-20, 20), (-20, -20), (10, -20))
+    return make_face(l1 + RadiusArc(l1 @ 0, l1 @ 1, 25))
+
+
+def test_sketch_shape():
+    outer = test_sketch_outer()
+    return outer - offset(outer, -0.5)
+
+
+def obj_draft_numbers():
+    d2 = Draft(decimal_precision=2)
+    whole = Draft(decimal_precision=-1)
+    zero = Draft(decimal_precision=0)
+    inch = Draft(unit=Unit.IN)
+    frac = Draft(unit=Unit.IN, number_display=NumberDisplay.FRACTION, fractional_precision=64)
+    frac16 = Draft(unit=Unit.IN, number_display=NumberDisplay.FRACTION, fractional_precision=16)
+    no_units = Draft(display_units=False, decimal_precision=3)
+    cm = Draft(unit=Unit.CM)
+    return V(
+        [
+            d2._number_with_units(3.141),
+            d2._number_with_units(3.149),
+            d2._number_with_units(0),
+            d2._number_with_units(3.14, tolerance=0.01),
+            d2._number_with_units(3.14, tolerance=(0.01, 0)),
+            d2._number_with_units(2.675),
+            d2._number_with_units(0.125),
+            d2._number_with_units(0.375),
+            d2._number_with_units(-0.001),
+            d2._number_with_units(-12.345678),
+            d2._number_with_units(1e20),
+            d2._number_with_units(3.14, display_units=False),
+            d2._number_with_units(3.14, tolerance=0.05, display_units=True),
+            whole._number_with_units(314.1),
+            whole._number_with_units(315.0),
+            whole._number_with_units(325.0),
+            zero._number_with_units(2.5),
+            zero._number_with_units(3.5),
+            zero._number_with_units(-0.4),
+            inch._number_with_units((5 / 8) * IN),
+            inch._number_with_units(10.0, tolerance=(0.5, 0.25)),
+            frac._number_with_units((5 / 8) * IN),
+            frac._number_with_units(math.pi * IN),
+            frac16._number_with_units(math.pi * IN),
+            frac._number_with_units(2 * IN),
+            frac._number_with_units(IN / 128),
+            frac._number_with_units(3 * IN / 128),
+            frac._number_with_units(-1.5 * IN),
+            frac._number_with_units(0.999 * IN),
+            frac._number_with_units(2.5 * IN, tolerance=0.125 * IN),
+            no_units._number_with_units(7.0 / 3),
+            cm._number_with_units(12.5),
+            d2._round_to_str(1.005),
+            zero._round_to_str(-0.5),
+        ]
+    )
+
+
+def obj_draft_labels():
+    d0 = Draft(decimal_precision=0)
+    d2 = Draft(decimal_precision=2)
+    arc1 = Edge.make_circle(100, start_angle=0, end_angle=30)
+    arc_wire = Wire([Edge.make_line((10, -5), (10, 0)), Edge.make_circle(10, start_angle=0, end_angle=60)])
+    return V(
+        [
+            d0._label_to_str(None, arc1, True, None),
+            d2._label_to_str(None, arc_wire, True, None),
+            d2._label_to_str(None, Edge.make_circle(7, start_angle=10, end_angle=123), True, None),
+            d2._label_to_str("Given", arc1, True, 0.1),
+            d2._label_to_str(None, Edge.make_line((0, 0), (12.5, 0)), False, 0.1),
+            d2._label_to_str(None, Polyline((0, 0), (3, 0), (3, 4)), False, (0.2, 0.1)),
+        ]
+    )
+
+
+def obj_draft_attrs():
+    d = Draft(font_size=4, unit=Unit.IN, number_display=NumberDisplay.FRACTION, fractional_precision=32)
+    return V(
+        [
+            d.font_size, d.font, d.font_style, d.head_type, d.arrow_length, d.line_width, d.pad_around_text,
+            d.unit, d.number_display, d.display_units, d.decimal_precision, d.fractional_precision,
+            d.extension_gap, d.is_metric, Draft().is_metric, Draft(unit=Unit.M).is_metric,
+            Draft.unit_LUT[True], Draft.unit_LUT[False],
+        ]
+    )  # fmt: skip
+
+
+def obj_draft_paths():
+    out = []
+    for path in [[(0, 0, 0), (100, 0, 0)], [(0, 0), (5, 0), (5, 5), (0, 9)], Edge.make_line((1, 2), (3, 4)), Polyline((0, 0), (1, 0), (1, 1))]:
+        p = Draft._process_path(path)
+        out.append(["Wire" if isinstance(p, Wire) else "Edge", p.length, p @ 0, p @ 1])
+    return V(out)
+
+
+def obj_draft_sketch_location():
+    out = []
+    for path, u, flip in [
+        (Edge.make_line((0, 0), (10, 0)), 0.5, False),
+        (Edge.make_line((0, 0), (10, 5)), 0.25, True),
+        (Edge.make_circle(5, start_angle=0, end_angle=180), 0.5, False),
+        (Polyline((0, 0), (10, 0), (10, 10)), 0.75, True),
+        (Edge.make_line((0, 0), (10, 0)), -0.4, False),
+        (Edge.make_line((0, 0), (10, 0)), 1.3, True),
+    ]:
+        loc = Draft._sketch_location(path, u, flip)
+        out.append([loc.position, loc.orientation])
+    return V(out)
+
+
+def obj_draft_dimension_values():
+    d = metric()
+    lines = [
+        DimensionLine([(0, 0, 0), (100, 0, 0)], draft=d),
+        DimensionLine([(0, 0, 0), (15, 0, 0)], draft=d),
+        DimensionLine(Edge.make_circle(20, start_angle=0, end_angle=75), draft=d, label_angle=True),
+    ]
+    exts = [
+        ExtensionLine(border=Edge.make_line((100, 100), (200, 200)), offset=-10, draft=d, measurement_direction=Vector(0, 1, 0)),
+        ExtensionLine(border=Edge.make_line((100, 100), (200, 200)), offset=10, draft=d, measurement_direction=Vector(1, 1, 0)),
+        ExtensionLine(border=Edge.make_circle(50, start_angle=0, end_angle=180), offset=-10, draft=d, measurement_direction=Vector(1, 0, 0)),
+        ExtensionLine(border=Edge.make_line((0, 0), (10, 10)), offset=(0, 5), draft=d),
+    ]
+    return V([x.dimension for x in lines + exts])
+
+
+def obj_draft_date():
+    return V([date(2024, 3, 15).isoformat(), date(1, 1, 1).isoformat(), date(2024, 2, 29).isoformat()])
 
 
 def obj_full_round_flipped():
@@ -1155,6 +1302,118 @@ CASES = {
         Pos(5, 0, 0) * Rectangle(1, 1), Edge.make_helix(5, 10, 5), binormal=Edge.make_line((0, 0, 0), (0, 0, 10))
     ),
     "obj_ops_sweep_empty_list": lambda: sweep([], Edge.make_line((0, 0, 0), (0, 0, 5))),
+    # drafting
+    "obj_draft_numbers": obj_draft_numbers,
+    "obj_draft_labels": obj_draft_labels,
+    "obj_draft_label_angle_line": lambda: V(
+        Draft(decimal_precision=0)._label_to_str(None, Edge.make_line((0, 0, 0), (100, 0, 0)), True, 0)
+    ),
+    "obj_draft_bad_precision": lambda: V(Draft(fractional_precision=37).fractional_precision),
+    "obj_draft_zero_precision": lambda: V(Draft(fractional_precision=0).fractional_precision),
+    "obj_draft_attrs": obj_draft_attrs,
+    "obj_draft_paths": obj_draft_paths,
+    "obj_draft_sketch_location": obj_draft_sketch_location,
+    "obj_draft_arrowhead_curved": lambda: ArrowHead(10, HeadType.CURVED),
+    "obj_draft_arrowhead_filleted": lambda: ArrowHead(10, HeadType.FILLETED),
+    "obj_draft_arrowhead_straight": lambda: ArrowHead(10, HeadType.STRAIGHT),
+    "obj_draft_arrowhead_rotated": lambda: ArrowHead(4, HeadType.FILLETED, rotation=120),
+    "obj_draft_arrow_start": lambda: Arrow(3, Edge.make_line((0, 0), (20, 0)), 0.5),
+    "obj_draft_arrow_end": lambda: Arrow(3, Edge.make_line((0, 0), (20, 10)), 0.5, head_at_start=False),
+    "obj_draft_arrow_wire": lambda: Arrow(2, Polyline((0, 0), (10, 0), (10, 10)), 0.3, False, HeadType.STRAIGHT),
+    "obj_draft_arrow_arc": lambda: Arrow(2, Edge.make_circle(10, start_angle=0, end_angle=120), 0.4, True, HeadType.FILLETED),
+    "obj_draft_dim_two_points": lambda: DimensionLine([(0, 0, 0), (100, 0, 0)], draft=metric()),
+    "obj_draft_dim_three_points": lambda: DimensionLine([(0, 0, 0), (50, 0, 0), (50, 50, 0)], draft=metric()),
+    "obj_draft_dim_edge": lambda: DimensionLine(Edge.make_line((0, 0), (100, 0)), draft=metric()),
+    "obj_draft_dim_vertices": lambda: DimensionLine(Edge.make_line((0, 0), (100, 0)).vertices(), draft=metric()),
+    "obj_draft_dim_label": lambda: DimensionLine([(0, 0, 0), (100, 0, 0)], label="Test", draft=metric()),
+    "obj_draft_dim_outside_arrows": lambda: DimensionLine([(0, 0, 0), (15, 0, 0)], draft=metric()),
+    "obj_draft_dim_outside_label": lambda: DimensionLine([(0, 0, 0), (5, 0, 0)], draft=metric()),
+    "obj_draft_dim_single_outside": lambda: DimensionLine([(0, 0, 0), (5, 0, 0)], draft=metric(), arrows=(False, True)),
+    "obj_draft_dim_first_arrow": lambda: DimensionLine([(0, 0, 0), (40, 0, 0)], draft=metric(), arrows=(True, False)),
+    "obj_draft_dim_no_arrows": lambda: DimensionLine([(0, 0, 0), (5, 0, 0)], draft=metric(), arrows=(False, False)),
+    "obj_draft_dim_vertical": lambda: DimensionLine([(0, 0), (0, 100)], Draft()),
+    "obj_draft_dim_reversed": lambda: DimensionLine([(60, 10), (0, 10)], metric()),
+    "obj_draft_dim_diagonal": lambda: DimensionLine([(0, 0), (30, -40)], metric(), tolerance=0.05),
+    "obj_draft_dim_tolerance_pair": lambda: DimensionLine([(0, 0), (80, 0)], metric(), tolerance=(0.1, 0.2)),
+    "obj_draft_dim_arc_angle": lambda: DimensionLine(Edge.make_circle(20, start_angle=0, end_angle=75), metric(), label_angle=True),
+    "obj_draft_dim_wire": lambda: DimensionLine(Polyline((0, 0), (30, 0), (30, 30)), metric()),
+    "obj_draft_dim_imperial": lambda: DimensionLine([(0, 0), (3 * IN, 0)], Draft(font_size=5.0, unit=Unit.IN, number_display=NumberDisplay.FRACTION)),
+    "obj_draft_dim_avoid_sketch": lambda: DimensionLine(
+        [(45, 45), (-45, -45)], draft=metric(), sketch=Rectangle(100, 100) - Rectangle(90, 90)
+    ),
+    "obj_draft_dim_padding": lambda: DimensionLine(
+        Edge.make_line((0, 0), (Text("Test", 3.0).bounding_box().size.X + 4, 0)), draft=metric(), label="Test", arrows=(False, True)
+    ),
+    "obj_draft_dim_min_shaft": lambda: DimensionLine(
+        Edge.make_line((0, 0), (Text("Test", 3.0).bounding_box().size.X + 7, 0)), draft=metric(), label="Test"
+    ),
+    "obj_draft_dim_singleline": lambda: DimensionLine([(0, 0), (50, 0)], Draft(font="singleline", head_type=HeadType.STRAIGHT)),
+    "obj_draft_ext_min_x": lambda: ExtensionLine(test_sketch_outer().edges().sort_by(Axis.X)[0], offset=10, draft=metric()),
+    "obj_draft_ext_zero": lambda: ExtensionLine(test_sketch_outer().edges().sort_by(Axis.X)[0], offset=0, draft=metric()),
+    "obj_draft_ext_sketch": lambda: ExtensionLine(
+        test_sketch_outer().edges().sort_by(Axis.Y)[0], offset=10, draft=metric(), sketch=test_sketch_shape()
+    ),
+    "obj_draft_ext_vertical_out": lambda: ExtensionLine(
+        border=Edge.make_line((100, 100), (200, 200)), offset=-10, draft=metric(), measurement_direction=(0, 1, 0)
+    ),
+    "obj_draft_ext_vertical_in": lambda: ExtensionLine(
+        border=Edge.make_line((100, 100), (200, 200)), offset=10, draft=metric(), measurement_direction=Vector(0, 1, 0)
+    ),
+    "obj_draft_ext_otherside": lambda: ExtensionLine(
+        border=Edge.make_line((100, 100), (200, 200)), offset=110, draft=metric(), measurement_direction=Vector(0, 1, 0)
+    ),
+    "obj_draft_ext_vertical_line": lambda: ExtensionLine(
+        border=Edge.make_line((100, 100), (100, 200)), offset=10, draft=metric(), measurement_direction=Vector(0, 1, 0)
+    ),
+    "obj_draft_ext_horizontal": lambda: ExtensionLine(
+        border=Edge.make_line((100, 100), (200, 200)), offset=10, draft=metric(), measurement_direction=Vector(1, 0, 0)
+    ),
+    "obj_draft_ext_angled": lambda: ExtensionLine(
+        border=Edge.make_line((100, 100), (200, 200)), offset=10, draft=metric(), measurement_direction=Vector(1, 1, 0)
+    ),
+    "obj_draft_ext_half_circle": lambda: ExtensionLine(
+        border=Edge.make_circle(50, start_angle=0, end_angle=180), offset=-10, draft=metric(), measurement_direction=Vector(1, 0, 0)
+    ),
+    "obj_draft_ext_full_circle": lambda: ExtensionLine(
+        border=Edge.make_circle(50), offset=10, draft=metric(), measurement_direction=Vector(0, 1, 0)
+    ),
+    "obj_draft_ext_vector_above": lambda: ExtensionLine(border=Edge.make_line((0, 0), (40, 0)), offset=(0, 10), draft=metric()),
+    "obj_draft_ext_vector_below": lambda: ExtensionLine(border=Edge.make_line((0, 0), (40, 0)), offset=(0, -10), draft=metric()),
+    "obj_draft_ext_vector_right": lambda: ExtensionLine(border=Edge.make_line((0, 0), (0, 40)), offset=(10, 0), draft=metric()),
+    "obj_draft_ext_vector_left": lambda: ExtensionLine(border=Edge.make_line((0, 0), (0, 40)), offset=(-10, 0), draft=metric()),
+    "obj_draft_ext_scalar_up": lambda: ExtensionLine(border=Edge.make_line((0, 0), (40, 0)), offset=-10, draft=metric()),
+    "obj_draft_ext_vector_infers": lambda: ExtensionLine(border=Edge.make_line((0, 0), (10, 10)), offset=(0, 5), draft=metric()),
+    "obj_draft_ext_vector_measure": lambda: ExtensionLine(
+        border=Edge.make_line((0, 0), (10, 10)), offset=(0, 5), draft=metric(), measurement_direction=Vector(1, 0, 0)
+    ),
+    "obj_draft_ext_vector_parallel": lambda: ExtensionLine(
+        border=Edge.make_line((0, 0), (10, 10)), offset=(5, 0), draft=metric(), measurement_direction=Vector(1, 0, 0)
+    ),
+    "obj_draft_ext_vector_zero": lambda: ExtensionLine(border=Edge.make_line((0, 0), (40, 0)), offset=(0, 0, 0), draft=metric()),
+    "obj_draft_ext_vector_out_of_plane": lambda: ExtensionLine(
+        border=Edge.make_line((0, 0), (40, 0)), offset=(0, 10, 0.1), draft=metric()
+    ),
+    "obj_draft_ext_direction_out_of_plane": lambda: ExtensionLine(
+        border=Edge.make_line((0, 0), (40, 40)), offset=(0, 10), draft=metric(), measurement_direction=(1, 0, 0.1)
+    ),
+    "obj_draft_ext_direction_zero": lambda: ExtensionLine(
+        border=Edge.make_line((0, 0), (40, 40)), offset=10, draft=metric(), measurement_direction=(0, 0, 0)
+    ),
+    "obj_draft_ext_same_ends": lambda: ExtensionLine(border=Edge.make_circle(5), offset=3, draft=metric()),
+    "obj_draft_ext_points_label": lambda: ExtensionLine(
+        [(0, 0), (20, 0), (20, 15)], offset=8, draft=metric(), label="W", arrows=(True, False)
+    ),
+    "obj_draft_ext_tolerance": lambda: ExtensionLine([(0, 0), (60, 0)], offset=-12, draft=metric(), tolerance=(0.1, 0.05)),
+    "obj_draft_dimension_values": obj_draft_dimension_values,
+    "obj_draft_drawing_a4": lambda: TechnicalDrawing(design_date=date(2024, 3, 15)),
+    "obj_draft_drawing_a3": lambda: TechnicalDrawing(
+        designed_by="me", design_date=date(2023, 11, 9), page_size=PageSize.A3, title="Bracket", sub_title="Left side",
+        drawing_number="B-7", sheet_number=2, drawing_scale=0.5, nominal_text_size=8, line_width=0.35,
+    ),  # fmt: skip
+    "obj_draft_drawing_letter": lambda: TechnicalDrawing(design_date=date(2020, 1, 2), page_size=PageSize.LETTER, sheet_number=12),
+    "obj_draft_date": obj_draft_date,
+    "obj_draft_bad_date": lambda: V(date(2023, 2, 29).isoformat()),
+    "obj_draft_today": lambda: V(date.today().isoformat()),
     # text and fonts (the cases that change the font database last)
     "obj_text_available_fonts": lambda: font_info_values(available_fonts()),
     "obj_text_font_info_repr": lambda: V(
