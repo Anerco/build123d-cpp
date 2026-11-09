@@ -164,10 +164,11 @@ std::function<double(const Shape&)> topo_distance_to(const std::vector<Shape>& s
             for (const auto& s : parent.solids()) peers.push_back(s.wrapped());
             break;
     }
-    OccShapeMap peer_index;  // 1-based index into peers
-    for (const auto& p : peers) peer_index.Add(p);
-    const auto index_of = [&](const TopoDS_Shape& s) -> int { return peer_index.FindIndex(s); };
-    const auto peer_of = [peers, peer_index, index_of](const TopoDS_Shape& s) -> int {
+    // 1-based index into peers (shared by the returned key function)
+    auto peer_index = std::make_shared<OccShapeMap>();
+    for (const auto& p : peers) peer_index->Add(p);
+    const auto index_of = [peer_index](const TopoDS_Shape& s) -> int { return peer_index->FindIndex(s); };
+    const auto peer_of = [peers, index_of](const TopoDS_Shape& s) -> int {
         int i = index_of(s);
         if (i == 0) {
             const auto match = find_same_topods(s, peers);

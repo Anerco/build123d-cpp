@@ -245,6 +245,79 @@ def core_new_edges():
     return describe(new_edges(box, cyl, combined=both))
 
 
+def conv_names(shapes):
+    out = []
+    for s in shapes:
+        try:
+            out.append(s.convexity.name)
+        except ValueError:
+            out.append("error")
+    return out
+
+
+def convexity_edges():
+    pocket = Box(10, 10, 10) - Pos(0, 0, 3) * Box(4, 4, 4)
+    step = Box(10, 10, 2) + Pos(2.5, 0, 2) * Box(5, 10, 2)
+    rounded = fillet(Box(10, 10, 10).edges().group_by(Axis.Z)[-1], 1)
+    tube = Cylinder(5, 10) - Cylinder(2, 10)
+    return V([conv_names(Box(1, 1, 1).edges()), conv_names(pocket.edges()), conv_names(step.edges()),
+              conv_names(rounded.edges()), conv_names(tube.edges()), conv_names(Rectangle(2, 2).edges())])
+
+
+def convexity_faces_vertices():
+    tube = Cylinder(5, 10) - Cylinder(2, 10)
+    step = Box(10, 10, 2) + Pos(2.5, 0, 2) * Box(5, 10, 2)
+    ell = Rectangle(4, 4) - Pos(1, 1) * Rectangle(2, 2)
+    return V([conv_names(tube.faces()), conv_names(Torus(5, 1).faces()), conv_names(Sphere(2).faces()),
+              conv_names(step.vertices()), conv_names(ell.faces()[0].vertices()),
+              conv_names((Box(2, 2, 2) - Sphere(0.8)).faces())])
+
+
+def convexity_selectors():
+    pocket = Box(10, 10, 10) - Pos(0, 0, 3) * Box(4, 4, 4)
+    groups = pocket.edges().group_by(Convexity)
+    sizes = [[k.value - 1, len(groups.group(k))] for k, _ in groups.key_to_group_index]
+    concave = pocket.edges().filter_by(Convexity.CONCAVE)
+    not_concave = pocket.edges().filter_by(Convexity.CONCAVE, reverse=True)
+    tube = Cylinder(5, 10) - Cylinder(2, 10)
+    flags = [[f.is_circular_convex, f.is_circular_concave] for f in tube.faces()]
+    return V([sizes, len(concave), len(not_concave), flags, [e.is_interior for e in concave]])
+
+
+def topo_explore():
+    box = Box(10, 10, 10)
+    top = box.edges().group_by(Axis.Z)[-1].sort_by(Axis.X)[0]
+    rounded = fillet(Box(10, 10, 10).edges().filter_by(Axis.Z), 2)
+    vertical = rounded.edges().filter_by(Axis.Z).sort_by(Axis.X)[0]
+    c0 = topo_explore_connected_edges(vertical)
+    c1 = topo_explore_connected_edges(vertical, continuity=ContinuityLevel.C1)
+    c2 = topo_explore_connected_edges(vertical, rounded, ContinuityLevel.C2)
+    edges = box.edges()
+    return V([describe(topo_explore_connected_edges(top)), describe(c0), describe(c1), describe(c2),
+              topo_explore_common_vertex(edges[0], edges[1]), topo_explore_common_vertex(edges[0], edges[2])])
+
+
+def topo_distance():
+    box = Box(10, 10, 10)
+    top = box.faces().sort_by(Axis.Z)[-1]
+    key = topo_distance_to(top)
+    faces = box.faces().sort_by(key)
+    edge_key = topo_distance_to(box.edges().sort_by(Axis.Z)[0])
+    vertex_key = topo_distance_to(box.vertices().sort_by(Axis.Z)[0])
+    groups = box.faces().group_by(topo_distance_to([top]))
+    return V([[key(f) for f in faces], [edge_key(e) for e in box.edges().sort_by(edge_key)],
+              [vertex_key(v) for v in box.vertices()], len(groups)])
+
+
+def utils_case():
+    a = Edge.make_line((0, 0), (1, 0))
+    b = Edge.make_line((1, 0), (1, 1))
+    c = Edge.make_line((5, 5), (6, 5))
+    wires = edges_to_wires([a, b, c])
+    d = delta([a, b, a.reversed()], [a])
+    return V([Vector(polar(2, 30)), len(wires), describe(wires), len(d)])
+
+
 CASES = {
     # 1a
     "core_and_list_part": lambda: Box(4, 4, 4) & [Pos(1, 0, 0) * Box(4, 4, 4), Sphere(2.5)],
@@ -303,4 +376,12 @@ CASES = {
     "core_select_draft_loft_clean": select_draft_loft_clean,
     "core_select_curve_fillet": select_curve_fillet,
     "core_new_edges": core_new_edges,
+    # 4: convexity
+    "core_convexity_edges": convexity_edges,
+    "core_convexity_faces_vertices": convexity_faces_vertices,
+    "core_convexity_selectors": convexity_selectors,
+    # 5: topology helpers
+    "core_topo_explore": topo_explore,
+    "core_topo_distance": topo_distance,
+    "core_utils": utils_case,
 }

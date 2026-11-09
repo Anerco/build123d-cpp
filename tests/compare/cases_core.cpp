@@ -284,6 +284,109 @@ COMPARE_CASES {
         return describe(new_edges(std::vector<Shape>{box, cyl}, both));
     });
 
+    // ---- 4: convexity
+    add_value("core_convexity_edges", [] {
+        const auto names = [](const auto& list) {
+            std::vector<V> out;
+            for (const auto& s : list) {
+                try {
+                    out.emplace_back(std::string(s.convexity() == Convexity::CONVEX    ? "CONVEX"
+                                                 : s.convexity() == Convexity::CONCAVE ? "CONCAVE"
+                                                 : s.convexity() == Convexity::SMOOTH  ? "SMOOTH"
+                                                                                       : "SADDLE"));
+                } catch (const std::invalid_argument&) {
+                    out.emplace_back("error");
+                }
+            }
+            return V::list(out);
+        };
+        const Part pocket = Box(10, 10, 10) - Pos(0, 0, 3) * Box(4, 4, 4);
+        const Part step = Box(10, 10, 2) + Pos(2.5, 0, 2) * Box(5, 10, 2);
+        const Part rounded = fillet(Box(10, 10, 10).edges().group_by(Axis::Z)[-1], 1);
+        const Part tube = Cylinder(5, 10) - Cylinder(2, 10);
+        return V::list({names(Box(1, 1, 1).edges()), names(pocket.edges()), names(step.edges()), names(rounded.edges()),
+                        names(tube.edges()), names(Rectangle(2, 2).edges())});
+    });
+    add_value("core_convexity_faces_vertices", [] {
+        const auto names = [](const auto& list) {
+            std::vector<V> out;
+            for (const auto& s : list) {
+                try {
+                    const Convexity c = s.convexity();
+                    out.emplace_back(std::string(c == Convexity::CONVEX    ? "CONVEX"
+                                                 : c == Convexity::CONCAVE ? "CONCAVE"
+                                                 : c == Convexity::SMOOTH  ? "SMOOTH"
+                                                                           : "SADDLE"));
+                } catch (const std::invalid_argument&) {
+                    out.emplace_back("error");
+                }
+            }
+            return V::list(out);
+        };
+        const Part tube = Cylinder(5, 10) - Cylinder(2, 10);
+        const Part step = Box(10, 10, 2) + Pos(2.5, 0, 2) * Box(5, 10, 2);
+        const Sketch ell = Rectangle(4, 4) - Pos(1, 1) * Rectangle(2, 2);
+        return V::list({names(tube.faces()), names(Torus(5, 1).faces()), names(Sphere(2).faces()),
+                        names(step.vertices()), names(ell.faces()[0].vertices()),
+                        names((Box(2, 2, 2) - Sphere(0.8)).faces())});
+    });
+    add_value("core_convexity_selectors", [] {
+        const Part pocket = Box(10, 10, 10) - Pos(0, 0, 3) * Box(4, 4, 4);
+        const auto groups = pocket.edges().group_by(by_convexity);
+        std::vector<V> sizes;
+        for (std::size_t i = 0; i < groups.size(); ++i) {
+            sizes.emplace_back(V::list({V(groups.keys[i]), V(groups[static_cast<std::ptrdiff_t>(i)].size())}));
+        }
+        const auto concave = pocket.edges().filter_by(Convexity::CONCAVE);
+        const auto not_concave = pocket.edges().filter_by(Convexity::CONCAVE, true);
+        const Part tube = Cylinder(5, 10) - Cylinder(2, 10);
+        std::vector<V> flags;
+        for (const auto& f : tube.faces()) flags.emplace_back(V::list({V(f.is_circular_convex()), V(f.is_circular_concave())}));
+        std::vector<V> interior;
+        for (const auto& e : concave) interior.emplace_back(e.is_interior());
+        return V::list({V::list(sizes), V(concave.size()), V(not_concave.size()), V::list(flags), V::list(interior)});
+    });
+
+    // ---- 5: topology helpers
+    add_value("core_topo_explore", [] {
+        const Part box = Box(10, 10, 10);
+        const Edge top = box.edges().group_by(Axis::Z)[-1].sort_by(Axis::X)[0];
+        const Part rounded = fillet(Box(10, 10, 10).edges().filter_by(Axis::Z), 2);
+        const Edge vertical = rounded.edges().filter_by(Axis::Z).sort_by(Axis::X)[0];
+        const auto c0 = topo_explore_connected_edges(vertical);
+        const auto c1 = topo_explore_connected_edges(vertical, std::nullopt, ContinuityLevel::C1);
+        const auto c2 = topo_explore_connected_edges(vertical, rounded, ContinuityLevel::C2);
+        const auto edges = box.edges();
+        const auto common = topo_explore_common_vertex(edges[0], edges[1]);
+        const auto none = topo_explore_common_vertex(edges[0], edges[2]);
+        return V::list({describe(topo_explore_connected_edges(top)), describe(c0), describe(c1), describe(c2),
+                        common ? V(*common) : V(), none ? V(*none) : V()});
+    });
+    add_value("core_topo_distance", [] {
+        const Part box = Box(10, 10, 10);
+        const Face top = box.faces().sort_by(Axis::Z)[-1];
+        const auto faces = box.faces().sort_by(topo_distance_to(top));
+        std::vector<V> keys;
+        const auto key = topo_distance_to(top);
+        for (const auto& f : faces) keys.emplace_back(key(f));
+        const auto edge_key = topo_distance_to(box.edges().sort_by(Axis::Z)[0]);
+        std::vector<V> edge_keys;
+        for (const auto& e : box.edges().sort_by(edge_key)) edge_keys.emplace_back(edge_key(e));
+        const auto vertex_key = topo_distance_to(box.vertices().sort_by(Axis::Z)[0]);
+        std::vector<V> vertex_keys;
+        for (const auto& v : box.vertices()) vertex_keys.emplace_back(vertex_key(v));
+        const auto groups = box.faces().group_by(topo_distance_to(std::vector<Face>{top}));
+        return V::list({V::list(keys), V::list(edge_keys), V::list(vertex_keys), V(groups.size())});
+    });
+    add_value("core_utils", [] {
+        const Edge a = Edge::make_line({0, 0}, {1, 0});
+        const Edge b = Edge::make_line({1, 0}, {1, 1});
+        const Edge c = Edge::make_line({5, 5}, {6, 5});
+        const auto wires = edges_to_wires({a, b, c});
+        const auto d = delta(std::vector<Edge>{a, b, a.reversed()}, std::vector<Edge>{a});
+        return V::list({V(polar(2, 30)), V(wires.size()), describe(wires), V(d.size())});
+    });
+
     add_value("core_geom_with_shape", [] {
         const Part b = Box(2, 2, 2);
         return V::list({describe(Vector(0, 0, 0) & b), describe(Axis::Z & b), describe(Plane::XY & b),
