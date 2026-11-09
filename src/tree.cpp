@@ -5,7 +5,9 @@
 #include <TopoDS.hxx>
 
 #include "internal.hpp"
+#include "build123d/warnings.hpp"
 #include "pbr_colors.hpp"
+#include "textures.hpp"
 
 namespace build123d {
 
@@ -344,12 +346,26 @@ Location Shape::global_location() const {
 namespace {
 
 /// The color of a material's look, which build123d's material setter gives the shape
-/// (material.pbr.interpolate_color()).
+/// (material.pbr.interpolate_color()). A textured look needs its texture: without the textures
+/// installed, a catalog material without choices of its own takes its grade's color (the same
+/// one), and any other keeps the shape's color, with a warning.
 std::optional<Color> material_look_color(const FinishedMaterial& material) {
-    if (material.color) return std::nullopt;
-    const auto rgba = detail::catalog_pbr_color(material.material.name);
-    if (!rgba) return std::nullopt;
-    return Color((*rgba)[0], (*rgba)[1], (*rgba)[2], (*rgba)[3]);
+    try {
+        return material.pbr().interpolated_color();
+    } catch (const std::runtime_error&) {
+        if (!detail::find_texture_dir().empty()) throw;
+        const bool plain = !material.finish && !material.color && !material.thickness_mm && !material.opacity &&
+                           !material.roughness && material.scale == std::pair{1.0, 1.0} &&
+                           material.rotation == 0.0 && !material.process && !material.pbr_override();
+        if (plain) {
+            if (const auto rgba = detail::catalog_pbr_color(material.name())) {
+                return Color((*rgba)[0], (*rgba)[1], (*rgba)[2], (*rgba)[3]);
+            }
+        }
+        warn("The PBR textures aren't installed, so the shape keeps its color: run scripts/fetch-textures.sh "
+             "or set BUILD123D_TEXTURE_DIR");
+        return std::nullopt;
+    }
 }
 
 }  // namespace

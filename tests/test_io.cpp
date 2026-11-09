@@ -342,6 +342,16 @@ struct ScopedEnv {
     }
 };
 
+/// Collects the warnings issued during the scope of the object.
+struct ScopedWarnings {
+    std::vector<std::string> messages;
+    WarningHandler previous;
+    ScopedWarnings() : previous(set_warning_handler([this](const std::string& m) { messages.push_back(m); })) {}
+    ~ScopedWarnings() { set_warning_handler(previous); }
+    ScopedWarnings(const ScopedWarnings&) = delete;
+    ScopedWarnings& operator=(const ScopedWarnings&) = delete;
+};
+
 std::string read_all(const std::string& path) {
     std::ifstream in(path, std::ios::binary);
     std::stringstream ss;
@@ -395,7 +405,8 @@ TEST(io_pbr_material_api) {
     CHECK(metals::ALU_MATERIALS.at(metals::Alu::G7075_T6).name == "Alu_G7075_T6");
     CHECK(ALL_MATERIALS.size() == 95);
 
-    // the examples of the docs
+    // the examples of the docs (without the textures, textured looks keep the color, with a warning)
+    const ScopedWarnings quiet;
     Part part = Box(1, 1, 1);
     part.material = metals::aluminum(metals::Alu::G7075_T6, {.finish = finishes::anodize("black")});
     part.material = metals::stainless({.finish = FinishSpec{finishes::brushed({2, 2}, 45), finishes::pvd("gold")}});
@@ -439,4 +450,15 @@ TEST(io_pbr_missing_textures) {
     }
     CHECK(named);
     CHECK_THROWS(wood::oak().pbr().interpolate_color(), std::runtime_error);
+    // the material setter: a catalog material without choices of its own still gets its
+    // grade's color; another textured one keeps the shape's color, with a warning
+    Part assigned = Box(1, 2, 3);
+    assigned.material = wood::oak();
+    CHECK(assigned.color && assigned.color->to_tuple() == (std::array<double, 4>{0.4745, 0.3294, 0.2039, 1.0}));
+    const ScopedWarnings warnings;
+    Part scaled = Box(1, 2, 3);
+    scaled.color = Color("red");
+    scaled.material = wood::oak({.scale = {2.0, 2.0}});
+    CHECK(scaled.color == Color("red"));
+    CHECK(warnings.messages.size() == 1 && warnings.messages[0].find("fetch-textures.sh") != std::string::npos);
 }

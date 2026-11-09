@@ -160,7 +160,21 @@ def version():
     return V([build123d.__version__, list(_version.version_tuple)])
 
 
+def material_setter_looks():
+    from bd_materials import finishes, metals, plastics, processes, resolve  # pylint: disable=import-outside-toplevel
+    from bd_materials.materials.metals import Alu  # pylint: disable=import-outside-toplevel
+
+    out = []
+    for material in [resolve("oak"), metals.aluminum(Alu.G7075_T6, finish=finishes.anodize("red")),
+                     plastics.petg(color="#336699", process=processes.fdm(0.1))]:
+        part = Box(1, 1, 1)
+        part.material = material
+        out.append(list(tuple(part.color)))
+    return V(out)
+
+
 CASES = {
+    "integ_material_setter_looks": material_setter_looks,
     "integ_version": version,
     "integ_property_setters": property_setters,
     "integ_color_material_lookup": color_material_lookup,

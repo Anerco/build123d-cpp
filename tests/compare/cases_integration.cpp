@@ -29,6 +29,17 @@ V joint_info(const Part& p) {
 }  // namespace
 
 COMPARE_CASES {
+    compare::add_value("integ_material_setter_looks", [] {
+        std::vector<V> out;
+        for (const FinishedMaterial& material :
+             {FinishedMaterial("oak"), metals::aluminum(metals::Alu::G7075_T6, {.finish = finishes::anodize("red")}),
+              plastics::petg({.color = "#336699", .process = processes::fdm(0.1)})}) {
+            Part part = Box(1, 1, 1);
+            part.material = material;  // colors the part with the material's look
+            out.push_back(V::list_of(part.color->to_tuple()));
+        }
+        return V::list(out);
+    });
     compare::add_value("integ_version", [] {
         return V::list({V(version), V::list({version_tuple[0], version_tuple[1], version_tuple[2]})});
     });
