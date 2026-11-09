@@ -15,6 +15,7 @@
 #include <tuple>
 #include <type_traits>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <gp_Trsf.hxx>
@@ -22,6 +23,7 @@
 #include <TopoDS_Shape.hxx>
 
 #include "build123d/geometry.hpp"
+#include "build123d/materials.hpp"
 
 namespace build123d {
 
@@ -37,8 +39,15 @@ class Compound;
 class Curve;
 class Sketch;
 class Part;
+class ShapeHistory;
 template <class T>
 class ShapeList;
+
+class SplitResult;
+
+/// An operand of Shape::intersect: a shape or a geometry object (Vector and Location
+/// act as a Vertex, Axis as an infinite Edge, Plane as an infinite Face).
+using IntersectArg = std::variant<Shape, Vector, Location, Axis, Plane>;
 template <class T>
 class GroupBy;
 class Joint;
@@ -101,6 +110,7 @@ public:
 
 private:
     friend class Shape;
+    friend struct ShapeAccess;
     std::vector<Shape> items_;
     Shape* owner_ = nullptr;
 
@@ -173,11 +183,14 @@ public:                                                                         
     T moved(const Plane& plane) const { return derive<T>(moved_topods(plane.location())); }   \
     /** Copy placed at an absolute location. */                                                \
     T located(const Location& loc) const { return derive<T>(located_topods(loc)); }           \
-    /** Copy rotated about an axis by `angle` degrees. */                                      \
-    T rotate(const Axis& axis, double angle) const {                                           \
-        return derive<T>(rotate_topods(axis, angle));                                          \
+    /** Copy rotated about an axis by `angle` degrees; `transform` regenerates the shape  */   \
+    /** instead of only changing its location. */                                              \
+    T rotate(const Axis& axis, double angle, bool transform = false) const {                   \
+        return derive<T>(rotate_topods(axis, angle, transform));                               \
     }                                                                                          \
-    T translate(const Vector& vector) const { return derive<T>(translate_topods(vector)); }    \
+    T translate(const Vector& vector, bool transform = false) const {                          \
+        return derive<T>(translate_topods(vector, transform));                                 \
+    }                                                                                          \
     /** Uniform scale about `about` (defaults to the shape's location). */                    \
     T scale(double factor, std::optional<Vector> about = std::nullopt) const {                 \
         return derive<T>(scale_topods(factor, about));                                         \
@@ -197,12 +210,29 @@ public:                                                                         
     T transform_shape(const gp_Trsf& trsf) const {                                             \
         return derive<T>(transform_topods(trsf, false));                                      \
     }                                                                                          \
-    /** Remove internal edges/faces (ShapeUpgrade_UnifySameDomain). */                         \
-    T clean() const { return derive<T>(clean_topods()); }                                     \
+    /** Transform without changing the geometry type (rigid part of the matrix). */            \
+    T transform_shape(const Matrix& t_matrix) const {                                          \
+        return derive<T>(transform_topods(t_matrix.wrapped().Trsf(), false));                 \
+    }                                                                                          \
+    /** Affine transform (may convert lines and circles to splines; handles skew/stretch). */ \
+    T transform_geometry(const Matrix& t_matrix) const {                                       \
+        return derive<T>(gtransform_topods(t_matrix));                                         \
+    }                                                                                          \
+    /** Remove internal edges/faces (ShapeUpgrade_UnifySameDomain); the history records it. */ \
+    T clean() const {                                                                          \
+        std::shared_ptr<ShapeHistory> clean_history;                                           \
+        T cleaned = derive<T>(clean_topods(&clean_history));                                   \
+        cleaned.set_history(std::move(clean_history));                                         \
+        return cleaned;                                                                        \
+    }                                                                                          \
     /** Repair an invalid shape (no-op if valid). */                                           \
     T fix() const { return derive<T>(fix_topods()); }                                         \
     /** Deep copy (geometry duplicated). */                                                    \
-    T copy() const { return derive<T>(copy_topods()); }
+    T copy() const { return derive<T>(copy_topods()); }                                       \
+    /** All geometry approximated by B-splines (ShapeCustom::BSplineRestriction). */           \
+    T to_splines(int degree = 3, double tolerance = 1e-3, bool nurbs = false) const {          \
+        return T(to_splines_topods(degree, tolerance, nurbs));                                 \
+    }
 
 // ---------------------------------------------------------------------------
 // Shape
@@ -217,6 +247,8 @@ public:
 
     std::string label;
     std::optional<Color> color;
+    /// What the shape is made of (mass() reads its density); see materials.hpp.
+    std::optional<FinishedMaterial> material;
     /// Assembly children (with their own labels/colors); see Compound::make_assembly.
     ShapeChildren children;
     /// Joints bound to this shape, by label (see joints.hpp).
@@ -274,6 +306,10 @@ public:
     /// Topological dimension (0..3), or -1 if empty or mixed.
     int dim() const;
     GeomType geom_type() const;
+    /// How the shape this one was selected from sits around it (build123d's convexity):
+    /// defined for a Vertex, Edge or Face taken out of a larger shape (see
+    /// Vertex/Mixin1D/Face); std::invalid_argument for anything else.
+    Convexity convexity() const;
     bool is_valid() const;
     bool is_manifold() const;
     /// Same TShape and location (orientation may differ).
@@ -285,22 +321,50 @@ public:
 
     double area() const;
     double volume() const;
+    /// build123d's compute_volume: the GProp mass for the shape type (length for edges and
+    /// wires, area for faces and shells, volume otherwise; 0 for a vertex).
+    double compute_volume() const;
+    /// Mass from `material`'s density (std::invalid_argument if there is none): volume()
+    /// times the density converted to `mass_unit` per `length_unit`³.
+    double compute_mass(Unit mass_unit = Unit::G, Unit length_unit = Unit::MM) const;
+    /// The mass as build123d's per-class `mass`: 0 for vertices, edges, wires and faces;
+    /// compute_mass for shells and solids; for a compound the sum over its assembly
+    /// children (each with its own material, else the compound's) or its solids and shells.
+    double mass(Unit mass_unit = Unit::G, Unit length_unit = Unit::MM) const;
+    /// Inertia tensor about the center of mass (VolumeProperties), rows Ixx..Izz.
+    std::array<std::array<double, 3>, 3> matrix_of_inertia() const;
+    /// The principal axes of inertia with their moments.
+    std::vector<std::pair<Vector, double>> principal_properties() const;
+    /// First moments of mass (Mx, My, Mz).
+    std::array<double, 3> static_moments() const;
+    double radius_of_gyration(const Axis& axis) const;
+    /// Center of several objects: weighted by compute_volume (CenterOf::MASS) or the mean of
+    /// the bounding box centers (BOUNDING_BOX); GEOMETRY throws.
+    static Vector combined_center(const std::vector<Shape>& objects, CenterOf center_of = CenterOf::MASS);
+    template <class S, std::enable_if_t<std::is_base_of_v<Shape, S> && !std::is_same_v<S, Shape>, int> = 0>
+    static Vector combined_center(const std::vector<S>& objects, CenterOf center_of = CenterOf::MASS) {
+        return combined_center(std::vector<Shape>(objects.begin(), objects.end()), center_of);
+    }
     /// Center using the default method for the shape type
     /// (GEOMETRY for 1D/2D, MASS for 3D and compounds).
     Vector center() const;
     Vector center(CenterOf center_of) const;
     BoundBox bounding_box(std::optional<double> tolerance = std::nullopt, bool optimal = true) const;
+    /// The oriented bounding box (an empty one for an empty shape).
+    OrientedBoundBox oriented_bounding_box() const;
     Location location() const;
     void set_location(const Location& loc);
     Vector position() const;
     Vector orientation() const;
 
-    ShapeList<Vertex> vertices() const;
-    ShapeList<Edge> edges() const;
-    ShapeList<Wire> wires() const;
-    ShapeList<Face> faces() const;
-    ShapeList<Shell> shells() const;
-    ShapeList<Solid> solids() const;
+    /// Sub-shapes; `select` narrows them to those the operation that made this shape
+    /// brought in or created (Select::LAST) or created outright (Select::NEW).
+    ShapeList<Vertex> vertices(Select select = Select::ALL) const;
+    ShapeList<Edge> edges(Select select = Select::ALL) const;
+    ShapeList<Wire> wires(Select select = Select::ALL) const;
+    ShapeList<Face> faces(Select select = Select::ALL) const;
+    ShapeList<Shell> shells(Select select = Select::ALL) const;
+    ShapeList<Solid> solids(Select select = Select::ALL) const;
     ShapeList<Compound> compounds() const;
     /// Exactly one sub-shape of the given type, else std::invalid_argument.
     Vertex vertex() const;
@@ -313,11 +377,22 @@ public:
     /// First level non-compound children (nested compounds are flattened).
     ShapeList<Shape> get_top_level_shapes() const;
 
-    /// The shape this one was extracted from (via edges(), faces(), ...), if any.
+    /// The shapes this one was extracted through (edges(), faces(), ...), outermost first.
+    std::vector<Shape> topo_path() const;
+    void set_topo_path(std::vector<Shape> path);
+    /// The shape this one was ultimately taken out of: the outermost step of topo_path().
     std::optional<Shape> topo_parent() const;
+    /// Record a single step of provenance, discarding any longer path.
     void set_topo_parent(const std::optional<Shape>& parent);
-    /// Record that this shape was taken out of `source` (keeps the outermost parent).
+    /// The shape this one was taken directly out of: the innermost step of topo_path().
+    std::optional<Shape> topo_owner() const;
+    /// Record that this shape was taken out of `source`: topo_path = source's path + source.
     void extracted_from(const Shape& source);
+
+    /// The record of how the operation that made this shape treated its inputs'
+    /// sub-shapes (nullptr if no recorded operation made it). See history.hpp.
+    const std::shared_ptr<ShapeHistory>& history() const { return history_; }
+    void set_history(std::shared_ptr<ShapeHistory> history) { history_ = std::move(history); }
 
     double distance(const Shape& other) const;
     double distance_to(const Shape& other) const;
@@ -338,13 +413,28 @@ public:
                                    double start = 0.0) const;
     ShapeList<Shape> project_faces(const Shape& faces, const Mixin1D& path, double start = 0.0) const;
 
-    /// Untyped booleans; prefer the +, -, & operators.
+    /// Untyped booleans that record their history; prefer the +, -, & operators.
     Shape fuse(const Shape& other, bool glue = false, std::optional<double> tol = std::nullopt) const;
+    Shape fuse(const std::vector<Shape>& to_fuse, bool glue = false,
+               std::optional<double> tol = std::nullopt) const;
     Shape cut(const Shape& other) const;
-    Shape intersect(const Shape& other) const;
-    /// Split by a plane, face or shell. Keep::BOTH returns tops followed by bottoms.
-    ShapeList<Shape> split(const Plane& tool, Keep keep = Keep::TOP) const;
-    ShapeList<Shape> split(const Shape& tool, Keep keep = Keep::TOP) const;
+    Shape cut(const std::vector<Shape>& to_cut) const;
+    /// Where bodies or interiors meet (overlap or crossing geometry), as build123d 0.13:
+    /// several operands chain (a ∩ b ∩ c) and a Compound operand distributes over its
+    /// elements ((a ∩ c1) ∪ (a ∩ c2)). `include_touched` adds boundary contacts where
+    /// Solids are involved. Python's None (no intersection) is an empty list here.
+    ShapeList<Shape> intersect(const IntersectArg& to_intersect, double tolerance = 1e-6,
+                               bool include_touched = false) const;
+    ShapeList<Shape> intersect(const std::vector<IntersectArg>& to_intersect, double tolerance = 1e-6,
+                               bool include_touched = false) const;
+    /// Boundary contacts with another shape (vertices, edges, faces) without interior overlap.
+    ShapeList<Shape> touch(const Shape& other, double tolerance = 1e-6) const;
+    /// Split by a plane, face or shell, keeping Keep::TOP, BOTTOM, BOTH or ALL. The result
+    /// is the list of kept pieces (tops then bottoms for BOTH); `.top` and `.bottom` hold
+    /// each side, and `auto [top, bottom] = s.split(tool, Keep::BOTH);` unpacks them like
+    /// build123d's tuple (an empty list stands for None).
+    SplitResult split(const Plane& tool, Keep keep = Keep::TOP) const;
+    SplitResult split(const Shape& tool, Keep keep = Keep::TOP) const;
 
     /// In-place relative move / absolute placement.
     void move(const Location& loc);
@@ -353,47 +443,70 @@ public:
     void mesh(double tolerance, double angular_tolerance = 0.1) const;
     std::pair<std::vector<Vector>, std::vector<std::array<int, 3>>> tessellate(
         double tolerance, double angular_tolerance = 0.1) const;
+    /// Triangles with per-vertex normals and UVs: (vertices, triangles, normals, uvs). The
+    /// face UVs are normalized to [0, 1] and, with `atlas_packing`, packed into one atlas
+    /// (each island inset by `atlas_gutter`).
+    std::tuple<std::vector<Vector>, std::vector<std::array<int, 3>>, std::vector<Vector>,
+               std::vector<std::array<double, 2>>>
+    tessellate_with_uvs(double tolerance, double angular_tolerance = 0.1, bool atlas_packing = true,
+                        double atlas_gutter = 0.0) const;
 
-    std::string show_topology() const;
+    /// The internal structure as a tree, down to `limit_class`. `show_center` defaults to
+    /// the location for assemblies (compounds with children) and the bounding box center
+    /// otherwise. (The addresses printed are those of the C++ objects.)
+    std::string show_topology(ShapeType limit_class = ShapeType::VERTEX,
+                              std::optional<bool> show_center = std::nullopt) const;
     std::string to_string() const;
+    /// build123d's __hash__: the OCCT shape (TShape and location); see std::hash<Shape>.
+    std::size_t hash() const;
 
     BUILD123D_TYPED_OPS(Shape)
 
 protected:
     TopoDS_Shape obj_;
-    TopoDS_Shape parent_;
+    /// topo_path (shared, never modified once set).
+    std::shared_ptr<const std::vector<Shape>> topo_path_;
+    std::shared_ptr<ShapeHistory> history_;
 
-    /// A copy of this shape with new geometry (build123d deep-copies the shape and replaces
-    /// its `wrapped`): label, color, children and joints come along.
+    /// A copy of this shape's attributes around a new TopoDS_Shape, like build123d's
+    /// deepcopy-then-replace-wrapped (moved, located, transformed, ...): label, color,
+    /// material, children, joints (bound to the copy), topo_path and history are carried over.
     template <class T>
     T derive(const TopoDS_Shape& shape) const {
         T result(shape);
         Shape& base = result;
         base.label = label;
         base.color = color;
+        base.material = material;
         base.children.assign_raw(children.items_);
         base.joints = joints;
-        base.parent_ = parent_;
+        base.topo_path_ = topo_path_;
+        base.history_ = history_;
         return result;
     }
     void copy_metadata_from(const Shape& other) {
         label = other.label;
         color = other.color;
+        material = other.material;
     }
     void require_not_null(const char* what) const;
 
     TopoDS_Shape moved_topods(const Location& loc) const;
     TopoDS_Shape located_topods(const Location& loc) const;
-    TopoDS_Shape rotate_topods(const Axis& axis, double angle) const;
-    TopoDS_Shape translate_topods(const Vector& vector) const;
+    TopoDS_Shape rotate_topods(const Axis& axis, double angle, bool transform = false) const;
+    TopoDS_Shape translate_topods(const Vector& vector, bool transform = false) const;
     TopoDS_Shape scale_topods(double factor, const std::optional<Vector>& about) const;
     TopoDS_Shape scale_topods(const Vector& factors, const std::optional<Vector>& about) const;
     TopoDS_Shape mirror_topods(const Plane& plane) const;
     TopoDS_Shape transformed_topods(const Vector& rotate, const Vector& offset) const;
     TopoDS_Shape transform_topods(const gp_Trsf& trsf, bool copy) const;
-    TopoDS_Shape clean_topods() const;
+    TopoDS_Shape gtransform_topods(const Matrix& t_matrix) const;
+    /// The cleaned shape; `history` (if given) receives this shape's record merged with
+    /// the clean's.
+    TopoDS_Shape clean_topods(std::shared_ptr<ShapeHistory>* history = nullptr) const;
     TopoDS_Shape fix_topods() const;
     TopoDS_Shape copy_topods() const;
+    TopoDS_Shape to_splines_topods(int degree, double tolerance, bool nurbs) const;
 
     template <class T>
     friend class ShapeList;
@@ -401,6 +514,7 @@ protected:
     friend class Vertex;
     friend class ShapeChildren;
     friend class JointMap;
+    friend struct ShapeAccess;
 
 private:
     // The shape whose `children` hold this one. Copies start as roots; ShapeChildren sets it.
@@ -409,6 +523,29 @@ private:
     void bind();
     /// build123d's Compound._post_attach_children: the geometry becomes a compound of the children.
     void rebuild_from_children();
+};
+
+/// Access to Shape's protected parts for the library's own sources (not for users).
+struct ShapeAccess {
+    /// Copy every attribute (label, color, material, children, joints, topo_path, history)
+    /// but the shape. Children are copied without rebuilding `to`'s geometry; the joints are
+    /// copies bound to `to`.
+    static void copy_attributes(const Shape& from, Shape& to) {
+        to.label = from.label;
+        to.color = from.color;
+        to.material = from.material;
+        to.children.assign_raw(from.children.items_);
+        to.joints = from.joints;
+        to.topo_path_ = from.topo_path_;
+        to.history_ = from.history_;
+    }
+    static const std::shared_ptr<const std::vector<Shape>>& topo_path(const Shape& s) { return s.topo_path_; }
+    static void set_topo_path(Shape& s, std::shared_ptr<const std::vector<Shape>> path) {
+        s.topo_path_ = std::move(path);
+    }
+    static TopoDS_Shape& wrapped(Shape& s) { return s.obj_; }
+    /// Replace the children without rebuilding the geometry.
+    static void set_children_raw(Shape& s, const std::vector<Shape>& children) { s.children.assign_raw(children); }
 };
 
 std::ostream& operator<<(std::ostream& os, const Shape& s);
@@ -441,6 +578,22 @@ public:
     double Y() const;
     double Z() const;
     Vector to_vector() const { return Vector(*this); }
+    /// The coordinates (build123d's iteration over a Vertex).
+    std::array<double, 3> to_tuple() const { return {X(), Y(), Z()}; }
+
+    /// Coordinate arithmetic, as in build123d: a new Vertex at the sum or difference.
+    /// A Python tuple operand is a Vector here (v + Vector(0, 0, 15)); the compound
+    /// assignments also take braces (v += {0, 0, 15}) and Vertices.
+    Vertex operator+(const Vertex& other) const;
+    Vertex operator+(const Vector& other) const;
+    Vertex operator-(const Vertex& other) const;
+    Vertex operator-(const Vector& other) const;
+    Vertex& operator+=(const Vector& other) { return *this = *this + other; }
+    Vertex& operator-=(const Vector& other) { return *this = *this - other; }
+
+    /// This vertex (narrowed by `select` like any sub-shape list).
+    ShapeList<Vertex> vertices(Select select = Select::ALL) const;
+    Vertex vertex() const { return *this; }
 
     BUILD123D_TYPED_OPS(Vertex)
 };
@@ -460,6 +613,8 @@ public:
     double radius() const;
     bool is_closed() const;
     bool is_forward() const;
+    /// Is this a concave edge of the shape it was selected from (convexity() == CONCAVE)?
+    bool is_interior() const;
 
     Vector position_at(double position, PositionMode mode = PositionMode::PARAMETER) const;
     std::vector<Vector> positions(const std::vector<double>& distances,
@@ -564,6 +719,9 @@ public:
     double param_at(double position) const;
     Wire close() const;
     bool is_infinite() const;
+    /// Geometric (not topological) equality within `tol`: same curve type, end points and
+    /// defining data; unknown curve types compare `num_interpolation_points` samples.
+    bool geom_equal(const Edge& other, double tol = 1e-6, int num_interpolation_points = 5) const;
     /// Intersection points with another edge or an axis.
     std::vector<Vector> find_intersection_points(const Edge& other,
                                                  double tolerance = TOLERANCE) const;
@@ -599,8 +757,8 @@ public:
     /// Shortest wire enclosing the given planar (XY) edges.
     static Wire make_convex_hull(const std::vector<Edge>& edges, double tolerance = 1e-3);
 
-    /// Edges in connection order.
-    ShapeList<Edge> edges() const;
+    /// Edges in connection order (narrowed by `select`, see Shape::edges).
+    ShapeList<Edge> edges(Select select = Select::ALL) const;
     ShapeList<Edge> order_edges() const;
     Wire fillet_2d(double radius, const std::vector<Vertex>& vertices) const;
     Wire chamfer_2d(double distance, double distance2, const std::vector<Vertex>& vertices,
@@ -669,6 +827,12 @@ public:
     Location center_location() const;
     Wire outer_wire() const;
     ShapeList<Wire> inner_wires() const;
+    /// The outer wire; warns when the face has holes (build123d's Face.wire).
+    Wire wire() const;
+    /// Does the face curve away from the material behind it (convexity() == CONVEX)?
+    bool is_circular_convex() const;
+    /// Does the face curve into the material behind it (convexity() == CONCAVE)?
+    bool is_circular_concave() const;
     /// The plane of a planar face (std::nullopt if not planar). Usable as a bool.
     std::optional<Plane> is_planar() const;
     bool is_coplanar(const Plane& plane) const;
@@ -734,27 +898,36 @@ public:
                       int max_iterations = 10) const;
 
 protected:
-    TopoDS_Shape fillet_topods(double radius, const std::vector<Edge>& edge_list) const;
+    TopoDS_Shape fillet_topods(double radius, const std::vector<Edge>& edge_list,
+                               std::shared_ptr<ShapeHistory>* history = nullptr) const;
     TopoDS_Shape chamfer_topods(double length, std::optional<double> length2,
                                 const std::vector<Edge>& edge_list,
-                                const std::optional<Face>& face) const;
+                                const std::optional<Face>& face,
+                                std::shared_ptr<ShapeHistory>* history = nullptr) const;
     TopoDS_Shape offset_3d_topods(const std::vector<Face>& openings, double thickness,
                                   double tolerance, Kind kind) const;
 };
 
 #define BUILD123D_3D_OPS(T)                                                                    \
 public:                                                                                        \
+    /** Fillet edges of this shape; a new shape (no attributes) recording its history. */     \
     T fillet(double radius, const std::vector<Edge>& edge_list) const {                        \
-        return derive<T>(fillet_topods(radius, edge_list));                                    \
+        std::shared_ptr<ShapeHistory> fillet_history;                                          \
+        T result(fillet_topods(radius, edge_list, &fillet_history));                           \
+        result.set_history(std::move(fillet_history));                                         \
+        return result;                                                                         \
     }                                                                                          \
     T chamfer(double length, std::optional<double> length2, const std::vector<Edge>& edge_list, \
               const std::optional<Face>& face = std::nullopt) const {                          \
-        return derive<T>(chamfer_topods(length, length2, edge_list, face));                    \
+        std::shared_ptr<ShapeHistory> chamfer_history;                                         \
+        T result(chamfer_topods(length, length2, edge_list, face, &chamfer_history));          \
+        result.set_history(std::move(chamfer_history));                                        \
+        return result;                                                                         \
     }                                                                                          \
     /** Hollow (shell) this object; negative thickness offsets inwards. */                     \
     T offset_3d(const std::vector<Face>& openings, double thickness, double tolerance = 1e-4,  \
                 Kind kind = Kind::ARC) const {                                                 \
-        return derive<T>(offset_3d_topods(openings, thickness, tolerance, kind));              \
+        return T(offset_3d_topods(openings, thickness, tolerance, kind));                     \
     }
 
 class Solid : public Mixin3D {
@@ -804,12 +977,26 @@ public:
     static Solid thicken(const Shape& surface, double depth,
                          std::optional<Vector> normal_override = std::nullopt);
     static Solid from_bounding_box(const BoundBox& bbox);
+    /// A box of the oriented bounding box's size, placed at its location.
+    static Solid from_bounding_box(const OrientedBoundBox& bbox);
 
     double volume() const;
+    /// Draft angle (degrees) applied to planar, cylindrical or conical faces; throws
+    /// DraftAngleError when OCCT can't draft a face or build the result.
     Solid draft(const std::vector<Face>& faces, const Plane& neutral_plane, double angle) const;
 
     BUILD123D_TYPED_OPS(Solid)
     BUILD123D_3D_OPS(Solid)
+};
+
+/// build123d's DraftAngleError (a RuntimeError): the face that failed (if known) and the
+/// shape OCCT reported as problematic.
+class DraftAngleError : public std::runtime_error {
+public:
+    DraftAngleError(const std::string& message, std::optional<Face> face = std::nullopt,
+                    Shape problematic_shape = Shape());
+    std::optional<Face> face;
+    Shape problematic_shape;
 };
 
 // ---------------------------------------------------------------------------
@@ -835,7 +1022,8 @@ public:
     std::size_t size() const;
     /// Direct children.
     ShapeList<Shape> elements() const;
-    /// Direct children of the given topological type.
+    /// Children of the given topological type, of this compound and of its direct
+    /// sub-compounds (build123d's get_type).
     template <class T>
     ShapeList<T> get_type() const;
     /// Remove unnecessary compound wrappers.
@@ -877,8 +1065,8 @@ public:
     template <class S, std::enable_if_t<std::is_base_of_v<Shape, S>, int> = 0>
     explicit Curve(const std::vector<S>& shapes) : Curve(Compound(shapes)) {}
 
-    /// Wires made by combining the edges.
-    ShapeList<Wire> wires() const;
+    /// Wires made by combining the edges (those `select` keeps).
+    ShapeList<Wire> wires(Select select = Select::ALL) const;
     double length() const;
     Vector position_at(double position, PositionMode mode = PositionMode::PARAMETER) const;
     Vector tangent_at(double position = 0.5, PositionMode mode = PositionMode::PARAMETER) const;
@@ -955,8 +1143,15 @@ struct algebra_for<3> {
 
 enum class AlgebraOp { ADD, SUB, AND };
 
-/// The +, -, & operations on TopoDS level; `dim` is the static dimension of `a` (-1 if dynamic).
-TopoDS_Shape algebra(AlgebraOp op, const Shape& a, const std::vector<const Shape*>& b, int dim);
+/// Which build123d class implements an operator for the left operand: Shape's own,
+/// Compound's (Sketch, Part, Compound) or Curve's (Compound's with Mixin1D's `+`).
+enum class SelfKind { SHAPE, COMPOUND, CURVE };
+
+/// The +, -, & operations; `dim` is the static dimension of `a` (-1 if dynamic). The result
+/// carries the operation's record (history) and the attributes build123d copies.
+Shape algebra(AlgebraOp op, const Shape& a, const std::vector<const Shape*>& b, int dim, SelfKind kind);
+/// build123d's Shape.__and__ / Compound.__and__ with any intersect operands (chained).
+Shape algebra_and(const Shape& a, const std::vector<IntersectArg>& others, SelfKind kind);
 
 std::vector<TopoDS_Shape> list_entities(const TopoDS_Shape& shape, int topabs_type);
 double sort_key_axis(const Shape& s, const Axis& axis);
@@ -981,6 +1176,10 @@ using algebra_t = typename detail::algebra_for<std::decay_t<T>::kDim>::type;
 // ---------------------------------------------------------------------------
 // GroupBy / ShapeList
 // ---------------------------------------------------------------------------
+
+/// Tag for ShapeList::group_by(by_convexity), build123d's group_by(Convexity).
+struct ConvexityKey {};
+inline constexpr ConvexityKey by_convexity{};
 
 /// Result of ShapeList::group_by: sorted groups, indexable (negative indices allowed).
 template <class T>
@@ -1083,6 +1282,11 @@ public:
         return grouped([key](const T& s) { return static_cast<double>(key(s)); }, reverse,
                        tol_digits);
     }
+    /// build123d's group_by(Convexity): groups of equal convexity in the enum's order
+    /// (the group keys are static_cast<double>(Convexity)).
+    GroupBy<T> group_by(ConvexityKey, bool reverse = false, int tol_digits = 6) const {
+        return grouped([](const T& s) { return static_cast<double>(s.convexity()); }, reverse, tol_digits);
+    }
 
     // ---- filtering
     /// Planar faces with normals, or lines with directions, parallel to the axis.
@@ -1099,6 +1303,10 @@ public:
     }
     ShapeList filter_by(GeomType geom_type, bool reverse = false) const {
         return filtered([&](const T& s) { return s.geom_type() == geom_type; }, reverse);
+    }
+    /// Objects with the given convexity relative to the shape they were selected from.
+    ShapeList filter_by(Convexity convexity, bool reverse = false) const {
+        return filtered([&](const T& s) { return s.convexity() == convexity; }, reverse);
     }
     template <class F, std::enable_if_t<std::is_invocable_r_v<bool, F, const T&>, int> = 0>
     ShapeList filter_by(F predicate, bool reverse = false) const {
@@ -1252,6 +1460,28 @@ private:
     }
 };
 
+/// The result of Shape::split: the kept pieces, with each side apart (build123d returns
+/// `(top, bottom)` for Keep.BOTH; here `auto [top, bottom] = shape.split(tool, Keep::BOTH)`).
+class SplitResult : public ShapeList<Shape> {
+public:
+    using ShapeList<Shape>::ShapeList;
+    SplitResult() = default;
+    /// The pieces above the tool (none for Keep::BOTTOM and Keep::ALL).
+    ShapeList<Shape> top;
+    /// The pieces below the tool (none for Keep::TOP and Keep::ALL).
+    ShapeList<Shape> bottom;
+};
+
+template <std::size_t I>
+const ShapeList<Shape>& get(const SplitResult& r) {
+    static_assert(I < 2, "SplitResult unpacks into (top, bottom)");
+    if constexpr (I == 0) {
+        return r.top;
+    } else {
+        return r.bottom;
+    }
+}
+
 template <class T>
 ShapeList<T> operator>(const ShapeList<T>& l, const Axis& axis) { return l.sort_by(axis); }
 template <class T>
@@ -1332,9 +1562,12 @@ template <class T>
 ShapeList<T> Compound::get_type() const {
     static_assert(T::kTopAbs != TopAbs_SHAPE, "get_type needs a topological type");
     ShapeList<T> out;
-    for (const Shape& child : elements()) {
-        if (!child.is_null() && child.wrapped().ShapeType() == T::kTopAbs) {
-            out.push_back(T(child.wrapped()));
+    // as build123d: the children of each of compounds() (the direct sub-compounds, then this)
+    for (const Compound& comp : compounds()) {
+        for (const Shape& child : comp.elements()) {
+            if (!child.is_null() && child.wrapped().ShapeType() == T::kTopAbs) {
+                out.push_back(T(child.wrapped()));
+            }
         }
     }
     return out;
@@ -1356,13 +1589,63 @@ S Plane::from_local_coords(const S& shape) const {
 
 namespace detail {
 
+/// The algebra result as type R, keeping the attributes and record of the operation.
 template <class R>
-R algebra_result(const TopoDS_Shape& shape, const Shape& source) {
-    R result(shape);
-    result.label = source.label;
-    result.color = source.color;
+R algebra_result(const Shape& shape) {
+    R result(shape.wrapped());
+    ShapeAccess::copy_attributes(shape, result);
     return result;
 }
+
+template <class A>
+SelfKind self_kind(const A& a) {
+    if constexpr (std::is_base_of_v<Curve, A>) {
+        return SelfKind::CURVE;
+    } else if constexpr (std::is_base_of_v<Compound, A>) {
+        return SelfKind::COMPOUND;
+    } else if constexpr (std::is_same_v<A, Shape>) {
+        return !a.is_null() && a.wrapped().ShapeType() == TopAbs_COMPOUND ? SelfKind::COMPOUND : SelfKind::SHAPE;
+    } else {
+        return SelfKind::SHAPE;
+    }
+}
+
+/// Geometry operands of & (Vector and Location act as 0D, Axis as 1D, Plane as 2D).
+template <class G>
+inline constexpr bool is_geometry_v =
+    std::is_same_v<std::decay_t<G>, Vector> || std::is_base_of_v<Location, std::decay_t<G>> ||
+    std::is_same_v<std::decay_t<G>, Axis> || std::is_same_v<std::decay_t<G>, Plane>;
+template <class G>
+inline constexpr int geometry_dim_v =
+    std::is_same_v<std::decay_t<G>, Axis> ? 1 : (std::is_same_v<std::decay_t<G>, Plane> ? 2 : 0);
+
+/// Static type of a & b: an intersection with a 3D shape has the other operand's dimension
+/// (Part, Sketch or Curve); every other combination may mix dimensions (crossing curves
+/// give vertices, crossing faces give edges, ...) and is a Compound.
+template <int DA, int DB>
+struct and_result_for {
+    using type = Compound;
+};
+template <>
+struct and_result_for<3, 3> {
+    using type = Part;
+};
+template <>
+struct and_result_for<3, 2> {
+    using type = Sketch;
+};
+template <>
+struct and_result_for<2, 3> {
+    using type = Sketch;
+};
+template <>
+struct and_result_for<3, 1> {
+    using type = Curve;
+};
+template <>
+struct and_result_for<1, 3> {
+    using type = Curve;
+};
 
 template <class B>
 std::vector<const Shape*> shape_ptrs(const std::vector<B>& bs) {
@@ -1379,12 +1662,12 @@ template <class A, class B>
 inline constexpr bool sub_dim_ok_v = A::kDim < 0 || B::kDim < 0 || B::kDim >= A::kDim;
 
 template <class A, class B>
-inline constexpr bool and_dim_ok_v = (A::kDim < 0 || A::kDim >= 2) && (B::kDim < 0 || B::kDim >= 2);
+using and_result_t = typename and_result_for<A::kDim, B::kDim>::type;
+template <class A, class G>
+using and_geometry_result_t = typename and_result_for<A::kDim, geometry_dim_v<G>>::type;
 
-template <class A, class B>
-using and_result_t =
-    std::conditional_t<(A::kDim < 0 || B::kDim < 0), Compound,
-                       typename algebra_for<(A::kDim < B::kDim ? A::kDim : B::kDim)>::type>;
+template <class A>
+inline constexpr bool not_vertex_v = !std::is_same_v<std::decay_t<A>, Vertex>;
 
 }  // namespace detail
 
@@ -1392,50 +1675,71 @@ using and_result_t =
 template <class A, class B,
           std::enable_if_t<detail::is_shape_v<A> && detail::is_shape_v<B>, int> = 0>
 algebra_t<A> operator+(const A& a, const B& b) {
+    static_assert(detail::not_vertex_v<A>, "Vertex addition only supports a Vertex or a Vector");
     static_assert(detail::same_dim_v<A, B>, "Only shapes with the same dimension can be added");
     return detail::algebra_result<algebra_t<A>>(
-        detail::algebra(detail::AlgebraOp::ADD, a, {&b}, A::kDim), a);
+        detail::algebra(detail::AlgebraOp::ADD, a, {&b}, A::kDim, detail::self_kind(a)));
 }
 template <class A, class B,
           std::enable_if_t<detail::is_shape_v<A> && detail::is_shape_v<B>, int> = 0>
 algebra_t<A> operator+(const A& a, const std::vector<B>& b) {
+    static_assert(detail::not_vertex_v<A>, "Vertex addition only supports a Vertex or a Vector");
     static_assert(detail::same_dim_v<A, B>, "Only shapes with the same dimension can be added");
     return detail::algebra_result<algebra_t<A>>(
-        detail::algebra(detail::AlgebraOp::ADD, a, detail::shape_ptrs(b), A::kDim), a);
+        detail::algebra(detail::AlgebraOp::ADD, a, detail::shape_ptrs(b), A::kDim, detail::self_kind(a)));
 }
 
 /// Cut: a - b (b must have the same or a higher dimension).
 template <class A, class B,
           std::enable_if_t<detail::is_shape_v<A> && detail::is_shape_v<B>, int> = 0>
 algebra_t<A> operator-(const A& a, const B& b) {
+    static_assert(detail::not_vertex_v<A>, "Vertex subtraction only supports a Vertex or a Vector");
     static_assert(detail::sub_dim_ok_v<A, B>,
                   "Only shapes with equal or greater dimension can be subtracted");
     return detail::algebra_result<algebra_t<A>>(
-        detail::algebra(detail::AlgebraOp::SUB, a, {&b}, A::kDim), a);
+        detail::algebra(detail::AlgebraOp::SUB, a, {&b}, A::kDim, detail::self_kind(a)));
 }
 template <class A, class B,
           std::enable_if_t<detail::is_shape_v<A> && detail::is_shape_v<B>, int> = 0>
 algebra_t<A> operator-(const A& a, const std::vector<B>& b) {
+    static_assert(detail::not_vertex_v<A>, "Vertex subtraction only supports a Vertex or a Vector");
     static_assert(detail::sub_dim_ok_v<A, B>,
                   "Only shapes with equal or greater dimension can be subtracted");
     return detail::algebra_result<algebra_t<A>>(
-        detail::algebra(detail::AlgebraOp::SUB, a, detail::shape_ptrs(b), A::kDim), a);
+        detail::algebra(detail::AlgebraOp::SUB, a, detail::shape_ptrs(b), A::kDim, detail::self_kind(a)));
 }
 
-/// Intersect: a & b (2D and 3D objects).
+/// Intersect: a & b, build123d's intersect followed by clean. A list operand chains
+/// (a & {b, c} is a ∩ b ∩ c); a Compound operand distributes over its elements.
 template <class A, class B,
           std::enable_if_t<detail::is_shape_v<A> && detail::is_shape_v<B>, int> = 0>
 detail::and_result_t<A, B> operator&(const A& a, const B& b) {
-    static_assert(detail::and_dim_ok_v<A, B>, "Intersection (&) applies to 2D and 3D objects");
+    static_assert(detail::not_vertex_v<A>, "Vertices can't be intersected");
     return detail::algebra_result<detail::and_result_t<A, B>>(
-        detail::algebra(detail::AlgebraOp::AND, a, {&b}, A::kDim), a);
+        detail::algebra(detail::AlgebraOp::AND, a, {&b}, A::kDim, detail::self_kind(a)));
 }
 template <class A, class B,
           std::enable_if_t<detail::is_shape_v<A> && detail::is_shape_v<B>, int> = 0>
 detail::and_result_t<A, B> operator&(const A& a, const std::vector<B>& b) {
-    static_assert(detail::and_dim_ok_v<A, B>, "Intersection (&) applies to 2D and 3D objects");
+    static_assert(detail::not_vertex_v<A>, "Vertices can't be intersected");
     return detail::algebra_result<detail::and_result_t<A, B>>(
-        detail::algebra(detail::AlgebraOp::AND, a, detail::shape_ptrs(b), A::kDim), a);
+        detail::algebra(detail::AlgebraOp::AND, a, detail::shape_ptrs(b), A::kDim, detail::self_kind(a)));
+}
+/// Intersect a shape with a Vector, Location, Axis or Plane.
+template <class A, class G,
+          std::enable_if_t<detail::is_shape_v<A> && detail::is_geometry_v<G>, int> = 0>
+detail::and_geometry_result_t<A, G> operator&(const A& a, const G& g) {
+    static_assert(detail::not_vertex_v<A>, "Vertices can't be intersected");
+    return detail::algebra_result<detail::and_geometry_result_t<A, G>>(
+        detail::algebra_and(a, {IntersectArg(static_cast<const std::conditional_t<std::is_base_of_v<Location, G>, Location, G>&>(g))},
+                            detail::self_kind(a)));
+}
+
+/// A Vector, Location, Axis or Plane & a shape: Shape::intersect (an empty list for None).
+template <class G, class S,
+          std::enable_if_t<detail::is_geometry_v<G> && detail::is_shape_v<S>, int> = 0>
+ShapeList<Shape> operator&(const G& g, const S& shape) {
+    return g.intersect(static_cast<const Shape&>(shape));
 }
 
 namespace detail {
@@ -1510,3 +1814,36 @@ ShapeList<typename T::topo_type> operator*(const Plane& plane, const std::vector
 }
 
 }  // namespace build123d
+
+// ---------------------------------------------------------------------------
+// std::hash and tuple-like support (build123d's __hash__ and tuple results)
+// ---------------------------------------------------------------------------
+
+template <>
+struct std::tuple_size<build123d::SplitResult> : std::integral_constant<std::size_t, 2> {};
+template <std::size_t I>
+struct std::tuple_element<I, build123d::SplitResult> {
+    using type = const build123d::ShapeList<build123d::Shape>;
+};
+
+/// Shapes hash like build123d (TShape and location); equality is is_same().
+#define BUILD123D_SHAPE_HASH(T)                                                  \
+    template <>                                                                  \
+    struct std::hash<build123d::T> {                                             \
+        std::size_t operator()(const build123d::T& s) const { return s.hash(); } \
+    };
+BUILD123D_SHAPE_HASH(Shape)
+BUILD123D_SHAPE_HASH(Vertex)
+BUILD123D_SHAPE_HASH(Mixin1D)
+BUILD123D_SHAPE_HASH(Edge)
+BUILD123D_SHAPE_HASH(Wire)
+BUILD123D_SHAPE_HASH(Mixin2D)
+BUILD123D_SHAPE_HASH(Face)
+BUILD123D_SHAPE_HASH(Shell)
+BUILD123D_SHAPE_HASH(Mixin3D)
+BUILD123D_SHAPE_HASH(Solid)
+BUILD123D_SHAPE_HASH(Compound)
+BUILD123D_SHAPE_HASH(Curve)
+BUILD123D_SHAPE_HASH(Sketch)
+BUILD123D_SHAPE_HASH(Part)
+#undef BUILD123D_SHAPE_HASH

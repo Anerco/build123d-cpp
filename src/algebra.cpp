@@ -1,3 +1,5 @@
+// The +, -, & operators: build123d's Shape.__add__/__sub__/__and__, Compound.__add__/
+// __sub__/__and__ and Mixin1D.__add__ (shape_core.py, composite.py, one_d.py).
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepGProp_Face.hxx>
@@ -10,6 +12,7 @@
 #include <ShapeAnalysis_Curve.hxx>
 #include <TopoDS.hxx>
 
+#include "build123d/warnings.hpp"
 #include "internal.hpp"
 
 namespace build123d::detail {
@@ -26,87 +29,249 @@ const char* dim_name(int d) {
     }
 }
 
-std::vector<TopoDS_Shape> edges_of(const TopoDS_Shape& s) {
-    std::vector<TopoDS_Shape> out;
-    if (s.ShapeType() == TopAbs_EDGE) return {s};
-    if (s.ShapeType() == TopAbs_WIRE) {
-        for (BRepTools_WireExplorer exp(TopoDS::Wire(s)); exp.More(); exp.Next()) out.push_back(exp.Current());
-        return out;
+/// The top-level (non-compound) shapes of the operands, as fresh shapes.
+std::vector<Shape> top_level_shapes(const std::vector<const Shape*>& operands) {
+    std::vector<Shape> out;
+    for (const Shape* s : operands) {
+        if (s == nullptr || s->is_null()) continue;
+        for (const auto& t : top_level(s->wrapped())) out.emplace_back(t);
     }
-    for (const auto& e : entities(s, TopAbs_EDGE)) out.push_back(e);
     return out;
 }
 
-TopoDS_Shape try_wire(const std::vector<TopoDS_Shape>& edges) {
-    BRepBuilderAPI_MakeWire builder;
-    builder.Add(to_list(edges));
-    builder.Build();
-    if (!builder.IsDone()) return TopoDS_Shape();
-    return builder.Wire();
+std::vector<TopoDS_Shape> wrapped_of(const std::vector<Shape>& shapes) {
+    std::vector<TopoDS_Shape> out;
+    for (const auto& s : shapes) out.push_back(s.wrapped());
+    return out;
 }
 
-TopoDS_Shape curve_add(const Shape& a, const std::vector<TopoDS_Shape>& others) {
-    std::vector<TopoDS_Shape> summand_edges;
-    for (const auto& o : others) {
-        for (const auto& e : edges_of(o)) summand_edges.push_back(e);
+/// Shape.make_composite for the pieces of one operation: a compound of them that keeps
+/// their record when they all share one.
+Shape make_composite(const std::vector<Shape>& pieces) {
+    std::vector<TopoDS_Shape> shapes;
+    std::shared_ptr<ShapeHistory> record;
+    bool single_record = true;
+    for (const auto& p : pieces) {
+        shapes.push_back(p.wrapped());
+        if (p.history()) {
+            if (record && record != p.history()) single_record = false;
+            record = p.history();
+        }
     }
-    TopoDS_Shape result;
-    if (!a) {
-        if (others.size() == 1) {
-            result = others[0];
+    Shape composite(make_compound(shapes));
+    if (record && single_record) composite.set_history(record);
+    return composite;
+}
+
+// ---- Mixin1D.__add__
+
+/// Wire._make_wire(edges, sequenced=False).
+TopoDS_Shape make_wire_py(const std::vector<Edge>& edges) {
+    return occt("Wire", [&]() -> TopoDS_Shape {
+        BRepBuilderAPI_MakeWire builder;
+        OccShapeList combined;
+        for (const auto& e : edges) {
+            if (!e.is_null()) combined.Append(e.wrapped());
+        }
+        builder.Add(combined);
+        builder.Build();
+        if (!builder.IsDone()) {
+            switch (builder.Error()) {
+                case BRepBuilderAPI_NonManifoldWire:
+                    warn("Wire is non manifold (e.g. branching, self intersecting)");
+                    break;
+                case BRepBuilderAPI_EmptyWire: throw std::runtime_error("Wire is empty");
+                case BRepBuilderAPI_DisconnectedWire: throw std::invalid_argument("Edges are disconnected");
+                default: break;
+            }
+        }
+        return builder.Wire();
+    });
+}
+
+/// _record_matching_vertices: the vertices of a rebuilt edge as modified from those at
+/// the same points.
+void record_matching_vertices(ShapeHistory& history, const TopoDS_Shape& source, const TopoDS_Shape& placed) {
+    std::vector<TopoDS_Shape> placed_vertices;
+    for (const auto& v : tracked_subshapes({placed})) {
+        if (v.ShapeType() == TopAbs_VERTEX) placed_vertices.push_back(v);
+    }
+    for (const auto& old : tracked_subshapes({source})) {
+        if (old.ShapeType() != TopAbs_VERTEX) continue;
+        const gp_Pnt old_point = BRep_Tool::Pnt(TopoDS::Vertex(old));
+        for (const auto& added : placed_vertices) {
+            if (added.IsSame(old)) break;
+            if (BRep_Tool::Pnt(TopoDS::Vertex(added)).Distance(old_point) < TOLERANCE) {
+                history.wrapped()->AddModified(old, added);
+                break;
+            }
+        }
+    }
+}
+
+/// _joined_wire: a wire from connected edges, with the record of what became of each.
+Shape joined_wire(const std::vector<Edge>& edges, std::vector<TopoDS_Shape> before,
+                  std::vector<TopoDS_Shape> brought) {
+    const Wire wire(make_wire_py(edges));
+    auto history = std::make_shared<ShapeHistory>(nullptr, std::move(before), std::move(brought));
+    const auto placed = wire.edges();
+    std::vector<Vector> midpoints;
+    for (const auto& e : placed) midpoints.push_back(e.position_at(0.5));
+    for (const auto& source : edges) {
+        const Vector midpoint = source.position_at(0.5);
+        std::size_t best = 0;
+        double best_d = 1e300;
+        for (std::size_t i = 0; i < midpoints.size(); ++i) {
+            const double d = (midpoints[i] - midpoint).length();
+            if (d < best_d) {
+                best_d = d;
+                best = i;
+            }
+        }
+        if (midpoints.empty() || best_d > TOLERANCE) continue;
+        const TopoDS_Shape& match = placed[best].wrapped();
+        if (!match.IsSame(source.wrapped())) history->wrapped()->AddModified(source.wrapped(), match);
+        record_matching_vertices(*history, source.wrapped(), match);
+    }
+    return made_by(Shape(wire.wrapped()), history);
+}
+
+/// The edges of a 1D shape as build123d lists them (Wire.edges() is in connection order).
+std::vector<Edge> edges_of(const Shape& s) {
+    std::vector<Edge> out;
+    if (s.is_null()) return out;
+    if (s.wrapped().ShapeType() == TopAbs_WIRE) {
+        for (const auto& e : Wire(s.wrapped()).edges()) out.push_back(e);
+    } else {
+        for (const auto& e : s.edges()) out.push_back(e);
+    }
+    return out;
+}
+
+/// summands[0].fuse(*summands[1:]) with the record told which inputs were brought in.
+Shape summands_fuse(const std::vector<Shape>& summands, const std::vector<TopoDS_Shape>& brought) {
+    const std::vector<Shape> rest(summands.begin() + 1, summands.end());
+    Shape fused = summands[0].fuse(rest);
+    if (fused.history()) fused.history()->with_inputs({}, brought);
+    return fused;
+}
+
+/// Mixin1D.__add__ (also Curve.__add__): the result is an Edge, Wire or Curve (here a
+/// Shape holding the edge, wire or compound) carrying the record.
+Shape mixin1d_add(const Shape& self, const std::vector<const Shape*>& others) {
+    std::vector<Shape> summands = top_level_shapes(others);
+    if (summands.empty()) return self;
+    for (const auto& s : summands) {
+        if (topods_dim(s.wrapped()) != 1) throw std::invalid_argument("Only shapes with the same dimension can be added");
+    }
+    std::vector<Edge> summand_edges;
+    for (const auto& s : summands) {
+        for (const auto& e : edges_of(s)) summand_edges.push_back(e);
+    }
+    const std::vector<TopoDS_Shape> brought = wrapped_of(summands);
+
+    Shape sum_shape;
+    if (self.is_null()) {
+        if (summands.size() == 1) {
+            sum_shape = summands[0];
         } else {
-            result = occt("Curve +", [&] { return try_wire(summand_edges); });
-            if (result.IsNull()) {
-                std::vector<TopoDS_Shape> tools(others.begin() + 1, others.end());
-                result = bool_op(BoolOp::FUSE, {others[0]}, tools, 0.0, false);
+            try {
+                sum_shape = joined_wire(summand_edges, {}, brought);
+            } catch (const std::invalid_argument&) {
+                sum_shape = summands_fuse(summands, brought);
+            } catch (const std::runtime_error&) {
+                sum_shape = summands_fuse(summands, brought);
             }
         }
     } else {
-        std::vector<TopoDS_Shape> all;
-        for (const auto& t : top_level(a.wrapped())) {
-            for (const auto& e : edges_of(t)) all.push_back(e);
+        std::vector<Edge> all_edges = edges_of(self);
+        all_edges.insert(all_edges.end(), summand_edges.begin(), summand_edges.end());
+        try {
+            sum_shape = joined_wire(all_edges, {self.wrapped()}, brought);
+        } catch (const std::invalid_argument&) {
+            sum_shape = self.fuse(summands);
+        } catch (const std::runtime_error&) {
+            sum_shape = self.fuse(summands);
         }
-        all.insert(all.end(), summand_edges.begin(), summand_edges.end());
-        result = occt("Curve +", [&] { return try_wire(all); });
-        if (result.IsNull()) result = bool_op(BoolOp::FUSE, {a.wrapped()}, others, 0.0, false);
     }
-    if (clean_enabled()) result = clean_shape(result);
-    return result;
+    if (clean_enabled()) sum_shape = sum_shape.clean();
+    // A single Edge is returned as that Edge, with the record of how it was made
+    const auto edges = sum_shape.edges();
+    if (edges.size() == 1) sum_shape = made_by(Shape(edges[0].wrapped()), sum_shape.history());
+    return sum_shape;
 }
 
 }  // namespace
 
-TopoDS_Shape algebra(AlgebraOp op, const Shape& a, const std::vector<const Shape*>& b, int static_dim) {
-    std::vector<TopoDS_Shape> others;
-    for (const Shape* s : b) {
-        if (s == nullptr || s->is_null()) continue;
-        for (const auto& t : top_level(s->wrapped())) others.push_back(t);
-    }
-    const int a_dim = static_dim >= 0 ? static_dim : (a ? a.dim() : (others.empty() ? -1 : topods_dim(others[0])));
-
+Shape algebra(AlgebraOp op, const Shape& a, const std::vector<const Shape*>& b, int static_dim, SelfKind kind) {
     switch (op) {
         case AlgebraOp::ADD: {
-            if (others.empty()) return a.wrapped();
+            const int a_dim = static_dim >= 0 ? static_dim : (a ? a.dim() : -1);
+            const bool is_1d_shape = !a.is_null() && (a.wrapped().ShapeType() == TopAbs_EDGE ||
+                                                      a.wrapped().ShapeType() == TopAbs_WIRE);
+            // Curve.__add__ is Mixin1D.__add__, as is Edge's and Wire's
+            if (kind == SelfKind::CURVE || (kind == SelfKind::SHAPE && is_1d_shape)) return mixin1d_add(a, b);
+            if (kind == SelfKind::COMPOUND && a_dim == 1) {
+                // Compound.__add__ of a 1D compound: through a fresh Curve
+                Shape sum1d = mixin1d_add(a.is_null() ? Shape() : Shape(a.wrapped()), b);
+                if (!sum1d.is_null() && sum1d.wrapped().ShapeType() == TopAbs_EDGE) {
+                    Shape as_curve(make_compound({sum1d.wrapped()}));
+                    as_curve.set_history(ShapeHistory::of(sum1d));
+                    sum1d = as_curve;
+                }
+                copy_attributes_to(a, sum1d);
+                return sum1d;
+            }
+            const bool compound_self = kind != SelfKind::SHAPE;
+            std::vector<Shape> summands = top_level_shapes(b);
+            if (summands.empty()) return a;
+            if (compound_self) {
+                // Compound.__add__
+                const std::vector<Shape> brought = summands;
+                std::vector<Shape> all;
+                if (!a.is_null()) {
+                    for (const auto& t : top_level(a.wrapped())) all.emplace_back(t);
+                }
+                const std::vector<Shape> self_pieces = all;
+                all.insert(all.end(), summands.begin(), summands.end());
+                const int dim = a_dim >= 0 ? a_dim : topods_dim(all[0].wrapped());
+                for (const auto& s : all) {
+                    if (topods_dim(s.wrapped()) != dim) {
+                        throw std::invalid_argument(std::string("Only shapes with the same dimension can be added: not ") +
+                                                    dim_name(dim) + " and " + dim_name(topods_dim(s.wrapped())));
+                    }
+                }
+                if (all.size() <= 1) return make_composite({all[0]});
+                copy_attributes_to(a, all[0]);
+                std::vector<const Shape*> tools;
+                for (std::size_t i = 1; i < all.size(); ++i) tools.push_back(&all[i]);
+                Shape result = bool_op_shape(BoolOp::FUSE, {&all[0]}, tools, TOLERANCE);
+                if (result.history()) result.history()->with_inputs(wrapped_of(self_pieces), wrapped_of(brought));
+                if (result.wrapped().ShapeType() != TopAbs_COMPOUND) result = make_composite({result});
+                return result;
+            }
+            // Shape.__add__
             if (a_dim < 0) throw std::invalid_argument("Dimensions of objects to add to are inconsistent");
-            for (const auto& o : others) {
-                if (topods_dim(o) != a_dim) {
+            for (const auto& s : summands) {
+                if (topods_dim(s.wrapped()) != a_dim) {
                     throw std::invalid_argument(std::string("Only shapes with the same dimension can be added: not ") +
-                                                dim_name(a_dim) + " and " + dim_name(topods_dim(o)));
+                                                dim_name(a_dim) + " and " + dim_name(topods_dim(s.wrapped())));
                 }
             }
-            if (a_dim == 1) return curve_add(a, others);
-            std::vector<TopoDS_Shape> summands = top_level(a.wrapped());
-            summands.insert(summands.end(), others.begin(), others.end());
-            if (summands.size() <= 1) return make_compound(summands);
-            const std::vector<TopoDS_Shape> tools(summands.begin() + 1, summands.end());
-            return bool_op(BoolOp::FUSE, {summands[0]}, tools, TOLERANCE);
+            if (a.is_null()) {
+                if (summands.size() == 1) return summands[0];
+                return summands[0].fuse(std::vector<Shape>(summands.begin() + 1, summands.end()));
+            }
+            return a.fuse(summands);
         }
         case AlgebraOp::SUB: {
             if (a.is_null()) throw std::invalid_argument("Cannot subtract shape from empty compound");
-            if (others.empty()) return a.wrapped();
+            const std::vector<Shape> subtrahends = top_level_shapes(b);
+            if (subtrahends.empty()) return a;
+            const int a_dim = static_dim >= 0 ? static_dim : a.dim();
             if (a_dim < 0) throw std::invalid_argument("Dimensions of objects to subtract from are inconsistent");
-            for (const auto& o : others) {
-                const int d = topods_dim(o);
+            for (const auto& o : subtrahends) {
+                const int d = topods_dim(o.wrapped());
                 if (d < 0) throw std::invalid_argument("Dimensions of objects to subtract from are inconsistent");
                 if (d < a_dim) {
                     throw std::invalid_argument(
@@ -114,17 +279,43 @@ TopoDS_Shape algebra(AlgebraOp op, const Shape& a, const std::vector<const Shape
                         dim_name(a_dim) + " and " + dim_name(d));
                 }
             }
-            return bool_op(BoolOp::CUT, {a.wrapped()}, others);
+            Shape difference = a.cut(subtrahends);
+            if (kind != SelfKind::SHAPE) {
+                if (!difference.is_null() && difference.wrapped().ShapeType() != TopAbs_COMPOUND) {
+                    difference = make_composite({difference});
+                }
+                copy_attributes_to(a, difference);
+            }
+            return difference;
         }
         case AlgebraOp::AND: {
-            if (!a) throw std::invalid_argument("Cannot intersect shape with empty compound");
-            for (const Shape* s : b) {
-                if (s == nullptr || !*s) throw std::invalid_argument("Cannot intersect shape with empty compound");
-            }
-            return bool_op(BoolOp::COMMON, {a.wrapped()}, others);
+            std::vector<IntersectArg> others;
+            for (const Shape* s : b) others.emplace_back(*s);
+            return algebra_and(a, others, kind);
         }
     }
-    return TopoDS_Shape();
+    return Shape();
+}
+
+Shape algebra_and(const Shape& a, const std::vector<IntersectArg>& others, SelfKind kind) {
+    // Shape.__and__
+    if (!a) throw std::invalid_argument("Cannot intersect shape with empty compound");
+    for (const auto& o : others) {
+        if (const auto* s = std::get_if<Shape>(&o); s && !*s) {
+            throw std::invalid_argument("Cannot intersect shape with empty compound");
+        }
+    }
+    const ShapeList<Shape> pieces = a.intersect(others);
+    Shape new_shape;
+    bool found = !pieces.empty();
+    if (found) new_shape = pieces.size() == 1 ? pieces[0] : make_composite(pieces);
+    if (found && !new_shape.is_null() && clean_enabled()) new_shape = new_shape.clean();
+    if (kind == SelfKind::SHAPE) return new_shape;
+    // Compound.__and__
+    if (!found) return Shape();
+    if (new_shape.wrapped().ShapeType() != TopAbs_COMPOUND) new_shape = make_composite({new_shape});
+    copy_attributes_to(a, new_shape);
+    return new_shape;
 }
 
 std::vector<TopoDS_Shape> list_entities(const TopoDS_Shape& shape, int topabs_type) {

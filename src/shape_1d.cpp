@@ -39,6 +39,7 @@
 #include <Geom_ConicalSurface.hxx>
 #include <Geom_CylindricalSurface.hxx>
 #include <Geom_Line.hxx>
+#include <Geom_OffsetCurve.hxx>
 #include <Geom_Plane.hxx>
 #include <Geom_TrimmedCurve.hxx>
 #include <ShapeAnalysis_FreeBounds.hxx>
@@ -255,21 +256,6 @@ TopoDS_Wire make_wire(const std::vector<TopoDS_Shape>& edges) {
         }
     }
     return builder.Wire();
-}
-
-std::optional<gp_Pln> wire_plane(const Shape& wire) {
-    BRepLib_FindSurface finder(wire.wrapped(), -1, true);
-    if (finder.Found()) {
-        Handle(Geom_Plane) plane = Handle(Geom_Plane)::DownCast(finder.Surface());
-        if (!plane.IsNull()) {
-            gp_Pln pln = plane->Pln();
-            if (!finder.Location().IsIdentity()) pln.Transform(finder.Location().Transformation());
-            return pln;
-        }
-    }
-    auto common = Mixin1D(wire.wrapped()).common_plane();
-    if (common) return common->wrapped();
-    return std::nullopt;
 }
 
 }  // namespace
@@ -592,8 +578,8 @@ std::optional<Plane> Mixin1D::common_plane(const std::vector<Shape>& lines, doub
     for (const auto& l : all) global_center += l.position_at(0.5);
     global_center = global_center / static_cast<double>(all.size());
     const auto origin = result->intersect(Axis(global_center, result->z_dir));
-    if (!origin) return result;
-    return result->shift_origin(*origin);
+    if (!origin || !std::holds_alternative<Vector>(*origin)) return result;
+    return result->shift_origin(std::get<Vector>(*origin));
 }
 
 Wire Mixin1D::offset_2d(double distance, Kind kind, Side side, bool closed) const {
@@ -1013,6 +999,77 @@ Wire Edge::close() const { return Wire(*this).close(); }
 
 bool Edge::is_infinite() const { return geom_type() == GeomType::LINE && length() > 1e100; }
 
+bool Edge::geom_equal(const Edge& other, double tol, int num_interpolation_points) const {
+    if (other.is_null() || is_null()) return false;
+    const GeomType type = geom_type();
+    if (type != other.geom_type()) return false;
+    if (position_at(0) != other.position_at(0) || position_at(1) != other.position_at(1)) return false;
+    const BRepAdaptor_Curve ga1(TopoDS::Edge(obj_)), ga2(TopoDS::Edge(other.obj_));
+    switch (type) {
+        case GeomType::LINE: return true;
+        case GeomType::CIRCLE: {
+            const gp_Circ c1 = ga1.Circle(), c2 = ga2.Circle();
+            return std::abs(c1.Radius() - c2.Radius()) < tol && Vector(c1.Location()) == Vector(c2.Location()) &&
+                   Vector(c1.Axis().Direction()) == Vector(c2.Axis().Direction());
+        }
+        case GeomType::ELLIPSE: {
+            const gp_Elips e1 = ga1.Ellipse(), e2 = ga2.Ellipse();
+            return std::abs(e1.MajorRadius() - e2.MajorRadius()) < tol &&
+                   std::abs(e1.MinorRadius() - e2.MinorRadius()) < tol && Vector(e1.Location()) == Vector(e2.Location()) &&
+                   Vector(e1.Axis().Direction()) == Vector(e2.Axis().Direction());
+        }
+        case GeomType::HYPERBOLA: {
+            const gp_Hypr h1 = ga1.Hyperbola(), h2 = ga2.Hyperbola();
+            return std::abs(h1.MajorRadius() - h2.MajorRadius()) < tol &&
+                   std::abs(h1.MinorRadius() - h2.MinorRadius()) < tol && Vector(h1.Location()) == Vector(h2.Location()) &&
+                   Vector(h1.Axis().Direction()) == Vector(h2.Axis().Direction());
+        }
+        case GeomType::PARABOLA: {
+            const gp_Parab p1 = ga1.Parabola(), p2 = ga2.Parabola();
+            return std::abs(p1.Focal() - p2.Focal()) < tol && Vector(p1.Location()) == Vector(p2.Location()) &&
+                   Vector(p1.Axis().Direction()) == Vector(p2.Axis().Direction());
+        }
+        case GeomType::BEZIER: {
+            const Handle(Geom_BezierCurve) b1 = ga1.Bezier(), b2 = ga2.Bezier();
+            if (b1->Degree() != b2->Degree() || b1->NbPoles() != b2->NbPoles()) return false;
+            for (int i = 1; i <= b1->NbPoles(); ++i) {
+                if (Vector(b1->Pole(i)) != Vector(b2->Pole(i))) return false;
+                if (b1->IsRational() && std::abs(b1->Weight(i) - b2->Weight(i)) >= tol) return false;
+            }
+            return true;
+        }
+        case GeomType::BSPLINE: {
+            const Handle(Geom_BSplineCurve) s1 = ga1.BSpline(), s2 = ga2.BSpline();
+            if (s1->Degree() != s2->Degree()) return false;
+            if (s1->IsPeriodic() != s2->IsPeriodic()) return false;
+            if (s1->NbPoles() != s2->NbPoles() || s1->NbKnots() != s2->NbKnots()) return false;
+            for (int i = 1; i <= s1->NbPoles(); ++i) {
+                if (Vector(s1->Pole(i)) != Vector(s2->Pole(i))) return false;
+                if (s1->IsRational() && std::abs(s1->Weight(i) - s2->Weight(i)) >= tol) return false;
+            }
+            for (int i = 1; i <= s1->NbKnots(); ++i) {
+                if (std::abs(s1->Knot(i) - s2->Knot(i)) >= tol) return false;
+                if (s1->Multiplicity(i) != s2->Multiplicity(i)) return false;
+            }
+            return true;
+        }
+        case GeomType::OFFSET: {
+            const Handle(Geom_OffsetCurve) oc1 = ga1.OffsetCurve(), oc2 = ga2.OffsetCurve();
+            if (std::abs(oc1->Offset() - oc2->Offset()) >= tol) return false;
+            if (Vector(oc1->Direction()) != Vector(oc2->Direction())) return false;
+            const Edge basis1(TopoDS_Shape(BRepBuilderAPI_MakeEdge(oc1->BasisCurve()).Edge()));
+            const Edge basis2(TopoDS_Shape(BRepBuilderAPI_MakeEdge(oc2->BasisCurve()).Edge()));
+            return basis1.geom_equal(basis2, tol);
+        }
+        default:
+            for (int i = 1; i <= num_interpolation_points; ++i) {
+                const double t = static_cast<double>(i) / (num_interpolation_points + 1);
+                if (position_at(t) != other.position_at(t)) return false;
+            }
+            return true;
+    }
+}
+
 std::vector<Vector> Edge::find_intersection_points(const Edge& other, double tolerance) const {
     require_not_null("Can't find intersections of empty edge");
     std::vector<Vector> out;
@@ -1201,15 +1258,16 @@ Wire Wire::make_convex_hull(const std::vector<Edge>& edges, double tolerance) {
     return Wire(all, true);
 }
 
-ShapeList<Edge> Wire::edges() const {
+ShapeList<Edge> Wire::edges(Select select) const {
     ShapeList<Edge> out;
-    if (obj_.IsNull()) return out;
+    if (obj_.IsNull()) return select_shapes(*this, std::move(out), select);
+    const auto path = extraction_path(*this);
     for (const auto& e : wire_edges(obj_)) {
         Edge edge(e);
-        edge.extracted_from(*this);
+        ShapeAccess::set_topo_path(edge, path);
         out.push_back(std::move(edge));
     }
-    return out;
+    return select_shapes(*this, std::move(out), select);
 }
 
 ShapeList<Edge> Wire::order_edges() const {
@@ -1226,113 +1284,6 @@ ShapeList<Edge> Wire::order_edges() const {
         }
     }
     return ordered;
-}
-
-Wire Wire::fillet_2d(double radius, const std::vector<Vertex>& vertices) const {
-    require_not_null("Can't fillet an empty wire");
-    const auto pln = wire_plane(*this);
-    if (!pln) throw std::invalid_argument("Wire is not planar");
-    std::vector<TopoDS_Edge> edges = wire_edges(obj_);
-    const bool closed = is_closed();
-    for (const auto& vertex : vertices) {
-        if (vertex.is_null()) continue;
-        const gp_Pnt vp = BRep_Tool::Pnt(TopoDS::Vertex(vertex.wrapped()));
-        // find the two edges meeting at this vertex (end of one, start of the next)
-        int found = -1;
-        const int n = static_cast<int>(edges.size());
-        for (int i = 0; i < n; ++i) {
-            if (!closed && i == n - 1) break;
-            const int j = (i + 1) % n;
-            const Vector end_i = Edge(edges[static_cast<std::size_t>(i)]).position_at(1);
-            const Vector start_j = Edge(edges[static_cast<std::size_t>(j)]).position_at(0);
-            if (end_i.to_pnt().Distance(vp) < TOLERANCE && start_j.to_pnt().Distance(vp) < TOLERANCE) {
-                found = i;
-                break;
-            }
-        }
-        if (found < 0) continue;  // end vertices of open wires can't be filleted
-        const std::size_t i = static_cast<std::size_t>(found);
-        const std::size_t j = (i + 1) % edges.size();
-        const Vector t0 = Edge(edges[i]).tangent_at(1.0), t1 = Edge(edges[j]).tangent_at(0.0);
-        if (t0.cross(t1).length() <= TOLERANCE && t0.dot(t1) > 0) continue;  // tangent continuous
-        ChFi2d_FilletAPI api(edges[i], edges[j], *pln);
-        if (!api.Perform(radius) || api.NbResults(vp) == 0) {
-            throw std::invalid_argument("Fillet algorithm failed for vertex at " + Vector(vp).to_string() +
-                                        " with radius " + std::to_string(radius));
-        }
-        TopoDS_Edge e1, e2;
-        const TopoDS_Edge fillet = api.Result(vp, e1, e2);
-        std::vector<TopoDS_Edge> rebuilt;
-        for (std::size_t k = 0; k < edges.size(); ++k) {
-            if (k == i) {
-                if (!e1.IsNull() && linear_length(e1) > TOLERANCE) rebuilt.push_back(e1);
-                rebuilt.push_back(fillet);
-            } else if (k == j) {
-                if (!e2.IsNull() && linear_length(e2) > TOLERANCE) rebuilt.push_back(e2);
-            } else {
-                rebuilt.push_back(edges[k]);
-            }
-        }
-        edges = rebuilt;
-    }
-    std::vector<TopoDS_Shape> shapes(edges.begin(), edges.end());
-    Wire result(occt("fillet_2d", [&] { return TopoDS_Shape(make_wire(shapes)); }));
-    if (result.is_forward() != is_forward()) result.obj_.Reverse();
-    result.copy_metadata_from(*this);
-    return result;
-}
-
-Wire Wire::chamfer_2d(double distance, double distance2, const std::vector<Vertex>& vertices,
-                      std::optional<Edge> reference) const {
-    require_not_null("Can't chamfer empty wire");
-    std::vector<TopoDS_Edge> edges = wire_edges(obj_);
-    const bool closed = is_closed();
-    for (const auto& vertex : vertices) {
-        if (vertex.is_null()) continue;
-        const gp_Pnt vp = BRep_Tool::Pnt(TopoDS::Vertex(vertex.wrapped()));
-        int found = -1;
-        const int n = static_cast<int>(edges.size());
-        for (int i = 0; i < n; ++i) {
-            if (!closed && i == n - 1) break;
-            const int j = (i + 1) % n;
-            if (Edge(edges[static_cast<std::size_t>(i)]).position_at(1).to_pnt().Distance(vp) < TOLERANCE &&
-                Edge(edges[static_cast<std::size_t>(j)]).position_at(0).to_pnt().Distance(vp) < TOLERANCE) {
-                found = i;
-                break;
-            }
-        }
-        if (found < 0) continue;
-        const std::size_t i = static_cast<std::size_t>(found);
-        const std::size_t j = (i + 1) % edges.size();
-        // `distance` is measured on the reference edge (default: the first edge).
-        bool swap = false;
-        if (reference) {
-            const Edge next(edges[j]);
-            swap = next.is_same(*reference) || (next.geom_type() == reference->geom_type() &&
-                                                (next.center() - reference->center()).length() < TOLERANCE);
-        }
-        ChFi2d_ChamferAPI api(edges[i], edges[j]);
-        if (!api.Perform()) throw std::invalid_argument("Chamfer failed");
-        TopoDS_Edge e1, e2;
-        const TopoDS_Edge chamfer = swap ? api.Result(e1, e2, distance2, distance) : api.Result(e1, e2, distance, distance2);
-        std::vector<TopoDS_Edge> rebuilt;
-        for (std::size_t k = 0; k < edges.size(); ++k) {
-            if (k == i) {
-                if (linear_length(e1) > TOLERANCE) rebuilt.push_back(e1);
-                rebuilt.push_back(chamfer);
-            } else if (k == j) {
-                if (linear_length(e2) > TOLERANCE) rebuilt.push_back(e2);
-            } else {
-                rebuilt.push_back(edges[k]);
-            }
-        }
-        edges = rebuilt;
-    }
-    std::vector<TopoDS_Shape> shapes(edges.begin(), edges.end());
-    Wire result(occt("chamfer_2d", [&] { return TopoDS_Shape(make_wire(shapes)); }));
-    if (result.is_forward() != is_forward()) result.obj_.Reverse();
-    result.copy_metadata_from(*this);
-    return result;
 }
 
 Wire Wire::close() const {

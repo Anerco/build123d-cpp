@@ -74,7 +74,8 @@ bool Mixin3D::is_inside(const Vector& point, double tolerance) const {
     return classifier.State() == TopAbs_IN || classifier.IsOnAFace();
 }
 
-TopoDS_Shape Mixin3D::fillet_topods(double radius, const std::vector<Edge>& edge_list) const {
+TopoDS_Shape Mixin3D::fillet_topods(double radius, const std::vector<Edge>& edge_list,
+                                    std::shared_ptr<ShapeHistory>* history) const {
     require_not_null("Can't fillet an empty shape");
     TopoDS_Shape result;
     bool ok = true;
@@ -87,6 +88,7 @@ TopoDS_Shape Mixin3D::fillet_topods(double radius, const std::vector<Edge>& edge
             result = make_3d_result(builder.Shape());
             ok = Shape(result).is_valid();
         }
+        if (ok && history) *history = ShapeHistory::from_algorithm(builder, {obj_}, result);
     } catch (const Standard_Failure&) {
         ok = false;
     }
@@ -100,7 +102,8 @@ TopoDS_Shape Mixin3D::fillet_topods(double radius, const std::vector<Edge>& edge
 
 TopoDS_Shape Mixin3D::chamfer_topods(double length, std::optional<double> length2,
                                      const std::vector<Edge>& edge_list,
-                                     const std::optional<Face>& face) const {
+                                     const std::optional<Face>& face,
+                                     std::shared_ptr<ShapeHistory>* history) const {
     require_not_null("Can't chamfer an empty shape");
     if (face) {
         const auto face_edges = face->edges();
@@ -133,6 +136,7 @@ TopoDS_Shape Mixin3D::chamfer_topods(double length, std::optional<double> length
             result = make_3d_result(builder.Shape());
             ok = Shape(result).is_valid();
         }
+        if (ok && history) *history = ShapeHistory::from_algorithm(builder, {obj_}, result);
     } catch (const Standard_Failure&) {
         ok = false;
     }
@@ -433,20 +437,37 @@ Solid Solid::draft(const std::vector<Face>& faces, const Plane& neutral_plane, d
     for (const auto& f : faces) {
         const GeomType t = f.geom_type();
         if (t != GeomType::PLANE && t != GeomType::CYLINDER && t != GeomType::CONE) {
-            throw std::invalid_argument("Draft is only supported on planar, cylindrical and conical faces");
+            throw std::invalid_argument("Face has unsupported geometry type " + build123d::to_string(t) +
+                                        ". Only PLANAR, CYLINDRICAL, and CONICAL faces are supported.");
         }
     }
-    return derive<Solid>(occt("draft", [&] {
-        BRepOffsetAPI_DraftAngle builder(obj_);
-        for (const auto& f : faces) {
+    BRepOffsetAPI_DraftAngle builder(obj_);
+    for (const auto& f : faces) {
+        occt("draft", [&] {
             builder.Add(TopoDS::Face(f.wrapped()), neutral_plane.z_dir.to_dir(), angle * DEG2RAD,
                         neutral_plane.wrapped(), true);
-            if (!builder.AddDone()) throw std::runtime_error("Draft could not be added to a face");
+            return 0;
+        });
+        if (!builder.AddDone()) {
+            throw DraftAngleError("Draft could not be added to a face.", f, Shape(builder.ProblematicShape()));
         }
+    }
+    TopoDS_Shape drafted;
+    try {
         builder.Build();
-        if (!builder.IsDone()) throw std::runtime_error("Draft build failed on the given solid");
-        return unwrap(builder.Shape(), true);
-    }));
+        drafted = builder.Shape();
+    } catch (const Standard_Failure&) {
+        throw DraftAngleError("Draft build failed on the given solid.", std::nullopt, Shape(builder.ProblematicShape()));
+    }
+    if (drafted.IsNull() || drafted.ShapeType() != TopAbs_SOLID) {
+        throw DraftAngleError("Draft build failed on the given solid.", std::nullopt, Shape(builder.ProblematicShape()));
+    }
+    Solid result(drafted);
+    result.set_history(ShapeHistory::from_algorithm(builder, {obj_}, drafted));
+    return result;
 }
+
+DraftAngleError::DraftAngleError(const std::string& message, std::optional<Face> face_in, Shape problematic)
+    : std::runtime_error(message), face(std::move(face_in)), problematic_shape(std::move(problematic)) {}
 
 }  // namespace build123d

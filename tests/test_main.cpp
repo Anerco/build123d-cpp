@@ -80,7 +80,7 @@ TEST(axis) {
     CHECK(a.is_opposite(-Axis::Z));
     CHECK(Axis::X.is_normal(Axis::Y));
     const auto hit = Axis({0, 1, 0}, {1, 0, 0}).intersect(Axis({3, 0, 0}, {0, 1, 0}));
-    CHECK(hit && *hit == Vector(3, 1, 0));
+    CHECK(hit && std::get<Vector>(*hit) == Vector(3, 1, 0));
     CHECK(!Axis::X.intersect(Axis({0, 1, 0}, {1, 0, 0})).has_value());
 }
 
@@ -114,9 +114,9 @@ TEST(plane_math) {
     // Intersections
     CHECK(!Plane::XY.intersect(Plane::XY.offset(1)).has_value());
     const auto line = Plane::XY.intersect(Plane::XZ);
-    CHECK(line && line->is_parallel(Axis::X));
+    CHECK(line && std::get<Axis>(*line).is_parallel(Axis::X));
     const auto point = Plane::XY.intersect(Axis({0, 0, 5}, {0, 0, -1}));
-    CHECK(point && *point == Vector(0, 0, 0));
+    CHECK(point && std::get<Vector>(*point) == Vector(0, 0, 0));
 }
 
 TEST(plane_fields_stay_authoritative) {

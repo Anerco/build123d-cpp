@@ -9,9 +9,12 @@
 #include <ostream>
 #include <string>
 #include <type_traits>
+#include <variant>
 #include <vector>
 
 #include <Bnd_Box.hxx>
+#include <Bnd_OBB.hxx>
+#include <gp_GTrsf.hxx>
 #include <gp_Ax1.hxx>
 #include <gp_Ax2.hxx>
 #include <gp_Ax3.hxx>
@@ -39,9 +42,13 @@ class Axis;
 class Plane;
 class Location;
 class BoundBox;
+class Matrix;
+class Shape;
 class Vertex;
 class Edge;
 class Face;
+template <class T>
+class ShapeList;
 
 // ---------------------------------------------------------------------------
 // Vector
@@ -88,6 +95,19 @@ public:
     double signed_distance_from_plane(const Plane& plane) const;
     /// Apply a transformation as a point (default) or as a direction.
     Vector transform(const gp_Trsf& trsf, bool is_direction = false) const;
+    /// build123d's Vector.transform(Matrix): the matrix's rigid part (gp_GTrsf::Trsf).
+    Vector transform(const Matrix& affine_transform, bool is_direction = false) const;
+    /// Python's round(vector, ndigits): each coordinate rounded half to even.
+    Vector round(int ndigits = 0) const;
+
+    /// The other point if it is this point (build123d's Vector.intersect and &);
+    /// std::nullopt for Python's None.
+    std::optional<Vector> intersect(const Vector& vector) const;
+    std::optional<Vector> intersect(const Location& location) const;
+    std::optional<Vector> intersect(const Axis& axis) const;
+    std::optional<Vector> intersect(const Plane& plane) const;
+    /// Shape.intersect(this point) (defined with the topology).
+    ShapeList<Shape> intersect(const Shape& shape) const;
 
     gp_Vec wrapped() const { return gp_Vec(X, Y, Z); }
     gp_Vec to_vec() const { return gp_Vec(X, Y, Z); }
@@ -110,6 +130,8 @@ public:
     /// Equality after rounding to 5 decimal places, like build123d.
     bool operator==(const Vector& o) const;
     bool operator!=(const Vector& o) const { return !(*this == o); }
+    /// Hash of the rounded coordinates (consistent with ==, as build123d's __hash__).
+    std::size_t hash() const;
 
     std::string to_string() const;
 };
@@ -152,14 +174,22 @@ public:
     Axis reverse() const;
     Axis operator-() const { return reverse(); }
 
-    /// Intersection point with another axis (none if skew/parallel; position if coaxial).
-    std::optional<Vector> intersect(const Axis& other) const;
+    /// Intersection with another axis: this Axis if coaxial, the crossing point, or
+    /// std::nullopt (skew or parallel), as build123d's Vector | Axis | None.
+    std::optional<std::variant<Vector, Axis>> intersect(const Axis& other) const;
     /// The point itself if it lies on the axis.
     std::optional<Vector> intersect(const Vector& point) const;
-    std::optional<Vector> intersect(const Plane& plane) const;
+    /// The location if it lies on the axis with its z along it, its position if it only
+    /// lies on the axis, else std::nullopt.
+    std::optional<std::variant<Vector, Location>> intersect(const Location& location) const;
+    /// Plane::intersect(Axis): this Axis if it lies in the plane, else the crossing point.
+    std::optional<std::variant<Vector, Axis>> intersect(const Plane& plane) const;
+    /// Shape.intersect(this axis) (defined with the topology).
+    ShapeList<Shape> intersect(const Shape& shape) const;
 
     bool operator==(const Axis& o) const;
     bool operator!=(const Axis& o) const { return !(*this == o); }
+    std::size_t hash() const;
     std::string to_string() const;
 
 private:
@@ -208,11 +238,24 @@ public:
     Location mirror(const Plane& mirror_plane) const;
     Vector center() const { return position(); }
 
+    /// build123d's Location.intersect and &: the point if it is at this position.
+    std::optional<Vector> intersect(const Vector& vector) const;
+    /// This location if equal, its position if only the positions match, else nullopt.
+    std::optional<std::variant<Vector, Location>> intersect(const Location& location) const;
+    /// Axis::intersect(this location).
+    std::optional<std::variant<Vector, Location>> intersect(const Axis& axis) const;
+    /// Plane::intersect(this location).
+    std::optional<std::variant<Vector, Location>> intersect(const Plane& plane) const;
+    /// Shape.intersect(this location) (defined with the topology).
+    ShapeList<Shape> intersect(const Shape& shape) const;
+
     TopLoc_Location wrapped() const { return TopLoc_Location(trsf_); }
     const gp_Trsf& transformation() const { return trsf_; }
 
     bool operator==(const Location& o) const;
     bool operator!=(const Location& o) const { return !(*this == o); }
+    /// Hash of the rounded position and canonical quaternion (consistent with ==).
+    std::size_t hash() const;
     std::string to_string() const;
 
 protected:
@@ -319,11 +362,21 @@ public:
 
     bool contains(const Vector& point, double tolerance = TOLERANCE) const;
     bool contains(const Axis& axis, double tolerance = TOLERANCE) const;
-    std::optional<Vector> intersect(const Axis& axis) const;
-    std::optional<Axis> intersect(const Plane& other) const;
+    /// The axis if it lies in the plane, the crossing point, or std::nullopt (parallel).
+    std::optional<std::variant<Vector, Axis>> intersect(const Axis& axis) const;
+    /// This plane if coplanar (same z_dir), the line of intersection, or std::nullopt.
+    std::optional<std::variant<Axis, Plane>> intersect(const Plane& other) const;
+    /// The point if it lies in the plane.
+    std::optional<Vector> intersect(const Vector& point) const;
+    /// The location if it lies in the plane with the plane's z_dir, its position if it
+    /// only lies in the plane, else std::nullopt.
+    std::optional<std::variant<Vector, Location>> intersect(const Location& location) const;
+    /// Shape.intersect(this plane) (defined with the topology).
+    ShapeList<Shape> intersect(const Shape& shape) const;
 
     bool operator==(const Plane& o) const;
     bool operator!=(const Plane& o) const { return !(*this == o); }
+    std::size_t hash() const;
     std::string to_string() const;
 
 private:
@@ -347,6 +400,34 @@ Location operator*(const Plane& plane, const Plane& other);
 Plane operator*(const Location& loc, const Plane& plane);
 std::vector<Location> operator*(const Plane& plane, const std::vector<Location>& locs);
 std::vector<Location> operator*(const Location& loc, const std::vector<Location>& locs);
+
+// ---- build123d's & between geometry objects (the same as intersect)
+inline std::optional<Vector> operator&(const Vector& a, const Vector& b) { return a.intersect(b); }
+inline std::optional<Vector> operator&(const Vector& a, const Location& b) { return a.intersect(b); }
+inline std::optional<Vector> operator&(const Vector& a, const Axis& b) { return a.intersect(b); }
+inline std::optional<Vector> operator&(const Vector& a, const Plane& b) { return a.intersect(b); }
+inline std::optional<std::variant<Vector, Axis>> operator&(const Axis& a, const Axis& b) { return a.intersect(b); }
+inline std::optional<Vector> operator&(const Axis& a, const Vector& b) { return a.intersect(b); }
+inline std::optional<std::variant<Vector, Location>> operator&(const Axis& a, const Location& b) {
+    return a.intersect(b);
+}
+inline std::optional<std::variant<Vector, Axis>> operator&(const Axis& a, const Plane& b) { return a.intersect(b); }
+inline std::optional<Vector> operator&(const Location& a, const Vector& b) { return a.intersect(b); }
+inline std::optional<std::variant<Vector, Location>> operator&(const Location& a, const Location& b) {
+    return a.intersect(b);
+}
+inline std::optional<std::variant<Vector, Location>> operator&(const Location& a, const Axis& b) {
+    return a.intersect(b);
+}
+inline std::optional<std::variant<Vector, Location>> operator&(const Location& a, const Plane& b) {
+    return a.intersect(b);
+}
+inline std::optional<std::variant<Vector, Axis>> operator&(const Plane& a, const Axis& b) { return a.intersect(b); }
+inline std::optional<std::variant<Axis, Plane>> operator&(const Plane& a, const Plane& b) { return a.intersect(b); }
+inline std::optional<Vector> operator&(const Plane& a, const Vector& b) { return a.intersect(b); }
+inline std::optional<std::variant<Vector, Location>> operator&(const Plane& a, const Location& b) {
+    return a.intersect(b);
+}
 
 // ---------------------------------------------------------------------------
 // BoundBox
@@ -400,6 +481,82 @@ Vector to_align_offset(const Vector& min_point, const Vector& max_point, const A
                        std::optional<Vector> center = std::nullopt);
 
 // ---------------------------------------------------------------------------
+// Matrix
+// ---------------------------------------------------------------------------
+
+/// A 4x4 affine transformation matrix wrapping a gp_GTrsf (build123d's Matrix).
+class Matrix {
+public:
+    /// The identity.
+    Matrix() = default;
+    explicit Matrix(const gp_GTrsf& trsf) : trsf_(trsf) {}
+    explicit Matrix(const gp_Trsf& trsf) : trsf_(trsf) {}
+    /// From 3 (or 4) rows of 4 values; a 4th row must be [0, 0, 0, 1].
+    /// std::invalid_argument otherwise (Python's TypeError/ValueError).
+    explicit Matrix(const std::vector<std::vector<double>>& matrix);
+
+    /// Rotate in place about an axis by `angle` degrees (applied after this transform).
+    void rotate(const Axis& axis, double angle);
+    Matrix inverse() const;
+    /// Matrix * matrix.
+    Matrix multiply(const Matrix& other) const;
+    /// The point transformed by this matrix (Vector::transform).
+    Vector multiply(const Vector& other) const;
+    /// The 16 values column by column (the glTF layout).
+    std::vector<double> transposed_list() const;
+    /// The value at (row, column), 0-indexed (Python's matrix[row, col]); the implied 4th
+    /// row is [0, 0, 0, 1]. std::out_of_range outside 0..3.
+    double operator()(int row, int col) const;
+
+    const gp_GTrsf& wrapped() const { return trsf_; }
+    std::string to_string() const;
+
+private:
+    gp_GTrsf trsf_;
+};
+
+std::ostream& operator<<(std::ostream& os, const Matrix& m);
+
+// ---------------------------------------------------------------------------
+// OrientedBoundBox
+// ---------------------------------------------------------------------------
+
+/// An oriented bounding box (Bnd_OBB) of a shape. Its axes are arbitrary and may differ
+/// between platforms.
+class OrientedBoundBox {
+public:
+    OrientedBoundBox() = default;
+    explicit OrientedBoundBox(const Bnd_OBB& obb) : obb_(obb) {}
+    /// The OBB of a shape (BRepBndLib::AddOBB using triangulation).
+    explicit OrientedBoundBox(const Shape& shape);
+
+    /// The unique corners (2 for a line, 4 for a planar face in polygon order, 8 otherwise).
+    std::vector<Vector> corners() const;
+    /// Length of the body diagonal.
+    double diagonal() const;
+    /// Location of the center with the box's directions.
+    Location location() const;
+    /// The box's coordinate system: center, x_direction and z_direction.
+    Plane plane() const;
+    /// Full extents along the box axes.
+    Vector size() const;
+    Vector x_direction() const;
+    Vector y_direction() const;
+    Vector z_direction() const;
+    Vector center() const;
+    bool is_completely_inside(const OrientedBoundBox& other) const;
+    bool is_outside(const Vector& point) const;
+
+    const Bnd_OBB& wrapped() const { return obb_; }
+    std::string to_string() const;
+
+private:
+    Bnd_OBB obb_;
+};
+
+std::ostream& operator<<(std::ostream& os, const OrientedBoundBox& b);
+
+// ---------------------------------------------------------------------------
 // Color
 // ---------------------------------------------------------------------------
 
@@ -422,8 +579,28 @@ public:
     Quantity_ColorRGBA wrapped() const;
     std::array<double, 4> to_tuple() const { return {red, green, blue, alpha}; }
     std::string to_string() const;
+    /// Component-wise equality (build123d compares Colors by identity; C++ Colors are values).
+    bool operator==(const Color& o) const {
+        return red == o.red && green == o.green && blue == o.blue && alpha == o.alpha;
+    }
+    bool operator!=(const Color& o) const { return !(*this == o); }
+    std::size_t hash() const;
 };
 
 std::ostream& operator<<(std::ostream& os, const Color& c);
 
 }  // namespace build123d
+
+#define BUILD123D_GEOMETRY_HASH(T)                                               \
+    template <>                                                                  \
+    struct std::hash<build123d::T> {                                             \
+        std::size_t operator()(const build123d::T& v) const { return v.hash(); } \
+    };
+BUILD123D_GEOMETRY_HASH(Vector)
+BUILD123D_GEOMETRY_HASH(Axis)
+BUILD123D_GEOMETRY_HASH(Location)
+BUILD123D_GEOMETRY_HASH(Rotation)
+BUILD123D_GEOMETRY_HASH(Pos)
+BUILD123D_GEOMETRY_HASH(Plane)
+BUILD123D_GEOMETRY_HASH(Color)
+#undef BUILD123D_GEOMETRY_HASH

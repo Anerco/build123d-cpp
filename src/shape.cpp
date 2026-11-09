@@ -18,6 +18,7 @@
 #include <BRep_Tool.hxx>
 #include <Poly_Triangulation.hxx>
 #include <ShapeFix_Solid.hxx>
+#include <ShapeUpgrade_UnifySameDomain.hxx>
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
@@ -25,6 +26,7 @@
 #include <gce_MakeLin.hxx>
 #include <gp_GTrsf.hxx>
 
+#include "build123d/warnings.hpp"
 #include "internal.hpp"
 
 namespace build123d {
@@ -86,14 +88,17 @@ int compound_props_dim(const TopoDS_Shape& compound) {
 }
 
 template <class T>
-ShapeList<T> sub_shapes(const Shape& self, TopAbs_ShapeEnum type) {
+ShapeList<T> sub_shapes(const Shape& self, TopAbs_ShapeEnum type, Select select) {
     ShapeList<T> out;
+    if (self.is_null()) return select_shapes(self, std::move(out), select);
+    const auto path = extraction_path(self);
     for (const auto& s : entities(self.wrapped(), type)) {
+        if (type == TopAbs_EDGE && BRep_Tool::Degenerated(TopoDS::Edge(s))) continue;
         T item(s);
-        item.extracted_from(self);
+        ShapeAccess::set_topo_path(item, path);
         out.push_back(std::move(item));
     }
-    return out;
+    return select_shapes(self, std::move(out), select);
 }
 
 template <class T>
@@ -193,12 +198,12 @@ double Shape::volume() const {
         case TopAbs_SHELL: return shell_volume(obj_);
         case TopAbs_COMPOUND:
         case TopAbs_COMPSOLID: {
+            // Compound.volume: the solids and shells of get_type (this compound's children
+            // and those of its direct sub-compounds)
+            const Compound compound(obj_);
             double total = 0.0;
-            for (const auto& s : top_level(obj_)) {
-                if (s.ShapeType() == TopAbs_SOLID) total += properties(s, 3).Mass();
-                if (s.ShapeType() == TopAbs_SHELL) total += shell_volume(s);
-                if (s.ShapeType() == TopAbs_COMPSOLID) total += properties(s, 3).Mass();
-            }
+            for (const auto& s : compound.get_type<Solid>()) total += properties(s.wrapped(), 3).Mass();
+            for (const auto& s : compound.get_type<Shell>()) total += shell_volume(s.wrapped());
             return total;
         }
         default: return 0.0;
@@ -273,23 +278,37 @@ void Shape::set_location(const Location& loc) {
 Vector Shape::position() const { return location().position(); }
 Vector Shape::orientation() const { return location().orientation(); }
 
-ShapeList<Vertex> Shape::vertices() const { return sub_shapes<Vertex>(*this, TopAbs_VERTEX); }
+ShapeList<Vertex> Shape::vertices(Select select) const {
+    return sub_shapes<Vertex>(*this, TopAbs_VERTEX, select);
+}
+ShapeList<Edge> Shape::edges(Select select) const { return sub_shapes<Edge>(*this, TopAbs_EDGE, select); }
+ShapeList<Wire> Shape::wires(Select select) const { return sub_shapes<Wire>(*this, TopAbs_WIRE, select); }
+ShapeList<Face> Shape::faces(Select select) const { return sub_shapes<Face>(*this, TopAbs_FACE, select); }
+ShapeList<Shell> Shape::shells(Select select) const { return sub_shapes<Shell>(*this, TopAbs_SHELL, select); }
+ShapeList<Solid> Shape::solids(Select select) const { return sub_shapes<Solid>(*this, TopAbs_SOLID, select); }
 
-ShapeList<Edge> Shape::edges() const {
-    ShapeList<Edge> out;
-    for (const auto& s : entities(obj_, TopAbs_EDGE)) {
-        if (BRep_Tool::Degenerated(TopoDS::Edge(s))) continue;
-        Edge e(s);
-        e.extracted_from(*this);
-        out.push_back(std::move(e));
-    }
-    return out;
+namespace detail {
+
+std::shared_ptr<const std::vector<Shape>> extraction_path(const Shape& source) {
+    auto path = std::make_shared<std::vector<Shape>>();
+    if (const auto& own = ShapeAccess::topo_path(source)) *path = *own;
+    path->push_back(source);
+    return path;
 }
 
-ShapeList<Wire> Shape::wires() const { return sub_shapes<Wire>(*this, TopAbs_WIRE); }
-ShapeList<Face> Shape::faces() const { return sub_shapes<Face>(*this, TopAbs_FACE); }
-ShapeList<Shell> Shape::shells() const { return sub_shapes<Shell>(*this, TopAbs_SHELL); }
-ShapeList<Solid> Shape::solids() const { return sub_shapes<Solid>(*this, TopAbs_SOLID); }
+const ShapeHistory* history_for_select(const Shape& owner, Select select) {
+    if (select != Select::LAST && select != Select::NEW) {
+        throw std::invalid_argument("Invalid input, must be one of ['ALL', 'LAST', 'NEW']");
+    }
+    if (!owner.history()) {
+        throw std::invalid_argument(std::string("Select.") + (select == Select::LAST ? "LAST" : "NEW") +
+                                    " needs a record of how this shape was made, and this one has none - "
+                                    "it is the result of no recorded operation");
+    }
+    return owner.history().get();
+}
+
+}  // namespace detail
 
 ShapeList<Compound> Shape::compounds() const {
     ShapeList<Compound> out;
@@ -315,18 +334,37 @@ ShapeList<Shape> Shape::get_top_level_shapes() const {
     return out;
 }
 
+std::vector<Shape> Shape::topo_path() const {
+    return topo_path_ ? *topo_path_ : std::vector<Shape>{};
+}
+
+void Shape::set_topo_path(std::vector<Shape> path) {
+    if (path.empty()) {
+        topo_path_.reset();
+    } else {
+        topo_path_ = std::make_shared<const std::vector<Shape>>(std::move(path));
+    }
+}
+
 std::optional<Shape> Shape::topo_parent() const {
-    if (parent_.IsNull()) return std::nullopt;
-    return Shape(parent_);
+    if (!topo_path_ || topo_path_->empty()) return std::nullopt;
+    return topo_path_->front();
 }
 
 void Shape::set_topo_parent(const std::optional<Shape>& parent) {
-    parent_ = parent ? parent->obj_ : TopoDS_Shape();
+    if (parent) {
+        set_topo_path({*parent});
+    } else {
+        topo_path_.reset();
+    }
 }
 
-void Shape::extracted_from(const Shape& source) {
-    parent_ = source.parent_.IsNull() ? source.obj_ : source.parent_;
+std::optional<Shape> Shape::topo_owner() const {
+    if (!topo_path_ || topo_path_->empty()) return std::nullopt;
+    return topo_path_->back();
 }
+
+void Shape::extracted_from(const Shape& source) { topo_path_ = extraction_path(source); }
 
 double Shape::distance(const Shape& other) const {
     if (obj_.IsNull() || other.obj_.IsNull()) {
@@ -418,27 +456,27 @@ std::vector<std::pair<Vector, Vector>> Shape::find_intersection_points(const Axi
 }
 
 Shape Shape::fuse(const Shape& other, bool glue, std::optional<double> tol) const {
-    Shape result(bool_op(BoolOp::FUSE, {obj_}, {other.obj_}, tol.value_or(0.0), true, glue));
-    result.copy_metadata_from(*this);
-    return result;
+    return fuse(std::vector<Shape>{other}, glue, tol);
 }
 
-Shape Shape::cut(const Shape& other) const {
-    Shape result(bool_op(BoolOp::CUT, {obj_}, {other.obj_}));
-    result.copy_metadata_from(*this);
-    return result;
+Shape Shape::fuse(const std::vector<Shape>& to_fuse, bool glue, std::optional<double> tol) const {
+    std::vector<const Shape*> tools;
+    for (const auto& s : to_fuse) tools.push_back(&s);
+    return bool_op_shape(BoolOp::FUSE, {this}, tools, tol.value_or(0.0), glue);
 }
 
-Shape Shape::intersect(const Shape& other) const {
-    Shape result(bool_op(BoolOp::COMMON, {obj_}, {other.obj_}));
-    result.copy_metadata_from(*this);
-    return result;
+Shape Shape::cut(const Shape& other) const { return cut(std::vector<Shape>{other}); }
+
+Shape Shape::cut(const std::vector<Shape>& to_cut) const {
+    std::vector<const Shape*> tools;
+    for (const auto& s : to_cut) tools.push_back(&s);
+    return bool_op_shape(BoolOp::CUT, {this}, tools);
 }
 
 namespace {
 
-ShapeList<Shape> split_shape(const Shape& self, const TopoDS_Shape& tool,
-                             const std::optional<Plane>& plane, Keep keep) {
+SplitResult split_shape(const Shape& self, const TopoDS_Shape& tool,
+                        const std::optional<Plane>& plane, Keep keep) {
     if (self.is_null() || tool.IsNull()) throw std::invalid_argument("Can't split an empty shape/tool");
     if (keep == Keep::INSIDE || keep == Keep::OUTSIDE) {
         throw std::invalid_argument("Keep.INSIDE/OUTSIDE are invalid for split");
@@ -450,7 +488,7 @@ ShapeList<Shape> split_shape(const Shape& self, const TopoDS_Shape& tool,
         splitter.Build();
         const TopoDS_Shape result = unwrap(splitter.Shape(), true);
 
-        ShapeList<Shape> out;
+        SplitResult out;
         if (keep == Keep::ALL) {
             for (const auto& s : top_level(result)) out.emplace_back(s);
             return out;
@@ -488,19 +526,25 @@ ShapeList<Shape> split_shape(const Shape& self, const TopoDS_Shape& tool,
             }
             (is_up ? tops : bottoms).push_back(sub);
         }
-        if (keep == Keep::TOP) return tops;
-        if (keep == Keep::BOTTOM) return bottoms;
-        return tops + bottoms;
+        if (keep == Keep::TOP || keep == Keep::BOTH) {
+            out.insert(out.end(), tops.begin(), tops.end());
+            out.top = tops;
+        }
+        if (keep == Keep::BOTTOM || keep == Keep::BOTH) {
+            out.insert(out.end(), bottoms.begin(), bottoms.end());
+            out.bottom = bottoms;
+        }
+        return out;
     });
 }
 
 }  // namespace
 
-ShapeList<Shape> Shape::split(const Plane& tool, Keep keep) const {
+SplitResult Shape::split(const Plane& tool, Keep keep) const {
     return split_shape(*this, BRepBuilderAPI_MakeFace(tool.wrapped()).Face(), tool, keep);
 }
 
-ShapeList<Shape> Shape::split(const Shape& tool, Keep keep) const {
+SplitResult Shape::split(const Shape& tool, Keep keep) const {
     if (!tool.is_null() && tool.wrapped().ShapeType() != TopAbs_FACE &&
         tool.wrapped().ShapeType() != TopAbs_SHELL) {
         // A compound holding a single face or shell is accepted too.
@@ -561,38 +605,6 @@ std::pair<std::vector<Vector>, std::vector<std::array<int, 3>>> Shape::tessellat
     return {vertices, triangles};
 }
 
-namespace {
-
-void topology_lines(const TopoDS_Shape& shape, const std::string& prefix, bool last, bool root,
-                    std::ostringstream& out, int depth, int limit) {
-    const Shape s(shape);
-    char buf[160];
-    Vector c(0, 0, 0);
-    try {
-        c = s.center();
-    } catch (...) {
-    }
-    std::snprintf(buf, sizeof(buf), "%-10s Center(%.4g, %.4g, %.4g)",
-                  to_string(s.shape_type()).c_str(), c.X, c.Y, c.Z);
-    out << prefix << (root ? "" : (last ? "└── " : "├── ")) << buf << "\n";
-    if (depth >= limit) return;
-    std::vector<TopoDS_Shape> kids;
-    for (TopoDS_Iterator it(shape); it.More(); it.Next()) kids.push_back(it.Value());
-    const std::string child_prefix = prefix + (root ? "" : (last ? "    " : "│   "));
-    for (std::size_t i = 0; i < kids.size(); ++i) {
-        topology_lines(kids[i], child_prefix, i + 1 == kids.size(), false, out, depth + 1, limit);
-    }
-}
-
-}  // namespace
-
-std::string Shape::show_topology() const {
-    if (obj_.IsNull()) return "<empty>\n";
-    std::ostringstream out;
-    topology_lines(obj_, "", true, true, out, 0, obj_.ShapeType() == TopAbs_COMPOUND ? 2 : 3);
-    return out.str();
-}
-
 std::string Shape::to_string() const {
     std::ostringstream os;
     os << build123d::to_string(shape_type());
@@ -618,17 +630,19 @@ TopoDS_Shape Shape::located_topods(const Location& loc) const {
     return obj_.Located(loc.wrapped());
 }
 
-TopoDS_Shape Shape::rotate_topods(const Axis& axis, double angle) const {
+TopoDS_Shape Shape::rotate_topods(const Axis& axis, double angle, bool transform_shape) const {
     if (obj_.IsNull()) return obj_;
     gp_Trsf t;
     t.SetRotation(axis.wrapped(), angle * DEG2RAD);
+    if (transform_shape) return transform(obj_, t, true);
     return obj_.Moved(TopLoc_Location(t));
 }
 
-TopoDS_Shape Shape::translate_topods(const Vector& vector) const {
+TopoDS_Shape Shape::translate_topods(const Vector& vector, bool transform_shape) const {
     if (obj_.IsNull()) return obj_;
     gp_Trsf t;
     t.SetTranslation(vector.to_vec());
+    if (transform_shape) return transform(obj_, t, true);
     return obj_.Moved(TopLoc_Location(t));
 }
 
@@ -675,7 +689,26 @@ TopoDS_Shape Shape::transform_topods(const gp_Trsf& trsf, bool copy) const {
     return transform(obj_, trsf, copy);
 }
 
-TopoDS_Shape Shape::clean_topods() const { return clean_shape(obj_); }
+TopoDS_Shape Shape::clean_topods(std::shared_ptr<ShapeHistory>* history) const {
+    if (history) *history = history_;
+    if (obj_.IsNull()) return obj_;
+    try {
+        ShapeUpgrade_UnifySameDomain upgrader(obj_, true, true, true);
+        upgrader.AllowInternalEdges(false);
+        upgrader.Build();
+        const TopoDS_Shape cleaned = upgrader.Shape();
+        if (history) {
+            const auto unified = ShapeHistory::from_unify(upgrader);
+            // build123d merges into the record in place; a copy keeps this shape's own intact
+            *history = history_ ? std::shared_ptr<ShapeHistory>(history_->clone()) : unified;
+            if (history_) (*history)->merge(unified);
+        }
+        return cleaned;
+    } catch (const Standard_Failure&) {
+        warn("Unable to clean " + to_string());
+        return obj_;
+    }
+}
 
 TopoDS_Shape Shape::fix_topods() const {
     if (obj_.IsNull() || is_valid()) return obj_;
@@ -707,6 +740,15 @@ Vertex::Vertex(const Vector& v) : Vertex(v.X, v.Y, v.Z) {}
 double Vertex::X() const { return BRep_Tool::Pnt(TopoDS::Vertex(obj_)).X(); }
 double Vertex::Y() const { return BRep_Tool::Pnt(TopoDS::Vertex(obj_)).Y(); }
 double Vertex::Z() const { return BRep_Tool::Pnt(TopoDS::Vertex(obj_)).Z(); }
+
+Vertex Vertex::operator+(const Vertex& other) const { return Vertex(X() + other.X(), Y() + other.Y(), Z() + other.Z()); }
+Vertex Vertex::operator+(const Vector& other) const { return Vertex(X() + other.X, Y() + other.Y, Z() + other.Z); }
+Vertex Vertex::operator-(const Vertex& other) const { return Vertex(X() - other.X(), Y() - other.Y(), Z() - other.Z()); }
+Vertex Vertex::operator-(const Vector& other) const { return Vertex(X() - other.X, Y() - other.Y, Z() - other.Z); }
+
+ShapeList<Vertex> Vertex::vertices(Select select) const {
+    return select_shapes(*this, ShapeList<Vertex>{*this}, select);
+}
 
 Vector::Vector(const Vertex& v) {
     if (v.is_null()) throw std::invalid_argument("Cannot convert an empty Vertex to a Vector");

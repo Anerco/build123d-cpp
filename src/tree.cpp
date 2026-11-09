@@ -138,23 +138,28 @@ void ShapeChildren::assign_raw(const std::vector<Shape>& shapes) {
 // Shape: copies and the tree
 // ---------------------------------------------------------------------------
 
+// Every data member of Shape must be handled in these four functions.
 Shape::Shape(const Shape& other)
     : label(other.label),
       color(other.color),
+      material(other.material),
       children(other.children),
       joints(other.joints),
       obj_(other.obj_),
-      parent_(other.parent_) {
+      topo_path_(other.topo_path_),
+      history_(other.history_) {
     bind();
 }
 
 Shape::Shape(Shape&& other) noexcept
     : label(std::move(other.label)),
       color(std::move(other.color)),
+      material(std::move(other.material)),
       children(std::move(other.children)),
       joints(std::move(other.joints)),
       obj_(std::move(other.obj_)),
-      parent_(std::move(other.parent_)) {
+      topo_path_(std::move(other.topo_path_)),
+      history_(std::move(other.history_)) {
     bind();
 }
 
@@ -163,10 +168,12 @@ Shape& Shape::operator=(const Shape& other) {
     if (this != &other) {
         label = other.label;
         color = other.color;
+        material = other.material;
         children.assign_raw(other.children.items_);
         joints = other.joints;
         obj_ = other.obj_;
-        parent_ = other.parent_;
+        topo_path_ = other.topo_path_;
+        history_ = other.history_;
         bind();
     }
     return *this;
@@ -176,11 +183,13 @@ Shape& Shape::operator=(Shape&& other) noexcept {
     if (this != &other) {
         label = std::move(other.label);
         color = std::move(other.color);
+        material = std::move(other.material);
         children.items_ = std::move(other.children.items_);
         other.children.items_.clear();
         joints = std::move(other.joints);
         obj_ = std::move(other.obj_);
-        parent_ = std::move(other.parent_);
+        topo_path_ = std::move(other.topo_path_);
+        history_ = std::move(other.history_);
         bind();
     }
     return *this;

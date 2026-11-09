@@ -7,6 +7,7 @@
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
+#include <BRepAlgoAPI_Section.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_Sewing.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
@@ -194,6 +195,7 @@ TopoDS_Shape bool_op(BoolOp op, const std::vector<TopoDS_Shape>& args,
             case BoolOp::FUSE: operation = std::make_unique<BRepAlgoAPI_Fuse>(); break;
             case BoolOp::CUT: operation = std::make_unique<BRepAlgoAPI_Cut>(); break;
             case BoolOp::COMMON: operation = std::make_unique<BRepAlgoAPI_Common>(); break;
+            case BoolOp::SECTION: operation = std::make_unique<BRepAlgoAPI_Section>(); break;
         }
         operation->SetArguments(to_list(args));
         operation->SetTools(to_list(tools));
