@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -12,6 +14,42 @@ using namespace build123d;
 using compare::V;
 
 namespace {
+
+namespace fs = std::filesystem;
+
+/// Where the C++ side writes files that the Python side reads (C++ runs first).
+std::string exchange_dir(const std::string& side) {
+    const fs::path dir = fs::temp_directory_path() / "build123d_compare_io" / side;
+    fs::create_directories(dir);
+    return dir.string();
+}
+std::string cpp_file(const std::string& name) { return (fs::path(exchange_dir("cpp")) / name).string(); }
+
+/// Files written by Python build123d, committed in tests/compare/data (make_io_fixtures.py).
+std::string fixture(const std::string& name) {
+    return (fs::path(__FILE__).parent_path() / "data" / name).string();
+}
+
+Bytes read_bytes(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) throw std::runtime_error("Can't read " + path);
+    return Bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+
+void write_bytes(const std::string& path, const Bytes& data) {
+    std::ofstream out(path, std::ios::binary);
+    out.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
+}
+
+std::string hex(const Bytes& data) {
+    static const char* digits = "0123456789abcdef";
+    std::string out;
+    for (const auto b : data) {
+        out += digits[b >> 4];
+        out += digits[b & 15];
+    }
+    return out;
+}
 
 /// An enum value's name without its class ("LINE"), as values.py reports Python enums.
 template <class E>
@@ -132,5 +170,39 @@ COMPARE_CASES {
     compare::add_value("io_json_malformed", [] {
         Json::parse("[1, 2,]");
         return V("parsed");
+    });
+
+    // ---- persistence: BinTools payloads and locations, exchanged both ways
+    compare::add_value("io_persist_shape_bytes", [] {
+        return V::list({hex(serialize_shape(Box(1, 2, 3).wrapped())),
+                        hex(serialize_shape((Box(4, 4, 4) - Cylinder(1, 4)).wrapped())),
+                        hex(serialize_shape(Edge::make_circle(2).wrapped()))});
+    });
+    compare::add("io_persist_shape_to_py", [] {
+        // Python reads this file with persistence.deserialize_shape
+        const Part part = Box(10, 10, 10) - Pos(2, 0, 0) * Sphere(4) + Pos(0, 0, 8) * Cylinder(2, 6);
+        write_bytes(cpp_file("persist_shape.bin"), serialize_shape(part.wrapped()));
+        return part;
+    });
+    compare::add("io_persist_shape_from_py", [] {
+        return Shape(deserialize_shape(read_bytes(fixture("persist_py_shape.bin"))));
+    });
+    compare::add("io_persist_meshed_from_py", [] {
+        // A payload with triangulations
+        const Shape s(deserialize_shape(read_bytes(fixture("persist_py_meshed.bin"))));
+        return s;
+    });
+    compare::add_value("io_persist_location_bytes", [] {
+        return V::list({hex(serialize_location(Location(Vector(1, 2, 3), Vector(10, 20, 30)).wrapped())),
+                        hex(serialize_location(Location(Vector(-1.5, 1e-3, 7), Vector(0, 90, 45)).wrapped())),
+                        hex(serialize_location(Location().wrapped()))});
+    });
+    compare::add_value("io_persist_location_from_py", [] {
+        const Location loc(deserialize_location(read_bytes(fixture("persist_py_location.bin"))));
+        return V::obj({{"position", loc.position()}, {"orientation", loc.orientation()}});
+    });
+    compare::add_value("io_persist_location_round_trip", [] {
+        const Location loc(deserialize_location(serialize_location(Location(Vector(1, 2, 3), Vector(10, 20, 30)).wrapped())));
+        return V::obj({{"position", loc.position()}, {"orientation", loc.orientation()}});
     });
 }

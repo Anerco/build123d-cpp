@@ -9,6 +9,7 @@
 //   export_step(part, "part.step");
 #pragma once
 
+#include "build123d/cast.hpp"
 #include "build123d/enums.hpp"
 #include "build123d/geometry.hpp"
 #include "build123d/io.hpp"
@@ -16,6 +17,7 @@
 #include "build123d/locations.hpp"
 #include "build123d/objects.hpp"
 #include "build123d/operations.hpp"
+#include "build123d/persistence.hpp"
 #include "build123d/topology.hpp"
 #include "build123d/warnings.hpp"
 

@@ -1,10 +1,35 @@
 """Python twins of cases_io.cpp."""
 
 import json
+import os
+import tempfile
 
 from build123d import *  # noqa: F403
+from build123d.persistence import deserialize_location, deserialize_shape, serialize_location, serialize_shape
 
 from values import V
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def exchange_dir(side):
+    path = os.path.join(tempfile.gettempdir(), "build123d_compare_io", side)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def cpp_file(name):
+    """A file the C++ side wrote (compare.py runs it first)."""
+    return os.path.join(exchange_dir("cpp"), name)
+
+
+def fixture(name):
+    return os.path.join(HERE, "data", name)
+
+
+def read_bytes(path):
+    with open(path, "rb") as f:
+        return f.read()
 
 
 def edge_summary(e):
@@ -107,7 +132,48 @@ def json_malformed():
     return V("parsed")
 
 
+def persist_shape_bytes():
+    return V(
+        [
+            serialize_shape(Box(1, 2, 3).wrapped).hex(),
+            serialize_shape((Box(4, 4, 4) - Cylinder(1, 4)).wrapped).hex(),
+            serialize_shape(Edge.make_circle(2).wrapped).hex(),
+        ]
+    )
+
+
+def persist_shape_from_py():
+    data = read_bytes(fixture("persist_py_shape.bin"))
+    shape = Pos(1, 2, 3) * (Box(5, 6, 7) - Cylinder(2, 7)) + Pos(0, 0, 5) * Torus(4, 1)
+    assert serialize_shape(shape.wrapped) == data, "fixture is out of date"
+    return Compound.cast(deserialize_shape(data))
+
+
+def persist_location_from_py():
+    loc = Location(deserialize_location(read_bytes(fixture("persist_py_location.bin"))))
+    return V({"position": loc.position, "orientation": loc.orientation})
+
+
+def persist_location_round_trip():
+    loc = Location(deserialize_location(serialize_location(Location((1, 2, 3), (10, 20, 30)).wrapped)))
+    return V({"position": loc.position, "orientation": loc.orientation})
+
+
 CASES = {
+    # ---- persistence
+    "io_persist_shape_bytes": persist_shape_bytes,
+    "io_persist_shape_to_py": lambda: Compound.cast(deserialize_shape(read_bytes(cpp_file("persist_shape.bin")))),
+    "io_persist_shape_from_py": persist_shape_from_py,
+    "io_persist_meshed_from_py": lambda: Compound.cast(deserialize_shape(read_bytes(fixture("persist_py_meshed.bin")))),
+    "io_persist_location_bytes": lambda: V(
+        [
+            bytes(serialize_location(Location((1, 2, 3), (10, 20, 30)).wrapped)).hex(),
+            bytes(serialize_location(Location((-1.5, 1e-3, 7), (0, 90, 45)).wrapped)).hex(),
+            bytes(serialize_location(Location().wrapped)).hex(),
+        ]
+    ),
+    "io_persist_location_from_py": persist_location_from_py,
+    "io_persist_location_round_trip": persist_location_round_trip,
     # ---- project_to_viewport
     "io_hlr_box": lambda: viewport(Box(1, 2, 3).project_to_viewport((10, -10, 10))),
     "io_hlr_holed_part": hlr_holed_part,

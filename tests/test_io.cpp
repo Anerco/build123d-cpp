@@ -71,6 +71,68 @@ TEST(io_json_values) {
     CHECK(Json::parse(built.dump()) == built);
 }
 
+static_assert(std::is_same_v<decltype(cast_shape<Solid>(Shape())), Solid>);
+static_assert(std::is_same_v<decltype(cast_shape(Shape())), AnyShape>);
+static_assert(std::is_same_v<decltype(from_bytes<Part>(Bytes())), Part>);
+
+TEST(io_cast_shape) {
+    Shape s(Box(1, 2, 3).solid().wrapped());
+    s.label = "box";
+    s.color = Color("red");
+    const Solid solid = cast_shape<Solid>(s);
+    CHECK(solid.label == "box" && solid.color && solid.color->red == 1.0);
+    CHECK_NEAR(solid.volume(), 6.0, 1e-9);
+    const Part part = cast_shape<Part>(s);
+    CHECK(part.wrapped().ShapeType() == TopAbs_COMPOUND && part.label == "box");
+    CHECK(std::holds_alternative<Solid>(cast_shape(s)));
+    CHECK(std::holds_alternative<Compound>(cast_shape(Shape())));
+    CHECK_THROWS(cast_shape<Face>(s), std::invalid_argument);
+    CHECK_THROWS(cast_shape<Sketch>(s), std::invalid_argument);
+    CHECK_THROWS(cast_shape<Curve>(Shape(Box(1, 1, 1).wrapped())), std::invalid_argument);
+    const Mixin1D m = cast_shape<Mixin1D>(Shape(Edge::make_line({0, 0}, {1, 0}).wrapped()));
+    CHECK_NEAR(m.length(), 1.0, 1e-12);
+    CHECK(cast_shape<Sketch>(Shape((Circle(1) + Pos(3, 0) * Circle(1)).wrapped())).faces().size() == 2);
+}
+
+TEST(io_persistence) {
+    // Payloads as Python's persistence.py
+    const Part box = Box(1, 2, 3);
+    const Bytes payload = serialize_shape(box.wrapped());
+    CHECK(!payload.empty());
+    CHECK_NEAR(Shape(deserialize_shape(payload)).volume(), 6.0, 1e-9);
+    CHECK(serialize_shape(TopoDS_Shape()).empty());
+    CHECK(deserialize_shape(Bytes()).IsNull());
+    CHECK_THROWS(deserialize_shape(Bytes{1, 2, 3}), std::runtime_error);
+    const Bytes loc_bytes = serialize_location(Location(Vector(1, 2, 3), Vector(0, 0, 90)).wrapped());
+    CHECK(loc_bytes.size() == 28);
+    const Location loc(deserialize_location(loc_bytes));
+    CHECK(loc.position() == Vector(1, 2, 3));
+    CHECK(loc.orientation() == Vector(0, 0, 90));
+    CHECK_THROWS(deserialize_location(Bytes(10)), std::invalid_argument);
+
+    // Whole objects, as pickle
+    Compound assembly = Compound::make_assembly({Box(1, 1, 1), Pos(3, 0, 0) * Sphere(1)}, "asm");
+    assembly.children[0].label = "kid";
+    assembly.children[1].color = Color(0.1, 0.2, 0.3, 0.5);
+    const Bytes data = to_bytes(assembly);
+    const Compound copy = from_bytes<Compound>(data);
+    CHECK(copy.label == "asm");
+    CHECK(copy.children.size() == 2);
+    CHECK(copy.children[0].label == "kid");
+    CHECK(copy.children[1].color && copy.children[1].color->alpha == 0.5);
+    CHECK_NEAR(copy.volume(), assembly.volume(), 1e-9);
+    CHECK(from_bytes<Part>(to_bytes(box)).solids().size() == 1);
+    CHECK_THROWS(from_bytes<Face>(to_bytes(box)), std::invalid_argument);
+    const Face face = box.faces()[0];
+    CHECK(from_bytes<Face>(to_bytes(face)).topo_parent().has_value());
+    const Location l2 = from_bytes<Location>(to_bytes(Location(Vector(4, 5, 6))));
+    CHECK(l2.position() == Vector(4, 5, 6));
+    CHECK_THROWS(from_bytes<Location>(data), std::invalid_argument);
+    CHECK_THROWS(shape_from_bytes(Bytes{1, 2, 3}), std::invalid_argument);
+    Bytes truncated(data.begin(), data.begin() + 40);
+    CHECK_THROWS(shape_from_bytes(truncated), std::invalid_argument);
+}
+
 TEST(io_geom_encoder) {
     const Location loc(Vector(1, 2, 3), Vector(10, 20, 30));
     const Geometry g = GeomEncoder::loads(GeomEncoder::dumps(loc));
