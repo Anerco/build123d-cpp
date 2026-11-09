@@ -56,6 +56,20 @@ V edges_values(const std::vector<Edge>& edges) {
 V edge_values(const Edge& e) { return V::list({e.length(), e.position_at(0), e.position_at(1)}); }
 V optional_edge_values(const std::optional<Edge>& e) { return e ? edge_values(*e) : V(nullptr); }
 
+/// Edge count, length, bounding box and end points of a curve.
+V curve_values(const Mixin1D& c) {
+    const BoundBox bb = c.bounding_box();
+    return V::list({static_cast<double>(c.edges().size()), c.length(), bb.min, bb.max, c.position_at(0),
+                    c.position_at(1), c.shape_type() == ShapeType::WIRE});
+}
+template <class L>
+V curves_values(const L& curves) {
+    std::vector<V> out;
+    for (const auto& c : curves) out.push_back(curve_values(c));
+    return V::list(out);
+}
+V points_values(const std::vector<Vector>& pts) { return V::list_of(pts); }
+
 V nelder_mead_values(const std::function<double(const std::vector<double>&)>& f, const std::vector<double>& x0,
                      detail::NelderMeadOptions options) {
     const auto r = detail::minimize_nelder_mead(f, x0, options);
@@ -600,4 +614,83 @@ COMPARE_CASES {
     compare::add("obj_polar_line_limit_location_aligned", [] {
         return PolarLine({0, 0}, Location(Plane(Vector(3, 0), std::nullopt, Vector(1, 0, 0))), 0.0);
     });
+
+    // ---- projection
+    compare::add_value("obj_wire_project_multiple", [] {
+        const Part target = Box(10, 10, 4) - Pos(0, 0, 2) * Box(5, 5, 2);
+        const Wire circle = Wire::make_circle(3, Plane::XY.offset(10));
+        return V::list({curves_values(circle.project_to_shape(target, Vector(0, 0, -1))),
+                        curves_values(circle.project_to_shape(target, Vector(0, 0, 1)))});
+    });
+    compare::add_value("obj_wire_project_conical", [] {
+        const Part target = Box(10, 10, 4) - Pos(0, 0, 2) * Box(5, 5, 2);
+        const Wire circle = Wire::make_circle(3, Plane::XY.offset(10));
+        const Wire square = Wire::make_rect(4, 4, Plane::XY.offset(30));
+        return V::list({curves_values(circle.project_to_shape(target, std::nullopt, Vector(0, 0, 20))),
+                        curves_values(square.project_to_shape(Sphere(10), std::nullopt, Vector(0, 0, 40))),
+                        curves_values(Wire::make_circle(2, Plane::XZ.offset(-30))
+                                          .project_to_shape(Sphere(10), std::nullopt, Vector(0, -50, 0)))});
+    });
+    compare::add_value("obj_edge_project", [] {
+        const auto projection = Edge::make_circle(1, Plane::XY.offset(-5)).project_to_shape(Solid::make_box(1, 1, 1), Vector(0, 0, 1));
+        const auto conical = Line({-2, -2, 10}, {2, 2, 10}).project_to_shape(Sphere(5), std::nullopt, Vector(0, 0, 20));
+        const auto reversed = Edge::make_circle(1, Plane::XY.offset(-5)).reversed().project_to_shape(
+            Solid::make_box(1, 1, 1), Vector(0, 0, 1));
+        return V::list({curves_values(projection), projection[0].arc_center(), curves_values(conical),
+                        curves_values(reversed)});
+    });
+    compare::add("obj_project_to_shape_no_direction", [] {
+        return Compound(Wire::make_circle(1).project_to_shape(Sphere(50)));
+    });
+    compare::add("obj_project_to_shape_both", [] {
+        return Compound(Wire::make_circle(1).project_to_shape(Sphere(50), Vector(0, 0, 1), Vector(0, 0, 5)));
+    });
+    compare::add_value("obj_project_clean_wire", [] {
+        const Edge center_arc = Edge::make_ellipse(45, 30, Plane::XY, 270 + 40, 270 - 40);
+        const Face center_surface =
+            -Face::extrude(center_arc, Vector(0, 0, 50)).moved(Location(Vector(0, 0, -25), Vector(0, 0, 180)));
+        const Location tip_center_loc = center_surface.location_at(center_arc.position_at(1), Vector(1, 0, 0));
+        const Vector normal = tip_center_loc.z_axis().direction;
+        const Edge planar_tip_arc = Edge::make_circle(12.5, Plane::XY, 270, 450).located(tip_center_loc);
+        return curves_values(planar_tip_arc.project_to_shape(center_surface, -normal));
+    });
+    compare::add_value("obj_mixin1d_project", [] {
+        const Face rect = Face::make_rect(10, 10);
+        const Edge circle = Edge::make_circle(1, Plane::XY.offset(5));
+        const Face sphere_face = Sphere(5).faces()[0];
+        const Wire square = Wire::make_rect(2, 2, Plane::XY.offset(8));
+        return V::list({
+            curve_values(circle.project(rect, Vector(0, 0, -1))),
+            curves_values(circle.project(rect, Vector(0, 0, -1), false)),
+            curve_values(square.project(sphere_face, Vector(0, 0, -1))),
+            curves_values(square.project(sphere_face, Vector(0, 0, -1), false)),
+            curves_values(Line({-1, 0, 8}, {1, 0, 8}).project(sphere_face, Vector(0, 0, -1), false)),
+        });
+    });
+    compare::add("obj_project_faces", [] {
+        return project(Box(4, 6, 8).rotate(Axis::X, 30).faces(), Plane::XY.offset(-10));
+    });
+    compare::add("obj_project_face", [] {
+        return project(Plane::XZ.offset(-5) * Rot(0, 30, 0) * Rectangle(4, 3).face(), Plane::XY);
+    });
+    compare::add("obj_project_face_ignores_target", [] {
+        return project(Circle(3).face(), Plane::XY.offset(7), Box(1, 1, 1));
+    });
+    compare::add("obj_project_edges", [] { return project(Line({0, 0, 0}, {5, 5, 0}), Plane::XY.offset(5)); });
+    compare::add("obj_project_sketch_ignored", [] { return project(Circle(3), Plane::XY.offset(5)); });
+    compare::add_value("obj_project_points", [] {
+        return V::list({points_values(project(Vector(1, 2, 3), Plane::XY)),
+                        points_values(project(Vertex(1, 2, 3), Plane::XZ)),
+                        points_values(project(std::vector<Vector>{{1, 2, 3}, {4, 5, 6}}, Plane::XY.offset(2))),
+                        points_values(project(std::vector<Vertex>{Vertex(1, 2, 3), Vertex(-1, 0, 2)},
+                                              Plane(Vector(1, 1, 1), Vector(1, 0, 0), Vector(0, 1, 1))))});
+    });
+    compare::add_value("obj_project_mixed", [] {
+        const auto with_points = project(std::vector<Shape>{Rectangle(2, 2).face(), Vertex(1, 2, 3)}, Plane::XY);
+        const auto shapes = project(std::vector<Shape>{Rectangle(2, 2).face(), Line({0, 0}, {1, 1})}, Plane::XY.offset(1));
+        const Compound& c = std::get<Compound>(shapes);
+        return V::list({points_values(std::get<std::vector<Vector>>(with_points)), c.area(),
+                        static_cast<double>(c.faces().size()), c.center()});
+    });
+    compare::add("obj_project_empty_error", [] { return project(std::vector<Face>{}, Plane::XY); });
 }

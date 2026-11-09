@@ -5,6 +5,7 @@
 
 #include <optional>
 #include <type_traits>
+#include <variant>
 #include <vector>
 
 #include "build123d/topology.hpp"
@@ -227,6 +228,56 @@ namespace detail {
 TopoDS_Shape sweep_impl(const std::vector<const Shape*>& sections, const Shape& path,
                         const SweepOptions& options);
 }  // namespace detail
+
+// ---------------------------------------------------------------------------
+// project
+// ---------------------------------------------------------------------------
+
+namespace detail {
+struct ProjectOutput {
+    std::vector<TopoDS_Shape> shapes;  ///< projected faces
+    std::vector<Vector> points;        ///< projected points, in workplane coordinates
+};
+ProjectOutput project_impl(const std::vector<const Shape*>& objects, const std::vector<Vector>& points,
+                           const Plane& workplane);
+template <class T>
+using project_t = std::conditional_t<std::decay_t<T>::kDim == 2, Sketch,
+                                     std::conditional_t<std::decay_t<T>::kDim == 1, Curve, Compound>>;
+template <class T>
+inline constexpr bool is_projectable_v =
+    is_shape_v<T> && !std::is_same_v<std::decay_t<T>, Shape> && !std::is_same_v<std::decay_t<T>, Vertex>;
+}  // namespace detail
+
+/// Project faces onto `workplane` along its normal (algebra-mode project()). As in build123d
+/// without a builder, edges and wires give nothing, other shapes are ignored and `target` is
+/// not used.
+template <class T, std::enable_if_t<detail::is_projectable_v<T>, int> = 0>
+detail::project_t<T> project(const T& objects, const Plane& workplane,
+                             const std::optional<Shape>& target = std::nullopt) {
+    return detail::project_t<T>(
+        detail::make_compound_topods(detail::project_impl(detail::one(objects), {}, workplane).shapes));
+}
+template <class T, std::enable_if_t<detail::is_projectable_v<T>, int> = 0>
+detail::project_t<T> project(const std::vector<T>& objects, const Plane& workplane,
+                             const std::optional<Shape>& target = std::nullopt) {
+    return detail::project_t<T>(
+        detail::make_compound_topods(detail::project_impl(detail::shape_ptrs(objects), {}, workplane).shapes));
+}
+/// Project points onto `workplane`: the points in the workplane's local coordinates.
+std::vector<Vector> project(const Vector& point, const Plane& workplane,
+                            const std::optional<Shape>& target = std::nullopt);
+std::vector<Vector> project(const std::vector<Vector>& points, const Plane& workplane,
+                            const std::optional<Shape>& target = std::nullopt);
+std::vector<Vector> project(const Vertex& point, const Plane& workplane,
+                            const std::optional<Shape>& target = std::nullopt);
+std::vector<Vector> project(const std::vector<Vertex>& points, const Plane& workplane,
+                            const std::optional<Shape>& target = std::nullopt);
+/// Project a mix of shapes: projected points when there are vertices, else the projected
+/// faces (Python's Curve | Sketch | Compound | ShapeList[Vector]).
+std::variant<Compound, std::vector<Vector>> project(const std::vector<Shape>& objects, const Plane& workplane,
+                                                    const std::optional<Shape>& target = std::nullopt);
+std::variant<Compound, std::vector<Vector>> project(const Shape& object, const Plane& workplane,
+                                                    const std::optional<Shape>& target = std::nullopt);
 
 template <class S>
 using sweep_t = std::conditional_t<

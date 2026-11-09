@@ -281,6 +281,74 @@ def obj_polar_line_limits():
     return V(out)
 
 
+def curve_values(c):
+    bb = c.bounding_box()
+    return [len(c.edges()), c.length, bb.min, bb.max, c @ 0, c @ 1, isinstance(c, Wire)]
+
+
+def curves_values(curves):
+    return [curve_values(c) for c in curves]
+
+
+def obj_wire_project_multiple():
+    target = Box(10, 10, 4) - Pos((0, 0, 2)) * Box(5, 5, 2)
+    circle = Wire.make_circle(3, Plane.XY.offset(10))
+    return V(
+        [curves_values(circle.project_to_shape(target, (0, 0, -1))), curves_values(circle.project_to_shape(target, (0, 0, 1)))]
+    )
+
+
+def obj_wire_project_conical():
+    target = Box(10, 10, 4) - Pos((0, 0, 2)) * Box(5, 5, 2)
+    circle = Wire.make_circle(3, Plane.XY.offset(10))
+    square = Wire.make_rect(4, 4, Plane.XY.offset(30))
+    return V(
+        [
+            curves_values(circle.project_to_shape(target, center=(0, 0, 20))),
+            curves_values(square.project_to_shape(Sphere(10), center=(0, 0, 40))),
+            curves_values(Wire.make_circle(2, Plane.XZ.offset(-30)).project_to_shape(Sphere(10), center=(0, -50, 0))),
+        ]
+    )
+
+
+def obj_edge_project():
+    projection = Edge.make_circle(1, Plane.XY.offset(-5)).project_to_shape(Solid.make_box(1, 1, 1), (0, 0, 1))
+    conical = Line((-2, -2, 10), (2, 2, 10)).project_to_shape(Sphere(5), center=(0, 0, 20))
+    reversed_ = Edge.make_circle(1, Plane.XY.offset(-5)).reversed().project_to_shape(Solid.make_box(1, 1, 1), (0, 0, 1))
+    return V([curves_values(projection), projection[0].arc_center, curves_values(conical), curves_values(reversed_)])
+
+
+def obj_project_clean_wire():
+    center_arc = Edge.make_ellipse(45, 30, start_angle=270 + 40, end_angle=270 - 40)
+    center_surface = -Face.extrude(center_arc, (0, 0, 50)).moved(Location((0, 0, -25), (0, 0, 180)))
+    tip_center_loc = center_surface.location_at(center_arc @ 1, x_dir=(1, 0, 0))
+    normal = tip_center_loc.z_axis.direction
+    planar_tip_arc = Edge.make_circle(12.5, start_angle=270, end_angle=450).locate(tip_center_loc)
+    return V(curves_values(planar_tip_arc.project_to_shape(center_surface, -normal)))
+
+
+def obj_mixin1d_project():
+    rect = Face.make_rect(10, 10)
+    circle = Edge.make_circle(1, Plane.XY.offset(5))
+    sphere_face = Sphere(5).faces()[0]
+    square = Wire.make_rect(2, 2, Plane.XY.offset(8))
+    return V(
+        [
+            curve_values(circle.project(rect, (0, 0, -1))),
+            curves_values(circle.project(rect, (0, 0, -1), closest=False)),
+            curve_values(square.project(sphere_face, (0, 0, -1))),
+            curves_values(square.project(sphere_face, (0, 0, -1), closest=False)),
+            curves_values(Line((-1, 0, 8), (1, 0, 8)).project(sphere_face, (0, 0, -1), closest=False)),
+        ]
+    )
+
+
+def obj_project_mixed():
+    with_points = project([Rectangle(2, 2).face(), Vertex(1, 2, 3)], workplane=Plane.XY)
+    c = project([Rectangle(2, 2).face(), Line((0, 0), (1, 1))], workplane=Plane.XY.offset(1))
+    return V([list(with_points), c.area, len(c.faces()), c.center()])
+
+
 def nelder_mead_values(f, x0, bounds=None, tol=None, maxiter=None):
     options = {} if maxiter is None else {"maxiter": maxiter}
     r = minimize(f, x0=x0, method="Nelder-Mead", bounds=bounds, tol=tol, options=options)
@@ -672,4 +740,31 @@ CASES = {
     "obj_polar_line_limit_location_aligned": lambda: PolarLine(
         (0, 0), Location(Plane((3, 0), z_dir=(1, 0, 0))), 0.0
     ),
+    # projection
+    "obj_wire_project_multiple": obj_wire_project_multiple,
+    "obj_wire_project_conical": obj_wire_project_conical,
+    "obj_edge_project": obj_edge_project,
+    "obj_project_to_shape_no_direction": lambda: Compound(Wire.make_circle(1).project_to_shape(Sphere(50))),
+    "obj_project_to_shape_both": lambda: Compound(
+        Wire.make_circle(1).project_to_shape(Sphere(50), (0, 0, 1), (0, 0, 5))
+    ),
+    "obj_project_clean_wire": obj_project_clean_wire,
+    "obj_mixin1d_project": obj_mixin1d_project,
+    "obj_project_faces": lambda: project(Box(4, 6, 8).rotate(Axis.X, 30).faces(), workplane=Plane.XY.offset(-10)),
+    "obj_project_face": lambda: project(
+        Plane.XZ.offset(-5) * Rot(0, 30, 0) * Rectangle(4, 3).face(), workplane=Plane.XY
+    ),
+    "obj_project_face_ignores_target": lambda: project(Circle(3).face(), workplane=Plane.XY.offset(7), target=Box(1, 1, 1)),
+    "obj_project_edges": lambda: project(Line((0, 0, 0), (5, 5, 0)), workplane=Plane.XY.offset(5)),
+    "obj_project_sketch_ignored": lambda: project(Circle(3), workplane=Plane.XY.offset(5)),
+    "obj_project_points": lambda: V(
+        [
+            list(project(Vector(1, 2, 3), Plane.XY)),
+            list(project(Vertex(1, 2, 3), Plane.XZ)),
+            list(project([Vector(1, 2, 3), Vector(4, 5, 6)], Plane.XY.offset(2))),
+            list(project([Vertex(1, 2, 3), Vertex(-1, 0, 2)], Plane((1, 1, 1), (1, 0, 0), (0, 1, 1)))),
+        ]
+    ),
+    "obj_project_mixed": obj_project_mixed,
+    "obj_project_empty_error": lambda: project([], workplane=Plane.XY),
 }

@@ -324,8 +324,13 @@ public:
                    bool closed = true) const;
     /// Line in `plane` perpendicular to this curve at `u_value`, centered on it.
     Edge perpendicular_line(double length, double u_value, const Plane& plane = Plane::XY) const;
-    /// Project onto a target shape along `direction`.
+    /// Project onto a target shape along `direction` (the edges of Edge/Wire::project_to_shape).
     ShapeList<Edge> project_to_shape(const Shape& target, const Vector& direction) const;
+    /// Project onto a face along `direction`: the projection closest to this curve (an Edge or
+    /// a Wire; check shape_type()).
+    Mixin1D project(const Face& face, const Vector& direction) const;
+    /// All the projections onto the face (closest = false), or just the closest one.
+    ShapeList<Mixin1D> project(const Face& face, const Vector& direction, bool closest) const;
 };
 
 /// Tangent at a position, build123d's `%` operator.
@@ -430,6 +435,10 @@ public:
                                                  double tolerance = TOLERANCE) const;
     std::vector<Vector> find_intersection_points(const Axis& axis,
                                                  double tolerance = TOLERANCE) const;
+    /// Project onto a shape along `direction` (parallel) or from `center` (conical); exactly
+    /// one of them must be given. The edges of the projected wires.
+    ShapeList<Edge> project_to_shape(const Shape& target_object, std::optional<Vector> direction = std::nullopt,
+                                     std::optional<Vector> center = std::nullopt) const;
 
     BUILD123D_TYPED_OPS(Edge)
 };
@@ -470,6 +479,11 @@ public:
     Wire fix_degenerate_edges(double precision) const;
     Wire stitch(const Wire& other) const;
     Wire trim(double start, double end) const;
+    /// Project onto a shape along `direction` (parallel) or from `center` (conical); exactly
+    /// one of them must be given. The wires keep this wire's orientation and are sorted by
+    /// distance (from this wire, or from the center).
+    ShapeList<Wire> project_to_shape(const Shape& target_object, std::optional<Vector> direction = std::nullopt,
+                                     std::optional<Vector> center = std::nullopt) const;
 
     BUILD123D_TYPED_OPS(Wire)
 };

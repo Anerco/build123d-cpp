@@ -152,3 +152,35 @@ TEST(objects_limits) {
     CHECK_NEAR(Edge(Axis::X).trim_infinite(3).length(), 6, 1e-9);
     CHECK_NEAR(Line({0, 0}, {1, 0}).trim_infinite(3).length(), 1, 1e-12);
 }
+
+// ---------------------------------------------------------------------------
+// Projection
+// ---------------------------------------------------------------------------
+
+static_assert(std::is_same_v<decltype(Wire().project_to_shape(Box(1, 1, 1), Vector(0, 0, 1))), ShapeList<Wire>>);
+static_assert(std::is_same_v<decltype(Edge().project_to_shape(Box(1, 1, 1), Vector(0, 0, 1))), ShapeList<Edge>>);
+static_assert(std::is_same_v<decltype(Edge().project(Face(), Vector(0, 0, 1))), Mixin1D>);
+static_assert(std::is_same_v<decltype(Edge().project(Face(), Vector(0, 0, 1), false)), ShapeList<Mixin1D>>);
+static_assert(std::is_same_v<decltype(project(Face(), Plane::XY)), Sketch>);
+static_assert(std::is_same_v<decltype(project(std::vector<Face>{}, Plane::XY)), Sketch>);
+static_assert(std::is_same_v<decltype(project(Edge(), Plane::XY)), Curve>);
+static_assert(std::is_same_v<decltype(project(Vector(), Plane::XY)), std::vector<Vector>>);
+static_assert(std::is_same_v<decltype(project(Vertex(), Plane::XY)), std::vector<Vector>>);
+static_assert(std::is_same_v<decltype(project(std::vector<Shape>{}, Plane::XY)),
+                             std::variant<Compound, std::vector<Vector>>>);
+
+TEST(objects_projection) {
+    const Wire circle = Wire::make_circle(3, Plane::XY.offset(10));
+    const Part target = Box(10, 10, 4) - Pos(0, 0, 2) * Box(5, 5, 2);
+    const auto down = circle.project_to_shape(target, Vector(0, 0, -1));
+    CHECK(down.size() == 2);
+    CHECK(down[0].bounding_box().max.Z > down[1].bounding_box().max.Z);  // sorted by distance
+    const auto conical = circle.project_to_shape(target, std::nullopt, Vector(0, 0, 20));
+    CHECK(conical.size() == 4);  // the cone from the center hits the outer walls, in four pieces
+    CHECK_THROWS(circle.project_to_shape(target), std::invalid_argument);
+    const Mixin1D closest = Edge::make_circle(1, Plane::XY.offset(5)).project(Face::make_rect(10, 10), Vector(0, 0, -1));
+    CHECK(closest.shape_type() == ShapeType::WIRE);
+    CHECK_NEAR(closest.position_at(0).Z, 0, 1e-9);
+    CHECK_THROWS(project(std::vector<Face>{}, Plane::XY), std::invalid_argument);
+    CHECK(project(Vertex(1, 2, 3), Plane::XZ)[0] == Vector(1, -3, 0));
+}
