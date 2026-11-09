@@ -191,3 +191,39 @@ TEST(io_import_svg) {
     CHECK(code == "from build123d import *\nwith BuildLine() as my_line:\n    Line((0, 0),(10, 0))\n"
                   "    RadiusArc((10, 0), (20, 0), 5, True)");
 }
+
+static_assert(std::is_same_v<decltype(import_dxf(std::string())), ShapeList<Shape>>);
+
+TEST(io_import_dxf) {
+    const IoTempDir dir("dxf");
+    ExportDXF exporter;
+    exporter.add_shape(Edge::make_line({0, 0}, {10, 0}));
+    exporter.add_shape(Edge::make_circle(2));
+    exporter.add_shape(Pos(5, 5) * Rectangle(2, 2));
+    exporter.write(dir.file("shapes.dxf"));
+    const ShapeList<Shape> shapes = import_dxf(dir.file("shapes.dxf"));
+    CHECK(shapes.size() == 6);
+    CHECK(shapes[0].wrapped().ShapeType() == TopAbs_EDGE);
+    CHECK_NEAR(cast_shape<Edge>(shapes[0]).length(), 10.0, 1e-9);
+    CHECK(cast_shape<Edge>(shapes[1]).geom_type() == GeomType::CIRCLE);
+    CHECK(shapes.edges().size() == 6);
+
+    std::istringstream stream(
+        "  0\nSECTION\n  2\nENTITIES\n  0\nPOINT\n 10\n1\n 20\n2\n 30\n3\n  0\nXLINE\n 10\n0\n 20\n0\n 30\n0\n"
+        "  0\nENDSEC\n  0\nEOF\n");
+    std::vector<std::string> warnings;
+    const auto previous = set_warning_handler([&](const std::string& m) { warnings.push_back(m); });
+    const ShapeList<Shape> points = import_dxf(stream);
+    set_warning_handler(previous);
+    CHECK(points.size() == 1);
+    CHECK(points[0].wrapped().ShapeType() == TopAbs_VERTEX);
+    CHECK(warnings == std::vector<std::string>{"Unable to convert XLINE"});
+
+    std::istringstream broken("  0\nSECTION\n  2\nENTITIES\n");
+    CHECK_THROWS(import_dxf(broken), std::invalid_argument);
+    CHECK_THROWS(import_dxf(dir.file("missing.dxf")), std::runtime_error);
+    {
+        std::ofstream(dir.file("not.dxf")) << "hello\nworld\n";
+    }
+    CHECK_THROWS(import_dxf(dir.file("not.dxf")), std::runtime_error);
+}

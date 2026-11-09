@@ -768,3 +768,106 @@ COMPARE_CASES {
         return V::list({code, builder});
     });
 }
+
+// ---- DXF import
+#include "../../src/dxf_reader.hpp"
+
+namespace {
+
+/// What import_dxf returned: per shape its type, size, edges and bounding box (compounds
+/// with many edges, i.e. text, are summarized).
+V dxf_shapes(const ShapeList<Shape>& shapes) {
+    std::vector<V> out;
+    for (const Shape& s : shapes) {
+        const TopAbs_ShapeEnum t = s.wrapped().ShapeType();
+        // Python's Wire.edges() follows the wire (BRepTools_WireExplorer)
+        const ShapeList<Edge> edges = t == TopAbs_WIRE ? Wire(s.wrapped()).edges() : s.edges();
+        const bool listed = t != TopAbs_COMPOUND || edges.size() <= 4;
+        double length = 0.0;
+        std::vector<V> edge_values;
+        for (const Edge& e : edges) {
+            length += e.length();
+            if (listed) edge_values.push_back(V::list({enum_name(e.geom_type()), e.start_point(), e.end_point()}));
+        }
+        const BoundBox bb = s.bounding_box();
+        out.push_back(V::obj({{"type", type_name(s)},
+                              {"area", s.area()},
+                              {"length", length},
+                              {"edge_count", static_cast<double>(edges.size())},
+                              {"edges", V::list(edge_values)},
+                              {"faces", static_cast<double>(s.faces().size())},
+                              {"vertices", static_cast<double>(s.vertices().size())},
+                              {"bbox", V::list({bb.min, bb.max})}}));
+    }
+    return V::list(out);
+}
+
+ShapeList<Shape> import_dxf_stream(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) throw std::runtime_error("Can't read " + path);
+    return import_dxf(in);
+}
+
+}  // namespace
+
+COMPARE_CASES {
+    for (const char* name : {"dxf_entities", "dxf_hatch", "dxf_r12", "dxf_binary", "dxf_cp1252", "dxf_3dface",
+                             "dxf_polyline3d"}) {
+        const std::string n = name;
+        compare::add_value("io_" + n, [n] { return dxf_shapes(import_dxf(fixture(n + ".dxf"))); });
+    }
+    // A binary stream is read as Latin-1 text (build123d's BytesIO branch)
+    for (const char* name : {"dxf_entities", "dxf_cp1252", "dxf_binary"}) {
+        const std::string n = name;
+        compare::add_value("io_" + n + "_stream", [n] { return dxf_shapes(import_dxf_stream(fixture(n + ".dxf"))); });
+    }
+    compare::add_value("io_dxf_crlf", [] {
+        // the R12 fixture with \r\n line ends: universal newlines for files, not for streams
+        std::string text = read_text(fixture("dxf_r12.dxf")), crlf;
+        for (char c : text) crlf += c == '\n' ? std::string("\r\n") : std::string(1, c);
+        std::ofstream(cpp_file("crlf.dxf"), std::ios::binary) << crlf;
+        return V::list({dxf_shapes(import_dxf(cpp_file("crlf.dxf"))), dxf_shapes(import_dxf_stream(cpp_file("crlf.dxf")))});
+    });
+    compare::add_value("io_dxf_import_exported", [] {
+        // ExportDXF's own files, read by both
+        ExportDXF e(ExportDXF::DXF2013, Unit::MM, ColorIndex::BLUE, 0.35, LineType::CENTER);
+        e.add_layer("L1", {.color = ColorIndex::RED, .line_weight = 0.5, .line_type = LineType::DASHED});
+        e.add_layer("L2");
+        add_dxf_shapes(e, false);
+        e.write(cpp_file("export_import.dxf"));
+        return dxf_shapes(import_dxf(cpp_file("export_import.dxf")));
+    });
+    compare::add_value("io_dxf_import_exported_r12_binary", [] {
+        ExportDXF e("R12");
+        e.add_layer("L1");
+        e.add_layer("L2");
+        add_dxf_shapes(e, true);
+        e.write(cpp_file("export_import_r12.dxf"), false);
+        return dxf_shapes(import_dxf(cpp_file("export_import_r12.dxf")));
+    });
+    compare::add_value("io_dxf_import_missing", [] { return dxf_shapes(import_dxf(cpp_file("missing.dxf"))); });
+    compare::add_value("io_dxf_import_not_dxf", [] { return dxf_shapes(import_dxf(fixture("svg_basic.svg"))); });
+    compare::add_value("io_dxf_import_no_eof", [] {
+        std::ofstream(cpp_file("no_eof.dxf"), std::ios::binary)
+            << "  0\nSECTION\n  2\nENTITIES\n  0\nLINE\n 10\n0\n 20\n0\n 30\n0\n 11\n1\n 21\n1\n 31\n0\n  0\nENDSEC\n";
+        return dxf_shapes(import_dxf(cpp_file("no_eof.dxf")));
+    });
+    compare::add_value("io_dxf_import_minimal", [] {
+        // A hand-written file: no header, R12 style entities, an empty line value, comments
+        std::ofstream(cpp_file("minimal.dxf"), std::ios::binary)
+            << "999\ncomment\n  0\nSECTION\n  2\nENTITIES\n  0\nLINE\n  8\n\n 10\n1.5\n 20\n-2\n 11\n4\n 21\n2\n"
+               "  0\nCIRCLE\n 10\n3\n 20\n3\n 40\n2\n  0\nPOINT\n 10\n7\n 20\n8\n 30\n9\n  0\nARC\n 10\n0\n 20\n0\n"
+               " 40\n1\n 50\n10\n 51\n10\n  0\nENDSEC\n  0\nEOF\n";
+        return dxf_shapes(import_dxf(cpp_file("minimal.dxf")));
+    });
+    compare::add_value("io_dxf_plain_mtext", [] {
+        std::vector<V> out;
+        for (const char* text : {"Plain {\\C1;red} 50%%d", "x\\S1^2;y", "a\\Pb\\Nc\\Ld\\le", "\\\\back\\{\\}",
+                                 "%%c%%p%%d%%%%%%x", "unterminated \\fArial", "^Jcaret^I^", "tail\\",
+                                 "{\\H2.5x;\\fArial|b1;Bold}", "100%", "%%", "%%%", "\\A1;aligned", "\\S1#2;",
+                                 "\\S;empty", "\\;semi", "\xc3\xa9\xe2\x82\xac\xc3\xbc^\xc3\xa9", "\\Sab", "%%C%%D"}) {
+            out.push_back(V(dxf::fast_plain_mtext(text)));
+        }
+        return V::list(out);
+    });
+}

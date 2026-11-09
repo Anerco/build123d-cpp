@@ -824,3 +824,65 @@ def svg_buildline(name, *args):
 for _n in ["svg_basic", "svg_inkscape", "svg_holes", "svg_edge", "svg_export"]:
     CASES[f"io_svg_buildline_{_n}"] = svg_buildline(_n)
 CASES["io_svg_buildline_precision"] = svg_buildline("svg_basic", 3)
+
+
+# ---- DXF import (see cases_io.cpp)
+def dxf_type_name(s):
+    for cls in (Vertex, Edge, Wire, Face, Shell, Solid):
+        if isinstance(s, cls):
+            return cls.__name__
+    return "Compound"
+
+
+def dxf_shapes(shapes):
+    out = []
+    for s in shapes:
+        edges = s.edges()
+        listed = not isinstance(s, Compound) or len(edges) <= 4
+        bb = s.bounding_box()
+        out.append(
+            {
+                "type": dxf_type_name(s),
+                "area": s.area,
+                "length": sum(e.length for e in edges),
+                "edge_count": len(edges),
+                "edges": [[e.geom_type.name, e.start_point(), e.end_point()] for e in edges] if listed else [],
+                "faces": len(s.faces()),
+                "vertices": len(s.vertices()),
+                "bbox": [bb.min, bb.max],
+            }
+        )
+    return V(out)
+
+
+def import_dxf_stream(path):
+    with open(path, "rb") as f:
+        return import_dxf(f)
+
+
+def dxf_crlf():
+    path = cpp_file("crlf.dxf")
+    return V([dxf_shapes(import_dxf(path)).data, dxf_shapes(import_dxf_stream(path)).data])
+
+
+def dxf_plain_mtext():
+    from ezdxf.tools.text import fast_plain_mtext
+
+    texts = ["Plain {\\C1;red} 50%%d", "x\\S1^2;y", "a\\Pb\\Nc\\Ld\\le", "\\\\back\\{\\}", "%%c%%p%%d%%%%%%x",
+             "unterminated \\fArial", "^Jcaret^I^", "tail\\", "{\\H2.5x;\\fArial|b1;Bold}", "100%", "%%", "%%%",
+             "\\A1;aligned", "\\S1#2;", "\\S;empty", "\\;semi", "\u00e9\u20ac\u00fc^\u00e9", "\\Sab", "%%C%%D"]
+    return V([fast_plain_mtext(t) for t in texts])
+
+
+for _n in ["dxf_entities", "dxf_hatch", "dxf_r12", "dxf_binary", "dxf_cp1252", "dxf_3dface", "dxf_polyline3d"]:
+    CASES[f"io_{_n}"] = (lambda n: lambda: dxf_shapes(import_dxf(fixture(n + ".dxf"))))(_n)
+for _n in ["dxf_entities", "dxf_cp1252", "dxf_binary"]:
+    CASES[f"io_{_n}_stream"] = (lambda n: lambda: dxf_shapes(import_dxf_stream(fixture(n + ".dxf"))))(_n)
+CASES["io_dxf_crlf"] = dxf_crlf
+CASES["io_dxf_import_exported"] = lambda: dxf_shapes(import_dxf(cpp_file("export_import.dxf")))
+CASES["io_dxf_import_exported_r12_binary"] = lambda: dxf_shapes(import_dxf(cpp_file("export_import_r12.dxf")))
+CASES["io_dxf_import_missing"] = lambda: dxf_shapes(import_dxf(cpp_file("missing.dxf")))
+CASES["io_dxf_import_not_dxf"] = lambda: dxf_shapes(import_dxf(fixture("svg_basic.svg")))
+CASES["io_dxf_import_no_eof"] = lambda: dxf_shapes(import_dxf(cpp_file("no_eof.dxf")))
+CASES["io_dxf_import_minimal"] = lambda: dxf_shapes(import_dxf(cpp_file("minimal.dxf")))
+CASES["io_dxf_plain_mtext"] = dxf_plain_mtext

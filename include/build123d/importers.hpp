@@ -45,4 +45,15 @@ ShapeList<Shape> import_svg(std::istream& svg_stream, const ImportSvgOptions& op
 std::pair<std::string, std::string> import_svg_as_buildline_code(const std::string& file_name,
                                                                   int precision = 6);
 
+/// The entities of a DXF file's model space as shapes (import_dxf.py import_dxf; the file is
+/// read as ezdxf reads it): LINE, ARC, CIRCLE, ELLIPSE, SPLINE and the (LW)POLYLINE segments
+/// become edges or wires, POINT a Vertex, TEXT and MTEXT Text sketches, HATCH its boundary
+/// paths, and INSERT the transformed objects of its block. Other entities are skipped with a
+/// warning ("Unable to convert ..."). As in build123d 0.13, 3DFACE, SOLID and TRACE make it
+/// raise (std::out_of_range). Raises std::runtime_error if the file can't be read or isn't a
+/// DXF file, std::invalid_argument if its structure is invalid.
+ShapeList<Shape> import_dxf(const std::string& dxf_file);
+/// import_dxf of DXF data read from a stream (ASCII or binary).
+ShapeList<Shape> import_dxf(std::istream& dxf_stream);
+
 }  // namespace build123d
