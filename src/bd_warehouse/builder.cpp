@@ -115,46 +115,76 @@ void Builder::add(const std::vector<Shape>& objects, Mode mode, bool clean, bool
         faces.clear();
     }
 
+    // What the operation did to its inputs (when the kernel says) and the shapes it brought in
+    const std::optional<Shape> obj_before = obj;
+    std::shared_ptr<ShapeHistory> history;
+    std::vector<Shape> brought_in;
+
     std::vector<Shape>& mine = dim == 3 ? solids : dim == 2 ? faces : edges;
     if (!mine.empty()) {
         std::optional<Shape> combined;
         bool needs_clean = clean;
+        bool combined_is_input = false;
+        brought_in = mine;
         switch (mode) {
             case Mode::ADD:
                 if (!obj) {
                     if (mine.size() == 1) {
                         combined = mine[0];
+                        combined_is_input = true;
+                        history = std::make_shared<ShapeHistory>();  // nothing changed: all untouched
                     } else {
                         const Shape last = mine.back();
                         const std::vector<Shape> rest(mine.begin(), mine.end() - 1);
                         combined = last.fuse(rest);
                         needs_clean = false;
+                        history = ShapeHistory::of(*combined);
                     }
                 } else {
                     combined = obj->fuse(mine);
                     needs_clean = false;
+                    history = ShapeHistory::of(*combined);
                 }
                 break;
             case Mode::SUBTRACT:
                 if (!obj) throw std::runtime_error("Nothing to subtract from");
                 combined = obj->cut(mine);
                 needs_clean = false;
+                history = ShapeHistory::of(*combined);
                 break;
             case Mode::INTERSECT: {
                 if (!obj) throw std::runtime_error("Nothing to intersect with");
                 const ShapeList<Shape> common = obj->intersect(Compound(mine));
+                std::vector<const Shape*> pieces;
+                for (const auto& piece : common) pieces.push_back(&piece);
+                history = ShapeHistory::of(pieces);
                 if (!common.empty()) combined = compound_of(dim, std::vector<Shape>(common.begin(), common.end()));
                 needs_clean = false;
                 break;
             }
-            case Mode::REPLACE: combined = compound_of(dim, mine); break;
+            case Mode::REPLACE: {
+                // The replacement is the result, so nothing was brought in; its record, if the
+                // operation kept one, relates it to the object it replaces
+                brought_in.clear();
+                std::vector<const Shape*> passed;
+                for (const auto& object : objects) passed.push_back(&object);
+                history = ShapeHistory::of(passed);
+                combined = compound_of(dim, mine);
+                break;
+            }
             case Mode::PRIVATE: break;
         }
         obj = combined ? *combined : sub_class(dim, TopoDS_Shape());
-        if (needs_clean && !obj->is_null()) obj = obj->clean();
+        if (needs_clean && !obj->is_null()) {
+            obj = obj->clean();
+            // build123d cleans in place: an input that became the object is the cleaned shape
+            if (combined_is_input) brought_in = {*obj};
+            const std::shared_ptr<ShapeHistory>& cleaned = obj->history();
+            if (history && cleaned && cleaned != history) history->merge(cleaned);
+        }
     }
 
-    // Cast to the builder's type (Curve, Sketch or Part)
+    // Cast to the builder's type (Curve, Sketch or Part), with the record of this operation
     if (obj) {
         if (!obj->is_null() && obj->wrapped().ShapeType() == TopAbs_COMPOUND) {
             obj = sub_class(dim, obj->wrapped());
@@ -171,6 +201,12 @@ void Builder::add(const std::vector<Shape>& objects, Mode mode, bool clean, bool
             }
             obj = compound_of(dim, shapes);
         }
+        std::vector<TopoDS_Shape> before_shapes, brought_shapes;
+        if (obj_before && !obj_before->is_null()) before_shapes.push_back(obj_before->wrapped());
+        for (const auto& s : brought_in) brought_shapes.push_back(s.wrapped());
+        std::shared_ptr<ShapeHistory> record = history ? history : std::make_shared<ShapeHistory>();
+        record->with_inputs(std::move(before_shapes), std::move(brought_shapes));
+        obj->set_history(record);
     }
 
     // Add to pending
@@ -196,10 +232,10 @@ Sketch Builder::sketch() const { return obj ? Sketch(obj->wrapped()) : Sketch();
 Curve Builder::line() const { return obj ? Curve(obj->wrapped()) : Curve(); }
 Shape Builder::product() const { return obj ? sub_class(dim, obj->wrapped()) : sub_class(dim, TopoDS_Shape()); }
 
-ShapeList<Vertex> Builder::vertices() const { return obj ? obj->vertices() : ShapeList<Vertex>(); }
-ShapeList<Edge> Builder::edges() const { return obj ? obj->edges() : ShapeList<Edge>(); }
-ShapeList<Face> Builder::faces() const { return obj ? obj->faces() : ShapeList<Face>(); }
-ShapeList<Solid> Builder::solids() const { return obj ? obj->solids() : ShapeList<Solid>(); }
+ShapeList<Vertex> Builder::vertices(Select select) const { return obj ? obj->vertices(select) : ShapeList<Vertex>(); }
+ShapeList<Edge> Builder::edges(Select select) const { return obj ? obj->edges(select) : ShapeList<Edge>(); }
+ShapeList<Face> Builder::faces(Select select) const { return obj ? obj->faces(select) : ShapeList<Face>(); }
+ShapeList<Solid> Builder::solids(Select select) const { return obj ? obj->solids(select) : ShapeList<Solid>(); }
 ShapeList<Wire> Builder::wires() const {
     if (!obj) return {};
     if (dim == 1) return Wire::combine(std::vector<Edge>(obj->edges()));

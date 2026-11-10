@@ -10,3 +10,4 @@
 #include "bd_warehouse/shaft_key.hpp"
 #include "bd_warehouse/bushing.hpp"
 #include "bd_warehouse/pipe.hpp"
+#include "bd_warehouse/flange.hpp"

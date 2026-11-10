@@ -45,11 +45,12 @@ public:
     /// The object as a Compound of the builder's type (for publishing).
     Shape product() const;
 
-    /// builder.vertices() / edges() / faces() / solids() / wires() (of the local object).
-    ShapeList<Vertex> vertices() const;
-    ShapeList<Edge> edges() const;
-    ShapeList<Face> faces() const;
-    ShapeList<Solid> solids() const;
+    /// builder.vertices() / edges() / faces() / solids() / wires() (of the local object); with
+    /// Select::LAST or NEW, those the last operation brought in or created (by its record).
+    ShapeList<Vertex> vertices(Select select = Select::ALL) const;
+    ShapeList<Edge> edges(Select select = Select::ALL) const;
+    ShapeList<Face> faces(Select select = Select::ALL) const;
+    ShapeList<Solid> solids(Select select = Select::ALL) const;
     ShapeList<Wire> wires() const;
     /// builder.face() / edge(): the only one, else ValueError.
     Face face() const;
