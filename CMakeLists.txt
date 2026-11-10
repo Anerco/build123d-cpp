@@ -50,6 +50,10 @@ endif()
 message(STATUS "lib3mf: ${LIB3MF_LIBRARY}")
 
 file(GLOB BUILD123D_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
+# bd_warehouse (the port of the bd_warehouse part library: threads, fasteners, gears, ...) is
+# built into the same library; its headers are include/bd_warehouse/*.hpp.
+file(GLOB BD_WAREHOUSE_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/bd_warehouse/*.cpp)
+list(APPEND BUILD123D_SOURCES ${BD_WAREHOUSE_SOURCES})
 # lodepng (zlib license, third_party/lodepng): PNG reading and writing for PBR textures,
 # compiled into the library privately.
 set(BUILD123D_LODEPNG ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lodepng/lodepng.cpp)
@@ -125,6 +129,7 @@ install(TARGETS build123d EXPORT build123dTargets
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(DIRECTORY include/build123d DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(DIRECTORY include/bd_warehouse DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(EXPORT build123dTargets NAMESPACE build123d::
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/build123d)
 include(CMakePackageConfigHelpers)
