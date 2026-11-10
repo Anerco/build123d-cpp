@@ -32,6 +32,9 @@
 #include <StdFail_NotDone.hxx>
 #include <StlAPI_Writer.hxx>
 #include <Standard_Version.hxx>
+#if OCC_VERSION_HEX >= 0x080000
+#include <DESTEP_Parameters.hxx>
+#endif
 #include <TCollection_AsciiString.hxx>
 #include <TCollection_ExtendedString.hxx>
 #include <TCollection_HAsciiString.hxx>
@@ -172,6 +175,20 @@ bool write_step(const Shape& to_export, Unit unit, bool write_pcurves, Precision
         header.SetOriginatingSystem(new TCollection_HAsciiString("build123d"));
         STEPCAFControl_Controller::Init();
         STEPControl_Controller::Init();
+#if OCC_VERSION_HEX >= 0x080000
+        // OCCT 8.0.0 transfers with no shape processing once the controllers above are set up,
+        // which drops every conical face whose semi-angle is negative (a cone narrowing along
+        // its axis, a circular edge's chamfer); 8.0.1 sets these defaults where the writer has
+        // none (OCCT #1334), as here.
+        if (writer.GetShapeFixParameters().IsEmpty())
+            writer.SetShapeFixParameters(DESTEP_Parameters::GetDefaultShapeFixParameters());
+        if (!writer.GetShapeProcessFlags().second) {
+            ShapeProcess::OperationsFlags flags;
+            flags.set(ShapeProcess::Operation::SplitCommonVertex);
+            flags.set(ShapeProcess::Operation::DirectFaces);
+            writer.SetShapeProcessFlags(flags);
+        }
+#endif
         Interface_Static::SetIVal("write.surfacecurve.mode", write_pcurves ? 1 : 0);
         Interface_Static::SetIVal("write.precision.mode", static_cast<int>(precision_mode));
         writer.Transfer(doc, STEPControl_AsIs);

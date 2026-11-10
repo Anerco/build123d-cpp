@@ -297,6 +297,22 @@ TEST(io_round_trips) {
     CHECK_THROWS(export_step(part, dir.file("no/such/dir/part.step")), std::runtime_error);
 }
 
+TEST(step_keeps_narrowing_cones) {
+    // A cone narrowing along its axis and a circular edge's chamfer: conical faces of a
+    // negative semi-angle, which OCCT 8.0.0's writer dropped without its shape processing.
+    const TempDir dir;
+    const Part cone = Cone(10, 5, 3);
+    const Part c = Cylinder(10, 3);
+    const Part chamfered = chamfer(c.edges().group_by(Axis::Z)[0], 0.6);
+    for (const auto& [part, name] : {std::pair{cone, "cone.step"}, std::pair{chamfered, "chamfer.step"}}) {
+        CHECK(export_step(part, dir.file(name)));
+        const Shape back = import_step(dir.file(name));
+        CHECK(back.faces().size() == part.faces().size());
+        CHECK(back.solids().size() == 1);
+        CHECK_NEAR(back.volume(), part.volume(), 1e-6 * part.volume());
+    }
+}
+
 TEST(step_assembly_labels_and_colors) {
     const TempDir dir;
     Part red = Box(1, 1, 1);
