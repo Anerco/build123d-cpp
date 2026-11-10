@@ -26,6 +26,27 @@ std::string py_set_repr(const std::set<std::string>& items);
 /// Python's list(diameters.keys()) repr.
 std::string fits_repr(const ParamDict& diameters);
 
+/// ThreadedHole(fastener, material, fit, depth, counter_sunk, simple) in a BuildPart at the given
+/// locations (bd_warehouse's builder mode): without a depth the hole is twice the size of the
+/// builder's part (2 * max_dimension). Returns the locations bd_warehouse appends to
+/// fastener.hole_locations: each lowered by the countersink's depth (not for countersunk
+/// screws).
+std::vector<build123d::Location> threaded_hole(Builder& part, const Fastener& fastener,
+                                               const std::string& material = "Soft",
+                                               const std::string& fit = "Normal",
+                                               std::optional<double> depth = std::nullopt, bool counter_sunk = true,
+                                               bool simple = true,
+                                               const std::vector<build123d::Location>& locations = {build123d::Location()},
+                                               Mode mode = Mode::SUBTRACT);
+/// TapHole(fastener, material, fit, depth, counter_sunk) in a BuildPart at the given locations
+/// (bd_warehouse's builder mode, see threaded_hole); returns the hole locations bd_warehouse
+/// records.
+std::vector<build123d::Location> tap_hole(Builder& part, const Fastener& fastener, const std::string& material = "Soft",
+                                          const std::string& fit = "Normal", std::optional<double> depth = std::nullopt,
+                                          bool counter_sunk = true,
+                                          const std::vector<build123d::Location>& locations = {build123d::Location()},
+                                          Mode mode = Mode::SUBTRACT);
+
 }  // namespace bd_warehouse::detail
 
 /// fastener_data(), types() and sizes() of a fastener class reading `file`.

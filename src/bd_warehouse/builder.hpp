@@ -76,10 +76,11 @@ std::vector<Location> compose(const std::vector<Location>& outer, const std::vec
 
 // ---- builder-mode paths of the operations
 
-/// make_face() in a BuildSketch: a face of the pending edges, added with `mode`.
-void make_face(Builder& sketch, Mode mode = Mode::ADD);
+/// make_face() in a BuildSketch: a face of the pending edges, added with `mode`; returns the
+/// face made (as a Sketch, before the builder cleans it), as build123d's make_face.
+Sketch make_face(Builder& sketch, Mode mode = Mode::ADD);
 /// make_face(edges) in a BuildSketch.
-void make_face(Builder& sketch, const std::vector<Edge>& edges, Mode mode = Mode::ADD);
+Sketch make_face(Builder& sketch, const std::vector<Edge>& edges, Mode mode = Mode::ADD);
 /// loft() in a BuildPart: the pending faces lofted, added with `mode`.
 void loft(Builder& part, bool ruled = false, bool clean = true, Mode mode = Mode::ADD);
 /// extrude(amount=...) in a BuildPart: the pending faces extruded along their planes.
@@ -113,14 +114,31 @@ void scale(Builder& builder, const std::optional<std::vector<Shape>>& objects, d
 Sketch sweep(Builder& sketch, const std::vector<Shape>& sections, const Shape& path, bool clean = true,
              Transition transition = Transition::TRANSFORMED, Mode mode = Mode::ADD);
 /// sweep() in a BuildPart with neither sections nor path: each pending face swept along the
-/// pending edges (as one Wire) into a solid, added with `mode` and `clean`.
-void sweep(Builder& part, bool is_frenet = false, Transition transition = Transition::TRANSFORMED, bool clean = true,
+/// pending edges (as one Wire) into a solid, added with `mode` and `clean`; returns the swept
+/// solids as a Part (uncleaned, as build123d's sweep returns them in a builder).
+Part sweep(Builder& part, bool is_frenet = false, Transition transition = Transition::TRANSFORMED, bool clean = true,
            Mode mode = Mode::ADD);
+/// builder.max_dimension: the diagonal of the builder's object's bounding box (0 without one).
+double max_dimension(const Builder& builder);
+/// _BaseHole._through_hole_depth: the builder's max_dimension plus the farthest location's
+/// distance from the centre of the part (std::invalid_argument "No depth provided" without a
+/// part).
+double through_hole_depth(const Builder& part, const std::vector<Location>& locations);
 /// Hole(radius, depth) in a BuildPart at the given locations: a cylinder 2 * depth long centred on
 /// each location; without a depth, through the part (twice the part's bounding box diagonal plus
 /// the farthest location's distance from its centre), as build123d's builder-mode Hole.
 void hole(Builder& part, double radius, std::optional<double> depth = std::nullopt,
           const std::vector<Location>& locations = {Location()}, Mode mode = Mode::SUBTRACT);
+/// CounterBoreHole(radius, counter_bore_radius, counter_bore_depth, depth) in a BuildPart at the
+/// given locations; without a depth, through the part (through_hole_depth).
+void counter_bore_hole(Builder& part, double radius, double counter_bore_radius, double counter_bore_depth,
+                       std::optional<double> depth = std::nullopt, const std::vector<Location>& locations = {Location()},
+                       Mode mode = Mode::SUBTRACT);
+/// CounterSinkHole(radius, counter_sink_radius, depth, counter_sink_angle) in a BuildPart at the
+/// given locations; without a depth, through the part (through_hole_depth).
+void counter_sink_hole(Builder& part, double radius, double counter_sink_radius,
+                       std::optional<double> depth = std::nullopt, double counter_sink_angle = 82,
+                       const std::vector<Location>& locations = {Location()}, Mode mode = Mode::SUBTRACT);
 /// insert(objects) in a builder at the given locations (the builder's location context).
 void insert(Builder& builder, const std::vector<Shape>& objects, const std::vector<Location>& locations = {Location()},
             Mode mode = Mode::ADD);

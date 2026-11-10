@@ -178,6 +178,57 @@ ThreadedHole::ThreadedHole(const Fastener& fastener, const std::string& material
     assign(hole_part, Rotation(), std::nullopt);
 }
 
+// ---------------------------------------------------------------------------
+// The holes in builder mode
+// ---------------------------------------------------------------------------
+
+namespace detail {
+
+namespace {
+
+/// Countersunk screws shouldn't be lowered into the hole.
+bool is_countersunk_screw(const Fastener& fastener) {
+    return dynamic_cast<const CounterSunkScrew*>(&fastener) != nullptr ||
+           dynamic_cast<const RaisedCounterSunkOvalHeadScrew*>(&fastener) != nullptr;
+}
+
+std::vector<Location> lowered(const std::vector<Location>& locations, double offset) {
+    std::vector<Location> out;
+    for (const auto& location : locations) out.push_back(location * Pos(0, 0, -offset));
+    return out;
+}
+
+}  // namespace
+
+std::vector<Location> threaded_hole(Builder& part, const Fastener& fastener, const std::string& material,
+                                    const std::string& fit, std::optional<double> depth, bool counter_sunk, bool simple,
+                                    const std::vector<Location>& locations, Mode mode) {
+    if (dynamic_cast<const HeatSetNut*>(&fastener)) {
+        throw std::invalid_argument(
+            "ThreadedHole doesn't accept fasteners of type HeatSetNut - use InsertHole instead");
+    }
+    const ThreadedHole hole(fastener, material, fit, depth ? *depth : 2 * max_dimension(part), counter_sunk, simple);
+    part.publish(hole, mode, locations);
+    const std::optional<Face> head_profile = counter_sunk ? fastener.countersink_profile(fit) : std::nullopt;
+    const double head_depth = counter_sunk && head_profile ? head_profile->bounding_box().max.Z : 0.0;
+    return lowered(locations, is_countersunk_screw(fastener) ? 0.0 : head_depth);
+}
+
+std::vector<Location> tap_hole(Builder& part, const Fastener& fastener, const std::string& material,
+                               const std::string& fit, std::optional<double> depth, bool counter_sunk,
+                               const std::vector<Location>& locations, Mode mode) {
+    if (dynamic_cast<const HeatSetNut*>(&fastener)) {
+        throw std::invalid_argument("TapHole doesn't accept fasteners of type HeatSetNut - use insertHole instead");
+    }
+    const TapHole hole(fastener, material, fit, depth ? *depth : 2 * max_dimension(part), counter_sunk);
+    part.publish(hole, mode, locations);
+    const std::optional<Face> profile = fastener.countersink_profile(fit);
+    const double head_offset = counter_sunk && profile ? profile->vertices().sort_by(Axis::Z)[-1].Z() : 0.0;
+    return lowered(locations, is_countersunk_screw(fastener) ? 0.0 : head_offset);
+}
+
+}  // namespace detail
+
 InsertHole::InsertHole(const HeatSetNut& fastener, const std::string& fit, std::optional<double> depth,
                        double manufacturing_compensation) {
     hole_depth = required_depth(depth);

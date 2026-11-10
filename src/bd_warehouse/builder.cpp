@@ -296,17 +296,18 @@ std::vector<Location> compose(const std::vector<Location>& outer, const std::vec
 // Operations in builder mode
 // ---------------------------------------------------------------------------
 
-void make_face(Builder& sketch, Mode mode) {
+Sketch make_face(Builder& sketch, Mode mode) {
     if (sketch.pending_edges.empty()) throw std::invalid_argument("No objects to create a hull");
-    make_face(sketch, sketch.pending_edges, mode);
+    return make_face(sketch, sketch.pending_edges, mode);
 }
 
-void make_face(Builder& sketch, const std::vector<Edge>& edges, Mode mode) {
+Sketch make_face(Builder& sketch, const std::vector<Edge>& edges, Mode mode) {
     if (edges.empty()) throw std::invalid_argument("No objects to create a hull");
     Face pending_face(Wire::combine(edges).at(0));
     if (pending_face.normal_at().Z < 0) pending_face = -pending_face;  // flip up-side-down faces
     sketch.add(pending_face, mode);
     sketch.pending_edges.clear();
+    return Sketch(compound_of(2, {pending_face}).wrapped());
 }
 
 void loft(Builder& part, bool ruled, bool clean, Mode mode) {
@@ -551,7 +552,7 @@ void scale(Builder& builder, const std::optional<std::vector<Shape>>& objects, d
     builder.add(new_objects, mode);
 }
 
-void sweep(Builder& part, bool is_frenet, Transition transition, bool clean, Mode mode) {
+Part sweep(Builder& part, bool is_frenet, Transition transition, bool clean, Mode mode) {
     if ((part.dim != 3 && part.dim != 2) || part.pending_edges.empty()) {
         throw std::invalid_argument("path must be provided");
     }
@@ -566,27 +567,42 @@ void sweep(Builder& part, bool is_frenet, Transition transition, bool clean, Mod
         new_solids.push_back(Solid::sweep(face, path_wire, true, is_frenet, std::nullopt, std::nullopt, transition));
     }
     part.add(new_solids, mode, clean);
+    return Part(compound_of(3, new_solids).wrapped());
+}
+
+double max_dimension(const Builder& builder) {
+    return builder.obj && !builder.obj->is_null() ? builder.obj->bounding_box().diagonal() : 0.0;
+}
+
+double through_hole_depth(const Builder& part, const std::vector<Location>& locations) {
+    if (!part.obj || part.obj->is_null()) throw std::invalid_argument("No depth provided");
+    const Vector part_origin = part.obj->bounding_box().center();
+    double origin_distance = 0.0;
+    bool first = true;
+    for (const auto& location : locations) {
+        const double distance = (part_origin - location.position()).length();
+        if (first || distance > origin_distance) origin_distance = distance;
+        first = false;
+    }
+    if (first) throw std::invalid_argument("max() arg is an empty sequence");
+    return max_dimension(part) + origin_distance;
+}
+
+void counter_bore_hole(Builder& part, double radius, double counter_bore_radius, double counter_bore_depth,
+                       std::optional<double> depth, const std::vector<Location>& locations, Mode mode) {
+    const double hole_depth = depth ? *depth : through_hole_depth(part, locations);
+    part.publish(CounterBoreHole(radius, counter_bore_radius, counter_bore_depth, hole_depth), mode, locations);
+}
+
+void counter_sink_hole(Builder& part, double radius, double counter_sink_radius, std::optional<double> depth,
+                       double counter_sink_angle, const std::vector<Location>& locations, Mode mode) {
+    const double hole_depth = depth ? *depth : through_hole_depth(part, locations);
+    part.publish(CounterSinkHole(radius, counter_sink_radius, hole_depth, counter_sink_angle), mode, locations);
 }
 
 void hole(Builder& part, double radius, std::optional<double> depth, const std::vector<Location>& locations,
           Mode mode) {
-    double hole_depth;
-    if (depth) {
-        hole_depth = 2 * *depth;
-    } else {
-        // _BaseHole._through_hole_depth
-        if (!part.obj || part.obj->is_null()) throw std::invalid_argument("No depth provided");
-        const Vector part_origin = part.obj->bounding_box().center();
-        double origin_distance = 0.0;
-        bool first = true;
-        for (const auto& location : locations) {
-            const double distance = (part_origin - location.position()).length();
-            if (first || distance > origin_distance) origin_distance = distance;
-            first = false;
-        }
-        if (first) throw std::invalid_argument("max() arg is an empty sequence");
-        hole_depth = 2 * (part.obj->bounding_box().diagonal() + origin_distance);
-    }
+    const double hole_depth = depth ? 2 * *depth : 2 * through_hole_depth(part, locations);
     // To ensure the hole goes all the way through the part when no depth is given, it starts above
     // the part
     const Vector hole_start = depth ? Vector(0, 0, 0) : Vector(0, 0, hole_depth / 2);

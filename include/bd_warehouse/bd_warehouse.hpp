@@ -13,3 +13,4 @@
 #include "bd_warehouse/flange.hpp"
 #include "bd_warehouse/gear.hpp"
 #include "bd_warehouse/sprocket.hpp"
+#include "bd_warehouse/open_builds.hpp"
