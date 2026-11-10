@@ -7,3 +7,4 @@
 #include "bd_warehouse/bearing.hpp"
 #include "bd_warehouse/o_rings.hpp"
 #include "bd_warehouse/retaining_ring.hpp"
+#include "bd_warehouse/shaft_key.hpp"
