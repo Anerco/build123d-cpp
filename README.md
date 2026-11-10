@@ -1,10 +1,22 @@
 # build123d-cpp
 
-A C++ port of [build123d](https://github.com/gumyr/build123d), the Python CAD library, built
-directly on [OpenCASCADE](https://dev.opencascade.org/) (OCCT). It covers everything in
-build123d 0.13 except builder mode (`BuildPart`, `BuildSketch`, `BuildLine`): the algebra API,
-the topology classes, every object and operation, joints and assemblies, drafting, and all
-importers and exporters. Results are checked against Python build123d itself.
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+
+A C++ port of [build123d](https://github.com/gumyr/build123d), the Python CAD library, and of
+[bd_warehouse](https://github.com/gumyr/bd_warehouse), its library of standard parts, built
+directly on [OpenCASCADE](https://dev.opencascade.org/) (OCCT).
+
+- **All of build123d 0.13's algebra API**: the topology classes, every object and operation,
+  joints and assemblies, materials, drafting, and every importer and exporter. Builder mode
+  (`BuildPart`, `BuildSketch`, `BuildLine`) is the one thing not ported.
+- **All of bd_warehouse 0.4**: threads, fasteners and their holes, bearings, gears, sprockets,
+  flanges, pipes, O-rings, retaining rings, shaft keys and the OpenBuilds parts.
+- **Checked against the Python originals**, not just compiled: 3,288 models and values are built in
+  both and compared, and all of them match.
+
+This is an independent port, not part of the build123d project. Its API follows build123d's as
+closely as C++ allows, so build123d's documentation applies;
+[From Python to C++](#from-python-to-c) lists the differences.
 
 ```cpp
 #include <build123d/build123d.hpp>
@@ -31,6 +43,21 @@ export_step(plate, "plate.step")
 
 *Some of the ported examples, as written by the C++ programs in `examples/`
 (rendered with `scripts/render_examples.py`).*
+
+## Why C++
+
+- **No Python.** Use build123d's modeling from a C++ program, library or server, or ship a CAD
+  feature without bundling an interpreter.
+- **It starts at once.** The plate above, run once to write its STEP, takes 0.05 s and 56 MB of
+  memory as a C++ program, and 1.3 s and 420 MB as a Python script, most of that importing
+  build123d. Building the model again in a program that is already running takes 18 ms in C++
+  and 20 ms in Python: the geometry is OCCT's in both, so a heavy model takes about as long in
+  either. (Ryzen 7 9800X3D, Linux, Python 3.12, `-O2`.)
+- **Mistakes are caught by the compiler.** The algebra tracks dimensions in its types: `Box +
+  Sphere` is a `Part`, `Circle - Rectangle` is a `Sketch`, and adding a circle to a box doesn't
+  compile ([Static types](#static-types)).
+- **The same results.** A model ported from Python builds the same solid, to the volume, area,
+  topology and bounding box.
 
 ## What it covers
 
@@ -90,26 +117,69 @@ export_step(plate, "plate.step")
   - `export_to_pcbway` (3D printing quotes);
   - `shape_to_html` and VTK output for viewers (Jupyter's display of a shape).
 
+### bd_warehouse
+
+`#include <bd_warehouse/bd_warehouse.hpp>`, namespace `bd_warehouse`. Every part is a `Part`,
+so it takes the algebra like any other:
+
+- **Threads**: `IsoThread`, `TrapezoidalThread`, `AcmeThread`, `MetricTrapezoidalThread`,
+  `WhitworthThread`, `BSPPThread`, `PlasticBottleThread` and the general `Thread`.
+- **Fasteners**: screws, nuts and washers of every standard bd_warehouse has (`SocketHeadCapScrew`,
+  `HexNut`, `PlainWasher`, …, selected by size), and their `ClearanceHole`, `TapHole`,
+  `ThreadedHole` and `InsertHole`.
+- **Bearings**: deep groove (open and capped), angular contact, cylindrical and tapered roller,
+  with `PressFitHole`.
+- **Gears**: `SpurGear`, `HelicalGear`, `RackGear`, `Worm`, `WormWheel` and `WormGear`, with
+  their plans and `InvoluteToothProfile`; and `Sprocket`.
+- **Pipes and flanges**: `Pipe` and `PipeSection` by NPS and schedule; `Flange`, `BlindFlange`,
+  `LappedFlange`, `SlipOnFlange`, `SocketWeldFlange` and `WeldNeckFlange` from the ASME tables.
+- **Seals and keys**: `ORing` with its gland profiles, `ExternalSnapRing`, `InternalSnapRing` and
+  their grooves, `ShaftKey` and `Keyway`, and `HexFlangedEccentricBushing`.
+- **OpenBuilds**: rails, plates, wheels, spacers, couplers, lead screws, stepper motors and the
+  C-Beam assemblies, with their joints.
+
+Python's keyword arguments are an options struct:
+
+```cpp
+#include <build123d/build123d.hpp>
+#include <bd_warehouse/bd_warehouse.hpp>
+using namespace build123d;
+namespace bdw = bd_warehouse;
+
+int main() {
+    Part gear = bdw::SpurGear(2, 24, 20, 8, {.root_fillet = 0.5});       // module 2, 24 teeth, 20°, 8 mm thick
+    Part screw = bdw::SocketHeadCapScrew("M6-1", 20);                    // ISO 4762, M6 × 20
+    Part thread = bdw::IsoThread(20, 1.5, 10, {.external = false});      // an internal M20 × 1.5 thread
+    export_step(Compound::make_assembly({gear, Pos(40, 0, 0) * screw, Pos(-40, 0, 0) * thread}), "parts.step");
+}
+```
+
 ## How it was checked
 
-Everything above was checked against Python build123d 0.13.0 itself, not just compiled:
+Everything above was checked against Python build123d 0.13.0 and bd_warehouse 0.4.0
+themselves, not just compiled:
 
-- `tests/compare` builds the same 884 models and values in C++ and in Python and compares them:
-  shapes by volume, area, total edge length, topology counts, bounding box and center of mass
-  (to 1e-6 relative); other results value by value (points, axes, mass properties, file
-  contents, …). All of them match.
+- `tests/compare` builds the same 3,288 models and values in C++ and in Python and compares
+  them: 884 of build123d's, and 2,404 of bd_warehouse's, with every size of every standard part
+  and the errors it raises. Shapes are compared by volume, area, total edge length, topology
+  counts, bounding box and center of mass (to 1e-6 relative); other results value by value
+  (points, axes, mass properties, file contents, …). All of them match.
 - All 24 of build123d's official algebra examples are ported in `examples/`. The 47 objects they
   show match their Python originals the same way.
-- `tests/test_*.cpp` has 64 unit tests for the C++ API itself (static result types, joints and
+- `tests/test_*.cpp` has 79 unit tests for the C++ API itself (static result types, joints and
   tree semantics, error handling, file round trips, PCBWay uploads against a local server).
 
-Python build123d 0.13 requires OCCT 8.0 (the comparisons ran it on 8.0.1). This port also
-builds and runs with OCCT 7.6 to 7.9. The results with each version, compared with Python on
+With OCCT 8.0.0 all of them pass: 79/79 unit tests, 3,288/3,288 cases and 47/47 example
+objects. Python build123d 0.13 requires OCCT 8.0 (the comparisons ran it on 8.0.1). On 8.0.0,
+`export_step` gives the STEP writer the defaults 8.0.1 gives it (OCCT #1334), without which
+8.0.0 drops cones that narrow along their axis, such as a chamfer on a round edge.
+
+The build123d part also builds and runs with OCCT 7.6 to 7.9. Measured before bd_warehouse was
+ported, against its 64 unit tests, 884 cases and 47 example objects, compared with Python on
 OCCT 8.0:
 
 | OCCT | unit tests | comparison cases | example objects |
 |---|---|---|---|
-| 8.0.0 | 64/64 | 884/884 | 47/47 |
 | 7.9.3 | 64/64 | 862/884 | 47/47 |
 | 7.7.2 | 64/64 | 843/884 | 47/47 |
 | 7.6.3 | 64/64 | 838/884 | 44/47 |
@@ -134,7 +204,8 @@ Requirements:
 - lib3mf (for `Mesher`).
 - libcurl (optional, for `export_to_pcbway`; without it that function throws).
 
-Builds were tested on Linux x86-64 with GCC.
+Builds were tested on Linux x86-64 with GCC 15. Programs that use the library also compile
+with clang.
 
 ```sh
 cmake -S . -B build -G Ninja -DCMAKE_PREFIX_PATH=/path/to/occt
@@ -327,12 +398,16 @@ Smaller differences:
 
 Builder mode: `BuildPart`, `BuildSketch`, `BuildLine`, `Mode`, the builder-context selector
 functions, `add`/`insert`, locations used as context managers and the `mode=` arguments.
+bd_warehouse's parts that build themselves in builder mode are built the same way inside the
+port. Its holes (`ClearanceHole`, `TapHole`, …) need their depth given, which Python reads from
+the builder's part.
 
 ## Layout
 
 ```
 include/build123d/   public headers (build123d.hpp includes them all; vtk.hpp needs VTK)
-src/                 implementation
+include/bd_warehouse/ bd_warehouse's headers (bd_warehouse.hpp includes them all)
+src/                 implementation, bd_warehouse's in src/bd_warehouse/
 data/fonts/          the bundled single-line font (SIL Open Font License)
 data/textures/       the materials' textures, once scripts/fetch-textures.sh has fetched them
 third_party/         lodepng (PNG files)
