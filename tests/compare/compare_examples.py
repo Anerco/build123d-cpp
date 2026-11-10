@@ -17,7 +17,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 def main():
-    examples_dir = sys.argv[1]
+    examples_dir = os.path.abspath(sys.argv[1])  # the examples run in a temporary directory
     only = sys.argv[2:]
     py = run([sys.executable, os.path.join(HERE, "examples_py.py"), *only])
     examples = list(dict.fromkeys(row["example"] for row in py.values()))
