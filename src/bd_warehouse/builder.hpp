@@ -111,6 +111,11 @@ void scale(Builder& builder, const std::optional<std::vector<Shape>>& objects, d
 /// as a Sketch (as build123d's sweep returns them).
 Sketch sweep(Builder& sketch, const std::vector<Shape>& sections, const Shape& path, bool clean = true,
              Transition transition = Transition::TRANSFORMED, Mode mode = Mode::ADD);
+/// Hole(radius, depth) in a BuildPart at the given locations: a cylinder 2 * depth long centred on
+/// each location; without a depth, through the part (twice the part's bounding box diagonal plus
+/// the farthest location's distance from its centre), as build123d's builder-mode Hole.
+void hole(Builder& part, double radius, std::optional<double> depth = std::nullopt,
+          const std::vector<Location>& locations = {Location()}, Mode mode = Mode::SUBTRACT);
 /// insert(objects) in a builder at the given locations (the builder's location context).
 void insert(Builder& builder, const std::vector<Shape>& objects, const std::vector<Location>& locations = {Location()},
             Mode mode = Mode::ADD);

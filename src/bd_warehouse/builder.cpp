@@ -515,6 +515,33 @@ void scale(Builder& builder, const std::optional<std::vector<Shape>>& objects, d
     builder.add(new_objects, mode);
 }
 
+void hole(Builder& part, double radius, std::optional<double> depth, const std::vector<Location>& locations,
+          Mode mode) {
+    double hole_depth;
+    if (depth) {
+        hole_depth = 2 * *depth;
+    } else {
+        // _BaseHole._through_hole_depth
+        if (!part.obj || part.obj->is_null()) throw std::invalid_argument("No depth provided");
+        const Vector part_origin = part.obj->bounding_box().center();
+        double origin_distance = 0.0;
+        bool first = true;
+        for (const auto& location : locations) {
+            const double distance = (part_origin - location.position()).length();
+            if (first || distance > origin_distance) origin_distance = distance;
+            first = false;
+        }
+        if (first) throw std::invalid_argument("max() arg is an empty sequence");
+        hole_depth = 2 * (part.obj->bounding_box().diagonal() + origin_distance);
+    }
+    // To ensure the hole goes all the way through the part when no depth is given, it starts above
+    // the part
+    const Vector hole_start = depth ? Vector(0, 0, 0) : Vector(0, 0, hole_depth / 2);
+    const Solid solid = Solid::make_cylinder(radius, hole_depth, Plane(hole_start, std::nullopt, Vector(0, 0, -1)));
+    const BasePartObject hole_object(solid, Rotation(), Align3(Align::CENTER, Align::CENTER, Align::CENTER));
+    part.publish(hole_object, mode, locations);
+}
+
 Sketch sweep(Builder& builder, const std::vector<Shape>& sections, const Shape& path, bool clean, Transition transition,
              Mode mode) {
     if (builder.dim != 2) throw std::invalid_argument("sweep of edge sections is only ported for BuildSketch");
