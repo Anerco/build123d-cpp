@@ -1,0 +1,136 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 5 * * 1" # Mondays, so the comparison also runs when nothing is pushed
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # OCCT 8.0.0, lib3mf, libcurl, CMake, Ninja and GCC from conda-forge, as the README builds
+      - name: Restore the toolchain
+        id: toolchain
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .toolchain
+            .toolchain-bin/micromamba
+          key: toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/setup-toolchain.sh') }}
+      - name: Create the toolchain
+        if: steps.toolchain.outputs.cache-hit != 'true'
+        run: FETCH_TEXTURES=no scripts/setup-toolchain.sh
+
+      - name: Restore the compiler cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ccache
+          key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+          restore-keys: ccache-${{ runner.os }}-${{ runner.arch }}-
+      - name: Install ccache
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends ccache
+          ccache --set-config=max_size=500M
+          ccache --zero-stats
+
+      - name: Configure
+        run: >-
+          .toolchain-bin/micromamba run -p ./.toolchain
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_PREFIX_PATH=$PWD/.toolchain -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+      - name: Build
+        run: |
+          .toolchain-bin/micromamba run -p ./.toolchain cmake --build build
+          ccache --show-stats
+
+      - name: Unit tests
+        working-directory: build
+        run: ./build123d_tests
+
+      - name: Examples
+        working-directory: ${{ runner.temp }} # they write their STEP files where they run
+        run: |
+          for example in "$GITHUB_WORKSPACE"/build/examples/*; do
+            echo "::group::$(basename "$example")"
+            "$example"
+            echo "::endgroup::"
+          done
+
+      - name: Pack the programs for the comparison
+        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+        run: tar -cf programs.tar build/compare_cases build/examples
+      - if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: programs
+          path: programs.tar
+          retention-days: 1
+
+  # The 3,288 cases and 47 example objects of tests/compare, built again by Python build123d
+  compare:
+    name: Compare with Python build123d
+    needs: build
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # the programs link the toolchain's OCCT
+      - name: Restore the toolchain
+        id: toolchain
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .toolchain
+            .toolchain-bin/micromamba
+          key: toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/setup-toolchain.sh') }}
+      - name: Create the toolchain
+        if: steps.toolchain.outputs.cache-hit != 'true'
+        run: FETCH_TEXTURES=no scripts/setup-toolchain.sh
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: programs
+      - name: Unpack the programs
+        run: tar -xf programs.tar
+
+      # the text cases read these fonts by their paths
+      - name: Install fonts
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends \
+            fonts-dejavu-core fonts-liberation fonts-ubuntu fonts-urw-base35
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Install build123d 0.13.0 and bd_warehouse 0.4.0
+        run: |
+          python -m pip install build123d==0.13.0 bd_warehouse==0.4.0 vtk
+          python -m pip freeze
+
+      - name: Compare the models and values
+        run: python tests/compare/compare.py build/compare_cases
+      - name: Compare the examples
+        if: ${{ !cancelled() }}
+        run: python tests/compare/compare_examples.py build/examples
