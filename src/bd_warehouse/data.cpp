@@ -48,6 +48,15 @@ const std::string& data_file(const std::string& path) {
     throw std::runtime_error("[Errno 2] No such file or directory: '" + path + "'");
 }
 
+namespace {
+#include "methods.inc"
+}  // namespace
+
+const std::set<std::string>* class_methods(const std::string& cls) {
+    const auto found = kClassMethods.find(cls);
+    return found == kClassMethods.end() ? nullptr : &found->second;
+}
+
 // ---------------------------------------------------------------------------
 // csv (a port of the state machine of CPython's _csv.c for the excel dialect)
 // ---------------------------------------------------------------------------

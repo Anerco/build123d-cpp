@@ -56,6 +56,15 @@ double polygon_diagonal(double width, int num_sides = 6);
 /// ("No header found in <filename>") for an empty file; std::runtime_error for an unknown file.
 StringTable read_fastener_parameters_from_csv(const std::string& filename);
 
+/// Did the derived class create this method: whether bd_warehouse's class `cls`, given by name
+/// (e.g. "SocketHeadCapScrew"), has a method called `method` (e.g. "head_recess"), its inherited
+/// ones included - bd_warehouse builds a fastener from the methods its class defines.
+///
+/// C++ has no class objects, so the class is named; the classes of fastener.py and bearing.py are
+/// known (std::invalid_argument for another name), and the methods counted are those bd_warehouse
+/// defines (Python also counts build123d's own, e.g. "fuse").
+bool method_exists(const std::string& cls, const std::string& method);
+
 /// Extract the major diameter and pitch (mm) from an imperial size: "#10-32" (numbered size
 /// and threads per inch) or "1/4-20". std::out_of_range (KeyError) for an unknown "#" size.
 std::pair<double, double> decode_imperial_size(const std::string& size);

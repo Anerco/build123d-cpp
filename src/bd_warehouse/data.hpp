@@ -4,6 +4,7 @@
 #pragma once
 
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -52,6 +53,10 @@ struct PyNumber {
     bool is_int = false;
 };
 PyNumber py_eval_number(const std::string& expression);
+
+/// The methods bd_warehouse's class `cls` (by name, e.g. "HexNut") defines, inherited ones
+/// included (scripts/gen_bdw_methods.py); nullptr for a name that isn't one of its classes.
+const std::set<std::string>* class_methods(const std::string& cls);
 
 /// Python's float(str) (std::invalid_argument "could not convert string to float: '...'").
 double py_float(const std::string& text);

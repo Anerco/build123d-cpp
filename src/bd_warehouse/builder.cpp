@@ -515,6 +515,20 @@ void scale(Builder& builder, const std::optional<std::vector<Shape>>& objects, d
     builder.add(new_objects, mode);
 }
 
+Sketch sweep(Builder& builder, const std::vector<Shape>& sections, const Shape& path, bool clean, Transition transition,
+             Mode mode) {
+    if (builder.dim != 2) throw std::invalid_argument("sweep of edge sections is only ported for BuildSketch");
+    const Wire path_wire =
+        path.wrapped().ShapeType() == TopAbs_WIRE ? Wire(path.wrapped()) : Wire(std::vector<Edge>(path.edges()));
+    std::vector<Shape> new_faces;
+    for (const auto& section : sections) {
+        const Shell swept = Shell::sweep(section, path_wire, transition);
+        for (const auto& face : swept.faces()) new_faces.push_back(face);
+    }
+    builder.add(new_faces, mode, clean);
+    return Sketch(compound_of(2, new_faces).wrapped());
+}
+
 void insert(Builder& builder, const std::vector<Shape>& objects, const std::vector<Location>& locations, Mode mode) {
     // Compounds are inserted unwrapped one level (Compound.unwrap(fully=False))
     std::vector<Shape> object_iter;

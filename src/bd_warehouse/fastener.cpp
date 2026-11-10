@@ -94,6 +94,12 @@ double fit_diameter(const ParamDict& diameters, const std::string& fit) {
 
 double polygon_diagonal(double width, int num_sides) { return width / std::cos(M_PI / num_sides); }
 
+bool method_exists(const std::string& cls, const std::string& method) {
+    const std::set<std::string>* methods = detail::class_methods(cls);
+    if (methods == nullptr) throw std::invalid_argument(cls + " is not a bd_warehouse fastener or bearing class");
+    return methods->count(method) > 0;
+}
+
 StringTable read_fastener_parameters_from_csv(const std::string& filename) {
     StringTable parameters;
     const detail::DictReader reader = detail::dict_reader(detail::data_file("data/" + filename));

@@ -27,6 +27,23 @@ V error_of(F build) {
     return V();
 }
 
+/// The kind of error a call throws ("invalid_argument", ...; null if it throws nothing).
+template <class F>
+V error_kind(F build) {
+    try {
+        build();
+    } catch (const std::domain_error&) {
+        return V("domain_error");
+    } catch (const std::out_of_range&) {
+        return V("out_of_range");
+    } catch (const std::invalid_argument&) {
+        return V("invalid_argument");
+    } catch (const std::runtime_error&) {
+        return V("runtime_error");
+    }
+    return V();
+}
+
 inline V loc_values(const build123d::Location& loc) { return V::list({loc.position(), loc.orientation()}); }
 
 inline V num(const bd_warehouse::Param& p) { return p.is_number() ? V(p.number()) : V(p.text()); }

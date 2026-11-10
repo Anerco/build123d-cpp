@@ -106,6 +106,11 @@ void offset(Builder& builder, const std::optional<std::vector<Shape>>& objects, 
             const OffsetOptions& options = {}, Mode mode = Mode::REPLACE);
 /// scale(objects (None: the builder's object), by, mode=REPLACE) in a builder.
 void scale(Builder& builder, const std::optional<std::vector<Shape>>& objects, double by, Mode mode = Mode::REPLACE);
+/// sweep(sections, path) of edge sections in a BuildSketch: each section swept along the path
+/// into faces (Shell.sweep), added to the sketch with `mode` and `clean`; returns the swept faces
+/// as a Sketch (as build123d's sweep returns them).
+Sketch sweep(Builder& sketch, const std::vector<Shape>& sections, const Shape& path, bool clean = true,
+             Transition transition = Transition::TRANSFORMED, Mode mode = Mode::ADD);
 /// insert(objects) in a builder at the given locations (the builder's location context).
 void insert(Builder& builder, const std::vector<Shape>& objects, const std::vector<Location>& locations = {Location()},
             Mode mode = Mode::ADD);
