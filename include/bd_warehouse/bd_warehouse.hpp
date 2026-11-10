@@ -6,3 +6,4 @@
 #include "bd_warehouse/fastener.hpp"
 #include "bd_warehouse/bearing.hpp"
 #include "bd_warehouse/o_rings.hpp"
+#include "bd_warehouse/retaining_ring.hpp"
