@@ -1,5 +1,6 @@
 # build123d-cpp
 
+[![CI](https://github.com/Anerco/build123d-cpp/actions/workflows/ci.yml/badge.svg)](https://github.com/Anerco/build123d-cpp/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
 A C++ port of [build123d](https://github.com/gumyr/build123d), the Python CAD library, and of
@@ -205,7 +206,9 @@ Requirements:
 - libcurl (optional, for `export_to_pcbway`; without it that function throws).
 
 Builds were tested on Linux x86-64 with GCC 15. Programs that use the library also compile
-with clang.
+with clang. CI (`.github/workflows/ci.yml`) builds with the toolchain below on GitHub's Ubuntu
+24.04 runners and runs the unit tests and the examples on every push and pull request; on
+`main`, weekly and when started by hand, it also runs the comparison with Python build123d.
 
 ```sh
 cmake -S . -B build -G Ninja -DCMAKE_PREFIX_PATH=/path/to/occt
@@ -252,7 +255,9 @@ Programs that use VTK can `#include <build123d/vtk.hpp>` for `to_vtk_poly_data`,
 
 ### Comparing with Python build123d
 
-With a Python environment that has `build123d==0.13.0` (and `vtk`, for the viewer cases):
+With a Python environment that has `build123d==0.13.0` and `bd_warehouse==0.4.0` (and `vtk`,
+for the viewer cases), and the fonts that the text cases read by their paths (on Ubuntu 24.04,
+`fonts-dejavu-core`, `fonts-dejavu-mono`, `fonts-ubuntu` and `fonts-urw-base35`):
 
 ```sh
 python tests/compare/compare.py build/compare_cases           # the models and values
