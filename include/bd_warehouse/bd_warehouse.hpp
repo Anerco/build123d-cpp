@@ -12,3 +12,4 @@
 #include "bd_warehouse/pipe.hpp"
 #include "bd_warehouse/flange.hpp"
 #include "bd_warehouse/gear.hpp"
+#include "bd_warehouse/sprocket.hpp"
