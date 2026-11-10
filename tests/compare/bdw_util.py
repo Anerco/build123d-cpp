@@ -13,7 +13,7 @@ def error_of(build):
         return V(["domain_error", str(e)])
     except (KeyError, IndexError) as e:
         return V(["out_of_range", str(e)])
-    except ValueError as e:
+    except (ValueError, AttributeError, TypeError) as e:
         return V(["invalid_argument", str(e)])
     except RuntimeError as e:
         return V(["runtime_error", str(e)])

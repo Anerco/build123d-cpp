@@ -3,3 +3,4 @@
 
 #include "bd_warehouse/common.hpp"
 #include "bd_warehouse/thread.hpp"
+#include "bd_warehouse/fastener.hpp"
