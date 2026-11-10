@@ -111,6 +111,10 @@ void scale(Builder& builder, const std::optional<std::vector<Shape>>& objects, d
 /// as a Sketch (as build123d's sweep returns them).
 Sketch sweep(Builder& sketch, const std::vector<Shape>& sections, const Shape& path, bool clean = true,
              Transition transition = Transition::TRANSFORMED, Mode mode = Mode::ADD);
+/// sweep() in a BuildPart with neither sections nor path: each pending face swept along the
+/// pending edges (as one Wire) into a solid, added with `mode` and `clean`.
+void sweep(Builder& part, bool is_frenet = false, Transition transition = Transition::TRANSFORMED, bool clean = true,
+           Mode mode = Mode::ADD);
 /// Hole(radius, depth) in a BuildPart at the given locations: a cylinder 2 * depth long centred on
 /// each location; without a depth, through the part (twice the part's bounding box diagonal plus
 /// the farthest location's distance from its centre), as build123d's builder-mode Hole.

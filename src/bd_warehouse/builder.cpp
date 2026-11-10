@@ -515,6 +515,23 @@ void scale(Builder& builder, const std::optional<std::vector<Shape>>& objects, d
     builder.add(new_objects, mode);
 }
 
+void sweep(Builder& part, bool is_frenet, Transition transition, bool clean, Mode mode) {
+    if ((part.dim != 3 && part.dim != 2) || part.pending_edges.empty()) {
+        throw std::invalid_argument("path must be provided");
+    }
+    const Wire path_wire(part.pending_edges);
+    part.pending_edges.clear();
+    if (part.dim != 3 || part.pending_faces.empty()) throw std::invalid_argument("No sections provided");
+    const std::vector<Face> sections = part.pending_faces;
+    part.pending_faces.clear();
+    part.pending_face_planes.clear();
+    std::vector<Shape> new_solids;
+    for (const auto& face : sections) {
+        new_solids.push_back(Solid::sweep(face, path_wire, true, is_frenet, std::nullopt, std::nullopt, transition));
+    }
+    part.add(new_solids, mode, clean);
+}
+
 void hole(Builder& part, double radius, std::optional<double> depth, const std::vector<Location>& locations,
           Mode mode) {
     double hole_depth;

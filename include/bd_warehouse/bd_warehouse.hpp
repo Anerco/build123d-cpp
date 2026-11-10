@@ -9,3 +9,4 @@
 #include "bd_warehouse/retaining_ring.hpp"
 #include "bd_warehouse/shaft_key.hpp"
 #include "bd_warehouse/bushing.hpp"
+#include "bd_warehouse/pipe.hpp"
