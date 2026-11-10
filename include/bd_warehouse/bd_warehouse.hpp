@@ -5,3 +5,4 @@
 #include "bd_warehouse/thread.hpp"
 #include "bd_warehouse/fastener.hpp"
 #include "bd_warehouse/bearing.hpp"
+#include "bd_warehouse/o_rings.hpp"
