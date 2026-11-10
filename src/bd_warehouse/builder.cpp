@@ -8,6 +8,7 @@
 #include <TopoDS_Iterator.hxx>
 
 #include "../py_compat.hpp"
+#include "data.hpp"
 
 namespace bd_warehouse::detail {
 
@@ -400,9 +401,13 @@ void fillet(Builder& builder, const std::vector<Shape>& objects, double radius) 
 void chamfer(Builder& builder, const std::vector<Shape>& objects, double length, std::optional<double> length2,
              std::optional<double> angle, const std::optional<Shape>& reference) {
     if (!builder.obj || builder.obj->is_null()) throw std::invalid_argument("Nothing to chamfer");
-    if (angle) {
-        if (length2) throw std::invalid_argument("Only one of length2 or angle should be provided");
-        length2 = length * std::tan(*angle * M_PI / 180.0);
+    // (Python tests the truthiness of length2 and angle)
+    const bool has_length2 = length2 && *length2 != 0;
+    const bool has_angle = angle && *angle != 0;
+    if (has_length2 && has_angle) throw std::invalid_argument("Only one of length2 or angle should be provided");
+    if (has_angle) length2 = length * std::tan(radians(*angle));
+    if (reference && !(has_length2 || has_angle)) {
+        throw std::invalid_argument("reference can only be used in conjunction with length2 or angle");
     }
     const double second = length2 ? *length2 : length;
     if (builder.dim == 3) {

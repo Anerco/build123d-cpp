@@ -67,5 +67,19 @@ std::string py_replace(const std::string& text, const std::string& old, const st
 std::string py_repr(const std::string& text);
 /// Python's str(float) / repr(float).
 std::string py_str(double value);
+/// Python's str(int).
+std::string py_str(int value);
+/// Python's repr of a list of str, e.g. ['M6-1', 'M8-1.25'], and of a list or tuple of
+/// numbers, e.g. [100, 103] or (20.741, 20.955).
+std::string py_list_repr(const std::vector<std::string>& items);
+std::string py_list_repr(const std::vector<int>& items);
+std::string py_tuple_repr(const std::vector<std::string>& items);
+std::string py_tuple_repr(const std::vector<double>& items);
+/// Python's math.radians (x * (pi / 180)) and math.degrees (x * (180 / pi)), which round
+/// differently from (x * pi) / 180.
+inline double radians(double x) { return x * (3.141592653589793 / 180.0); }
+inline double degrees(double x) { return x * (180.0 / 3.141592653589793); }
+/// Python's round(x, ndigits) (correctly rounded, ties to even).
+double py_round(double x, int ndigits);
 
 }  // namespace bd_warehouse::detail

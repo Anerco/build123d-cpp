@@ -457,6 +457,62 @@ std::string py_repr(const std::string& text) {
 }
 
 std::string py_str(double value) { return build123d::detail::py_float_repr(value); }
+std::string py_str(int value) { return std::to_string(value); }
+
+std::string py_list_repr(const std::vector<std::string>& items) {
+    std::string out = "[";
+    for (std::size_t i = 0; i < items.size(); ++i) out += (i ? ", " : "") + py_repr(items[i]);
+    return out + "]";
+}
+
+std::string py_list_repr(const std::vector<int>& items) {
+    std::string out = "[";
+    for (std::size_t i = 0; i < items.size(); ++i) out += (i ? ", " : "") + std::to_string(items[i]);
+    return out + "]";
+}
+
+std::string py_tuple_repr(const std::vector<std::string>& items) {
+    std::string out = "(";
+    for (std::size_t i = 0; i < items.size(); ++i) out += (i ? ", " : "") + py_repr(items[i]);
+    return out + (items.size() == 1 ? ",)" : ")");
+}
+
+std::string py_tuple_repr(const std::vector<double>& items) {
+    std::string out = "(";
+    for (std::size_t i = 0; i < items.size(); ++i) out += (i ? ", " : "") + py_str(items[i]);
+    return out + (items.size() == 1 ? ",)" : ")");
+}
+
+double py_round(double x, int ndigits) {
+    if (!std::isfinite(x) || x == 0.0) return x;
+    if (ndigits > 323) return x;
+    if (ndigits < -308) return 0.0 * x;
+    char buffer[1200];
+    std::snprintf(buffer, sizeof(buffer), "%.1100f", std::fabs(x));  // the exact decimal expansion
+    const std::string text(buffer);
+    const std::size_t dot = text.find('.');
+    const std::string digits = text.substr(0, dot) + text.substr(dot + 1);
+    const long keep = static_cast<long>(dot) + ndigits;  // digits kept
+    if (keep < 0) return std::copysign(0.0, x);
+    if (keep >= static_cast<long>(digits.size())) return x;
+    std::string kept = digits.substr(0, static_cast<std::size_t>(keep));
+    const char first_dropped = digits[static_cast<std::size_t>(keep)];
+    const bool rest_nonzero = digits.find_first_not_of('0', static_cast<std::size_t>(keep) + 1) != std::string::npos;
+    bool up = first_dropped > '5' || (first_dropped == '5' && rest_nonzero);
+    if (first_dropped == '5' && !rest_nonzero) up = !kept.empty() && (kept.back() - '0') % 2 == 1;  // ties to even
+    if (up) {
+        long i = static_cast<long>(kept.size()) - 1;
+        while (i >= 0 && kept[static_cast<std::size_t>(i)] == '9') kept[static_cast<std::size_t>(i--)] = '0';
+        if (i < 0) {
+            kept.insert(kept.begin(), '1');
+        } else {
+            ++kept[static_cast<std::size_t>(i)];
+        }
+    }
+    if (kept.empty()) kept = "0";
+    const std::string decimal = kept + "e" + std::to_string(-ndigits);
+    return std::copysign(std::strtod(decimal.c_str(), nullptr), x);
+}
 
 }  // namespace detail
 
