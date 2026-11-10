@@ -346,11 +346,12 @@ cmake/               the package config for find_package(build123d)
 
 ## License
 
-This is a port of build123d, which is licensed under the Apache License 2.0; the files in
-`examples/` are ports of build123d's examples, and `src/template_render.inc` is build123d's
-`template_render.js`. The material system is a port of bd_materials and threejs_materials (both
-Apache License 2.0), with their catalog and presets generated from their sources. Keep these
-projects' licenses and notices when distributing this code.
+Licensed under the Apache License 2.0 (`LICENSE`); `NOTICE` credits the projects it is ported
+from. This is a port of build123d and bd_warehouse, both licensed under the Apache License 2.0;
+the files in `examples/` are ports of build123d's examples, and `src/template_render.inc` is
+build123d's `template_render.js`. The material system is a port of bd_materials and
+threejs_materials (both Apache License 2.0), with their catalog and presets generated from their
+sources. Keep these projects' licenses and notices when distributing this code.
 
 Other files have their own licenses:
 - the bundled Relief SingleLine CAD font: SIL Open Font License

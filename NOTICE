@@ -1,0 +1,23 @@
+build123d-cpp
+A C++ port of build123d and bd_warehouse, with the material system of
+bd_materials and threejs_materials, licensed under the Apache License 2.0
+(LICENSE).
+
+It is ported from these projects, each licensed under the Apache License 2.0:
+
+- build123d (https://github.com/gumyr/build123d), by Roger Maitland and its
+  contributors: the library, the examples in examples/, and its
+  template_render.js as src/template_render.inc.
+- bd_warehouse (https://github.com/gumyr/bd_warehouse), by Roger Maitland and
+  its contributors: include/bd_warehouse/, src/bd_warehouse/ and its data
+  tables.
+- bd_materials (https://github.com/bernhard-42/bd_materials),
+  Copyright 2026 Bernhard Walter: the material system and its catalog.
+- threejs_materials (https://github.com/bernhard-42/threejs-materials),
+  Copyright 2025 materialx-lib contributors: the material presets.
+
+Other files it includes have their own licenses:
+
+- the Relief SingleLine CAD font (data/fonts/reliefsingleline/): SIL Open
+  Font License 1.1, data/fonts/reliefsingleline/OFL.txt.
+- lodepng (third_party/lodepng/): zlib license, third_party/lodepng/LICENSE.
