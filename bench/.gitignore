@@ -1,0 +1,9 @@
+# What a run builds and writes; results/report.md is the run the README quotes.
+/bin/
+/gen/
+/out/
+/scratch/
+/py/gen/
+__pycache__/
+/results/*
+!/results/report.md

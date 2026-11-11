@@ -47,13 +47,15 @@ export_step(plate, "plate.step")
 
 ## Why C++
 
+- **One language.** OCCT, the kernel underneath, is a C++ library. Python build123d reaches it
+  through Python bindings (OCP), so a model runs as Python on top of C++. This port removes the
+  Python layer: the modeling API sits directly on the kernel, in its own language.
 - **No Python.** Use build123d's modeling from a C++ program, library or server, or ship a CAD
   feature without bundling an interpreter.
-- **It starts at once.** The plate above, run once to write its STEP, takes 0.05 s and 56 MB of
-  memory as a C++ program, and 1.3 s and 420 MB as a Python script, most of that importing
-  build123d. Building the model again in a program that is already running takes 18 ms in C++
-  and 20 ms in Python: the geometry is OCCT's in both, so a heavy model takes about as long in
-  either. (Ryzen 7 9800X3D, Linux, Python 3.12, `-O2`.)
+- **It starts at once.** A C++ program starts in 29 ms with 44 MB, where `import build123d`
+  takes 1.25 s and 391 MB, so a program that builds one model and writes its STEP finishes about
+  10× sooner. Once a model is building, the geometry is OCCT's in both, and it takes about as
+  long ([Performance](#performance)).
 - **Mistakes are caught by the compiler.** The algebra tracks dimensions in its types: `Box +
   Sphere` is a `Part`, `Circle - Rectangle` is a `Sketch`, and adding a circle to a box doesn't
   compile ([Static types](#static-types)).
@@ -194,6 +196,43 @@ With the older versions, results differ only where OCCT's own results differ:
 - a torus with both a partial minor and a partial major angle: OCCT builds end faces it
   flags as invalid in every version, and before 8.0 its algorithms (volume, bounding box)
   throw on them.
+
+## Performance
+
+The same models built with this library and with Python build123d 0.13 / bd_warehouse 0.4,
+checked to give the same solids (volume, area, faces):
+
+| | C++ | Python | Python ÷ C++ |
+|---|---:|---:|---:|
+| Start: a program vs `import build123d` | 29 ms, 44 MB | 1.25 s, 391 MB | 43 |
+| Whole run: build one model, write a STEP (median of 45) | 0.14 s, 66 MB | 1.39 s, 419 MB | 10 (1.5–34) |
+| Build in a running process: the 24 examples | 8.65 s | 8.71 s | 1.01 (each: 0.94–2.65, median 1.12) |
+| 14 bd_warehouse parts | 1.88 s | 2.28 s | 1.21 (each: 1.03–2.05) |
+| The 1,473 bd_warehouse comparison models | 87 s | 110 s | 1.27 |
+| STEP, STL and glTF export, STEP import | 4.05 s | 4.05 s | 1.00 |
+
+- **The start is the difference.** Python spends 1.2 s and 390 MB importing build123d (OCP, and
+  scipy and scikit-learn for STL import) before building anything, so every whole run takes
+  1.2–1.6 s longer, and small models finish 10–30× sooner in C++. Of the C++ program's 29 ms,
+  25 ms is loading OCCT's shared libraries.
+- **Once running, the geometry costs the same:** it is OCCT's in both. Booleans, fillets, gears,
+  sprockets and file I/O are within 7%. Python adds about 1 µs to each call into OCCT, so models
+  made of many small calls gain most: threads and threaded fasteners 1.5–2×, the build123d logo
+  1.9×.
+- **Python is faster on some OCCT-bound models:** the heat exchanger (0.95), loft (0.94) and key
+  cap (0.98), and a boolean and a fillet called on OCCT directly (0.98). Both make the same OCCT
+  calls; the OCCT measured here (conda-forge 8.0.0) runs them a little slower than the one in
+  Python's wheel (8.0.1, a different build).
+- `Text` is 4× faster because the port skips a bounding box and a copy that build123d computes
+  even when no alignment is asked for: a shortcut in the port, not C++.
+
+Ryzen 7 9800X3D (16 threads), Ubuntu 24.04 on WSL2, GCC 15.3 (library `-O3`, programs `-O2`),
+Python 3.12.3. Builds: median of at least 10 after 2 warm-ups, spread within ±4% but for two
+models that take microseconds; whole runs: median of 5; memory: peak RSS. Run serially on an
+idle machine; a second pass moved the ratios by 1% (median), at most 6%. Every model's numbers
+are in [`bench/results/report.md`](bench/results/report.md). To reproduce, with the Release build
+and a Python with build123d 0.13 and bd_warehouse 0.4: `PY=/path/to/python bench/run.sh` (about
+50 minutes).
 
 ## Building
 
@@ -419,6 +458,9 @@ third_party/         lodepng (PNG files)
 examples/            ports of build123d's algebra examples; show.hpp prints results
 tests/test_*.cpp     unit tests
 tests/compare/       comparison with Python build123d
+bench/               the benchmark against Python build123d (Performance); results/report.md
+                     has every model's numbers
+.github/workflows/   CI: the build, unit tests and examples, and the comparison with Python
 scripts/             toolchain setup, fetch-textures.sh, the gen_*.py generators of the tables
                      in src/ (from the Python packages), render_examples.py (docs/examples.png)
 cmake/               the package config for find_package(build123d)
