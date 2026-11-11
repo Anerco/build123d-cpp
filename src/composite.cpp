@@ -237,6 +237,8 @@ Compound Compound::make_text(const std::string& txt, double font_size, const std
 
     // Write text to shape
     Compound text_flat = occt("Text", [&] {
+        // (OCCT's StdPrs_BRepFont finds the font in the font manager itself)
+        const std::shared_lock<std::shared_mutex> reading(detail::font_registry_mutex());
         StdPrs_BRepFont brep_font(NCollection_String(system_font->FontName().ToCString()), to_aspect(font_style),
                                   font_size, Font_StrictLevel_Any);
         if (system_font->IsSingleStrokeFont()) brep_font.SetCompositeCurveMode(false);

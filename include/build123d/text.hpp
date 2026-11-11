@@ -66,6 +66,12 @@ public:
                                              bool single_stroke = false);
     /// Register the fonts of the system's font folders (and their subfolders).
     void register_system_fonts();
+
+private:
+    // The same, for a caller that holds the font registry's lock (text.cpp).
+    std::vector<std::string> register_font_locked(const std::string& path, bool override, bool single_stroke);
+    std::vector<std::string> register_folder_locked(const std::string& path, bool override, bool single_stroke);
+    void register_system_fonts_locked();
 };
 
 /// The available fonts: FontManager().available_fonts().

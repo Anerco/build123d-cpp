@@ -2,7 +2,10 @@
 // tests/compare/cases_objects*.{cpp,py} compare with Python).
 #include <build123d/build123d.hpp>
 
+#include <thread>
+#include <tuple>
 #include <type_traits>
+#include <vector>
 
 #include "test_framework.hpp"
 
@@ -276,6 +279,41 @@ static_assert(std::is_same_v<decltype(available_fonts()), std::vector<FontInfo>>
 static_assert(std::is_same_v<decltype(FontManager().register_font("")), std::vector<std::string>>);
 static_assert(std::is_same_v<decltype(Compound::resolve_font()),
                              std::tuple<std::string, std::string, Handle(Font_SystemFont)>>);
+
+TEST(objects_text_from_threads) {
+    // Texts made on several threads at once, while another registers a font: each as made alone
+    // (OCCT's font manager has no lock of its own; text.cpp's font_registry_mutex is it).
+    const std::string bundled = FontManager::bundled_path() + "/reliefsingleline/ReliefSingleLineCAD-Regular.ttf";
+    const auto measures = [](const Shape& s) { return std::make_tuple(s.area(), s.edges().size(), s.faces().size()); };
+    const auto outline = measures(Text("Hi 123", 5));
+    const auto strokes = measures(Text("Hi", 5, {.font = "singleline"}));
+    std::vector<std::string> failed(7);
+    std::vector<std::thread> threads;
+    for (std::size_t i = 0; i < 6; ++i) {
+        threads.emplace_back([&, i] {
+            try {
+                for (int k = 0; k < 4; ++k) {
+                    if (measures(Text("Hi 123", 5)) != outline) failed[i] = "another outline";
+                    if (measures(Text("Hi", 5, {.font = "singleline"})) != strokes) failed[i] = "other strokes";
+                    if (available_fonts().empty()) failed[i] = "no fonts";
+                }
+            } catch (const std::exception& e) {
+                failed[i] = e.what();
+            }
+        });
+    }
+    threads.emplace_back([&] {
+        try {
+            for (int k = 0; k < 8; ++k) {
+                if (FontManager().register_font(bundled, true, true).empty()) failed[6] = "not registered";
+            }
+        } catch (const std::exception& e) {
+            failed[6] = e.what();
+        }
+    });
+    for (auto& t : threads) t.join();
+    for (const auto& f : failed) CHECK(f.empty());
+}
 
 TEST(objects_text_fonts) {
     // The bundled single-line font is found (in the source tree here) and registered

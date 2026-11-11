@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <cstdlib>
 #include <filesystem>
+#include <mutex>
+#include <shared_mutex>
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -16,6 +18,7 @@
 
 #include "build123d/warnings.hpp"
 #include "font_file.hpp"
+#include "internal.hpp"
 
 namespace build123d {
 
@@ -280,24 +283,49 @@ std::string FontManager::bundled_path() {
     return dir;
 }
 
-FontManager::FontManager() {
-#if defined(__linux__)
-    // (as build123d does on Linux)
-    setenv("FONTCONFIG_FILE", "/etc/fonts/fonts.conf", 1);
-    setenv("FONTCONFIG_PATH", "/etc/fonts/", 1);
-#endif
-    manager = Font_FontMgr::GetInstance();
+namespace detail {
 
-    // The "singleline" alias tells whether the bundled fonts are registered
+std::shared_mutex& font_registry_mutex() {
+    static std::shared_mutex mutex;
+    return mutex;
+}
+
+}  // namespace detail
+
+namespace {
+
+/// Is the "singleline" alias, which tells whether the bundled fonts are registered, there?
+bool bundled_registered(const Handle(Font_FontMgr)& manager) {
     NCollection_Sequence<Handle(TCollection_HAsciiString)> aliases;
     manager->GetAllAliases(aliases);
-    bool registered = false;
     for (const auto& alias : aliases) {
-        if (!alias.IsNull() && std::string(alias->ToCString()) == "singleline") registered = true;
+        if (!alias.IsNull() && std::string(alias->ToCString()) == "singleline") return true;
     }
-    if (registered) return;
+    return false;
+}
+
+}  // namespace
+
+FontManager::FontManager() {
+#if defined(__linux__)
+    // (as build123d does on Linux) Once per process: setenv races other threads reading the
+    // environment, and the values are the same every time.
+    static std::once_flag environment;
+    std::call_once(environment, [] {
+        setenv("FONTCONFIG_FILE", "/etc/fonts/fonts.conf", 1);
+        setenv("FONTCONFIG_PATH", "/etc/fonts/", 1);
+    });
+#endif
+    manager = Font_FontMgr::GetInstance();
+    {
+        const std::shared_lock<std::shared_mutex> reading(detail::font_registry_mutex());
+        if (bundled_registered(manager)) return;
+    }
+    // Checked again and registered under one exclusive lock, so two threads don't both register
+    const std::unique_lock<std::shared_mutex> registering(detail::font_registry_mutex());
+    if (bundled_registered(manager)) return;
 #if defined(_WIN32)
-    register_system_fonts();  // OCCT doesn't add user fonts on Windows
+    register_system_fonts_locked();  // OCCT doesn't add user fonts on Windows
 #endif
     const std::string dir = bundled_path();
     for (const auto& font : bundled_fonts) {
@@ -306,7 +334,7 @@ FontManager::FontManager() {
                  "' was not found; install build123d-cpp or set BUILD123D_FONT_DIR to its data/fonts directory");
             continue;
         }
-        register_font(normpath(path_join(dir, font.file)), false, font.single_stroke);
+        register_font_locked(normpath(path_join(dir, font.file)), false, font.single_stroke);
     }
     manager->AddFontAlias(TCollection_AsciiString("singleline"), TCollection_AsciiString("Relief SingleLine CAD"));
 }
@@ -318,6 +346,7 @@ std::vector<FontInfo> FontManager::available_fonts() const {
                                                                   {FontStyle::BOLDITALIC, Font_FA_BoldItalic},
                                                                   {FontStyle::ITALIC, Font_FA_Italic}};
     std::vector<FontInfo> font_list;
+    const std::shared_lock<std::shared_mutex> reading(detail::font_registry_mutex());
     for (const auto& f : manager->GetAvailableFonts()) {
         FontInfo info{f->FontName().ToCString(), {}};
         for (const auto& [style, aspect] : font_aspects) {
@@ -329,14 +358,23 @@ std::vector<FontInfo> FontManager::available_fonts() const {
     return font_list;
 }
 
-Handle(Font_SystemFont) FontManager::check_font(const std::string& path) const { return manager->CheckFont(path.c_str()); }
+Handle(Font_SystemFont) FontManager::check_font(const std::string& path) const {
+    const std::shared_lock<std::shared_mutex> reading(detail::font_registry_mutex());
+    return manager->CheckFont(path.c_str());
+}
 
 Handle(Font_SystemFont) FontManager::find_font(const std::string& name, FontStyle style) const {
     Font_FontAspect aspect = font_aspect(style);  // (OCCT sets it to the aspect it found)
+    const std::shared_lock<std::shared_mutex> reading(detail::font_registry_mutex());
     return manager->FindFont(TCollection_AsciiString(name.c_str()), aspect);
 }
 
 std::vector<std::string> FontManager::register_font(const std::string& path, bool override, bool single_stroke) {
+    const std::unique_lock<std::shared_mutex> registering(detail::font_registry_mutex());
+    return register_font_locked(path, override, single_stroke);
+}
+
+std::vector<std::string> FontManager::register_font_locked(const std::string& path, bool override, bool single_stroke) {
     std::vector<Handle(Font_SystemFont)> system_fonts;
     try {
         std::vector<detail::SfntFont> fonts;
@@ -367,6 +405,11 @@ std::vector<std::string> FontManager::register_font(const std::string& path, boo
 }
 
 std::vector<std::string> FontManager::register_folder(const std::string& path, bool override, bool single_stroke) {
+    const std::unique_lock<std::shared_mutex> registering(detail::font_registry_mutex());
+    return register_folder_locked(path, override, single_stroke);
+}
+
+std::vector<std::string> FontManager::register_folder_locked(const std::string& path, bool override, bool single_stroke) {
     std::vector<std::string> font_faces;
     const std::string folder = normpath(path);
     for (const char* ext : {"ttf", "otf", "ttc"}) {
@@ -382,7 +425,7 @@ std::vector<std::string> FontManager::register_folder(const std::string& path, b
                 name.compare(name.size() - suffix.size(), suffix.size(), suffix) != 0) {
                 continue;
             }
-            for (auto& face : register_font(path_join(folder, name), override, single_stroke)) {
+            for (auto& face : register_font_locked(path_join(folder, name), override, single_stroke)) {
                 font_faces.push_back(std::move(face));
             }
         }
@@ -396,6 +439,11 @@ std::vector<std::string> FontManager::register_folder(const std::string& path, b
 }
 
 void FontManager::register_system_fonts() {
+    const std::unique_lock<std::shared_mutex> registering(detail::font_registry_mutex());
+    register_system_fonts_locked();
+}
+
+void FontManager::register_system_fonts_locked() {
     std::vector<std::string> paths;
 #if defined(_WIN32)
     const char* user = std::getenv("USERNAME");
@@ -416,7 +464,7 @@ void FontManager::register_system_fonts() {
 #endif
     for (const auto& path : paths) {
         std::error_code ec;
-        if (fs::exists(path, ec)) register_folder(path);
+        if (fs::exists(path, ec)) register_folder_locked(path, false, false);
     }
 }
 

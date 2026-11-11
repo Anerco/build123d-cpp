@@ -169,11 +169,11 @@ themselves, not just compiled:
   (points, axes, mass properties, file contents, …). All of them match.
 - All 24 of build123d's official algebra examples are ported in `examples/`. The 47 objects they
   show match their Python originals the same way.
-- `tests/test_*.cpp` has 88 unit tests for the C++ API itself (static result types, joints and
+- `tests/test_*.cpp` has 89 unit tests for the C++ API itself (static result types, joints and
   tree semantics, error handling, file round trips, PCBWay uploads against a local server, the
   operation cache).
 
-With OCCT 8.0.1 all of them pass: 88/88 unit tests, 3,288/3,288 cases and 47/47 example
+With OCCT 8.0.1 all of them pass: 89/89 unit tests, 3,288/3,288 cases and 47/47 example
 objects, against Python build123d 0.13 on the same OCCT (its OCP wheel is 8.0.1). They pass
 with 8.0.0 too: there `export_step` gives the STEP writer the defaults 8.0.1 gives it (OCCT
 #1334), without which 8.0.0 drops cones that narrow along their axis, such as a chamfer on a

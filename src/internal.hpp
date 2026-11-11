@@ -2,6 +2,7 @@
 #pragma once
 
 #include <functional>
+#include <shared_mutex>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -111,6 +112,10 @@ auto occt(const char* context, F&& f) -> decltype(f()) {
 }
 
 bool clean_enabled();
+
+/// OCCT's font manager has no lock of its own: registering fonts takes this exclusively, and
+/// whatever reads the fonts (finding one, listing them, building a text's glyphs) shares it.
+std::shared_mutex& font_registry_mutex();
 
 // ---- topology helpers
 TopoDS_Compound make_compound(const std::vector<TopoDS_Shape>& shapes);
