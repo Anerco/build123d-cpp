@@ -4,7 +4,7 @@
 # compiler from conda-forge, installed with micromamba. Needs no root access and writes
 # nothing outside this directory.
 #
-#   scripts/setup-toolchain.sh                      # OCCT 8.0.0
+#   scripts/setup-toolchain.sh                      # OCCT 8.0.1
 #   OCCT_VERSION=7.9.3 scripts/setup-toolchain.sh   # another OCCT version
 #   TOOLCHAIN_PREFIX=/opt/occt79 OCCT_VERSION=7.9.3 scripts/setup-toolchain.sh
 set -euo pipefail
@@ -12,7 +12,7 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 prefix="${TOOLCHAIN_PREFIX:-$root/.toolchain}"
 case "$prefix" in /*) ;; *) prefix="$PWD/$prefix" ;; esac  # micromamba reads bare names as env names
-occt_version="${OCCT_VERSION:-8.0.0}"
+occt_version="${OCCT_VERSION:-8.0.1}"
 mamba="$root/.toolchain-bin/micromamba"
 
 if [ ! -x "$mamba" ]; then

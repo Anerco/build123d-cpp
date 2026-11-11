@@ -112,9 +112,10 @@ V shape_tree(const Shape& s) {
                    {"children", V::list(kids)}});
 }
 
-/// An OBJ file with its "f" lines sorted and its normals as numbers: OCCT 8.0.0 (here) and 8.0.1
-/// (Python) order the triangles of some faces differently, which changes the float32 vertex
-/// normals OCCT averages in the last digits. Vertices, UVs and the triangles are the same.
+/// An OBJ file with its "f" lines sorted and its normals as numbers: OCCT 8.0.0 and 8.0.1 order
+/// the triangles of some faces differently, which changes the float32 vertex normals OCCT
+/// averages in the last digits. Vertices, UVs and the triangles are the same. (On the same OCCT
+/// the files are identical.)
 V obj_canonical(const std::string& text) {
     std::istringstream in(text);
     std::string line, others;

@@ -172,10 +172,11 @@ themselves, not just compiled:
 - `tests/test_*.cpp` has 79 unit tests for the C++ API itself (static result types, joints and
   tree semantics, error handling, file round trips, PCBWay uploads against a local server).
 
-With OCCT 8.0.0 all of them pass: 79/79 unit tests, 3,288/3,288 cases and 47/47 example
-objects. Python build123d 0.13 requires OCCT 8.0 (the comparisons ran it on 8.0.1). On 8.0.0,
-`export_step` gives the STEP writer the defaults 8.0.1 gives it (OCCT #1334), without which
-8.0.0 drops cones that narrow along their axis, such as a chamfer on a round edge.
+With OCCT 8.0.1 all of them pass: 79/79 unit tests, 3,288/3,288 cases and 47/47 example
+objects, against Python build123d 0.13 on the same OCCT (its OCP wheel is 8.0.1). They pass
+with 8.0.0 too: there `export_step` gives the STEP writer the defaults 8.0.1 gives it (OCCT
+#1334), without which 8.0.0 drops cones that narrow along their axis, such as a chamfer on a
+round edge.
 
 The build123d part also builds and runs with OCCT 7.6 to 7.9. Measured before bd_warehouse was
 ported, against its 64 unit tests, 884 cases and 47 example objects, compared with Python on
