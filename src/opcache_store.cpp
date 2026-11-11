@@ -3,11 +3,13 @@
 // wins and a reader sees no file or a whole one; the least recently used removed past the
 // budget. POSIX only.
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstring>
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <dirent.h>
@@ -108,7 +110,12 @@ public:
         if (access(path.c_str(), F_OK) == 0) return false;
         const std::string dir = folder_ + "/" + key.substr(0, 2);
         if (!make_folders(dir)) return false;
-        const std::string temporary = dir + "/." + key + "." + std::to_string(getpid()) + "." + std::to_string(random()) + ".tmp";
+        // a name of this process's and thread's own: two threads writing one key each write
+        // their own temporary, and the first linked stays
+        static std::atomic<std::uint64_t> temporaries{0};
+        const std::string temporary = dir + "/." + key + "." + std::to_string(getpid()) + "." +
+                                      std::to_string(std::hash<std::thread::id>()(std::this_thread::get_id())) + "." +
+                                      std::to_string(temporaries.fetch_add(1)) + ".tmp";
         const int fd = open(temporary.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
         if (fd < 0) return false;
         std::string header(kMagic, sizeof kMagic);

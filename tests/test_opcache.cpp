@@ -11,6 +11,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "../src/opcache.hpp"
@@ -258,4 +259,47 @@ TEST(opcache_folder_store) {
         CHECK(total > 0);
     }
     fs::remove_all(folder);
+}
+
+TEST(opcache_threads) {
+    // Builds on threads of their own at once, as a program's parts built concurrently: the
+    // same keys looked up, computed and stored by eight threads together, each on its own
+    // shapes. Each gives what computing gives, cold and warm.
+    const auto model = [] {
+        Part a = Box(10, 10, 10);
+        Part b = Pos(2, 1, 0) * Cylinder(3, 20);
+        Part c = a - b;
+        c = fillet(c.edges().filter_by(Axis::Z), 0.5);
+        Part d = c + Pos(5, 0, 0) * Box(10, 4, 4);
+        return together({d.wrapped()}) + together({a.wrapped(), b.wrapped(), c.wrapped()});
+    };
+    disable_operation_cache();
+    const std::string computed = model();
+    const TestCache cache("threads");
+    for (int round = 0; round < 2; ++round) {
+        std::vector<std::string> got(8), failed(8);
+        std::vector<std::thread> threads;
+        for (std::size_t i = 0; i < got.size(); ++i) {
+            threads.emplace_back([&, i] {
+                try {
+                    got[i] = model();
+                } catch (const std::exception& e) {
+                    failed[i] = e.what();
+                }
+            });
+        }
+        for (auto& t : threads) t.join();
+        for (std::size_t i = 0; i < got.size(); ++i) {
+            CHECK(failed[i].empty());
+            CHECK(got[i] == computed);
+        }
+    }
+    const auto stats = operation_cache_stats();
+    CHECK(stats.hits >= 8 * 3);
+    CHECK(stats.rejected == 0);
+    std::size_t temporaries = 0;
+    for (const auto& e : fs::recursive_directory_iterator(cache.folder)) {
+        temporaries += e.path().filename().string().rfind(".", 0) == 0 && e.path().extension() == ".tmp";
+    }
+    CHECK(temporaries == 0);
 }

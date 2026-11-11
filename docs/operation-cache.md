@@ -326,11 +326,16 @@ that meshes a build's shapes itself calls `incremental_mesh` in place of
 ## Concurrency
 
 - Between processes: the folder store above.
-- Between threads in one process: the statistics are under a mutex, the
-  store is thread-safe, and the warning capture is per thread. Each
-  operation's key and walk read only its own inputs. Two threads must not
-  run operations on the same shapes at once: OCCT itself doesn't allow that,
-  since operations change their inputs.
+- Between threads in one process (a program's parts built concurrently):
+  the state is read under a mutex and the statistics kept under one, the
+  store keeps no index in memory, each thread writes its temporaries under
+  names of its own, and the warning capture is per thread, so a hit replays
+  the warnings its own operation raised. Two threads that compute the same
+  key at once both compute it, each on its own inputs; the first entry
+  linked stays and the other's `put` returns false. Each operation's key and
+  walk read only its own inputs. Two threads must not run operations on the
+  same shapes at once: OCCT itself doesn't allow that, since operations
+  change their inputs (and a hit changes them as computing would).
 
 ## Testing it
 
@@ -344,6 +349,8 @@ that meshes a build's shapes itself calls `incremental_mesh` in place of
   - a changed argument, or an input moved by 1e-9, misses;
   - a fillet of other edges of the same box misses;
   - meshing is kept;
+  - eight threads computing the same keys at once, cold and then warm, each
+    give what computing alone gives;
   - the folder store keeps the first entry, removes a torn one, and stays
     within its budget.
 - **The gate**, `python3 -I scripts/opcache_gate.py <build folder>`: the unit
