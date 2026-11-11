@@ -16,7 +16,8 @@ its case or example run alone with the cache off under 16 more heap layouts, the
 gives what the cache gave, the whole program (all the cases, or the example) under 4 more,
 since a case alone meets another heap than among the others; if one of those gives what the
 cache gave, the line was not stable after all. Each run has a temporary folder of its own
-(TMPDIR): some unit tests write fixed names there, and the off runs run at once. An unstable line is reported
+(TMPDIR): some unit tests write fixed names there, and the off runs run at once; the run's
+folder is said <work> in what is compared. An unstable line is reported
 with whether cold and warm gave one of the results the off runs gave, and whether its
 measures (all but the bytes' hash) are the same.
 
@@ -81,8 +82,10 @@ def file_hash(path):
 
 def run_program(args, cwd, env, name):
     r = subprocess.run(args, cwd=cwd, env=env, capture_output=True)
-    out = lines_of(r.stdout.decode("utf-8", "replace"), name)
-    out["%s stderr" % name] = r.stderr.decode("utf-8", "replace")
+    # what a program says of its folder (the temporary one's paths in errors) is the same in every run
+    said = lambda b: b.decode("utf-8", "replace").replace(cwd, "<work>")
+    out = lines_of(said(r.stdout), name)
+    out["%s stderr" % name] = said(r.stderr)
     out["%s exit" % name] = str(r.returncode)
     return out
 
