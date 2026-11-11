@@ -14,6 +14,7 @@
 #include <Standard_Version.hxx>
 
 #include "case_registry.hpp"
+#include "gate.hpp"
 #include "show.hpp"
 
 namespace {
@@ -392,7 +393,12 @@ int main(int argc, char** argv) {
         if (!only.empty() && only.count(e.name) == 0) continue;
         try {
             if (e.shape) {
-                example::show(e.shape(), e.name);
+                const Shape shape = e.shape();
+                // the operation cache's gate compares the shape's bytes too (tests/gate), taken
+                // before show() measures it
+                const std::string brep = gate::brep_hash(shape);
+                example::show(shape, e.name);
+                if (!brep.empty()) std::cout << "{\"name\": " << compare::V::quote(e.name + " brep") << ", \"brep\": \"" << brep << "\"}" << std::endl;
             } else {
                 const std::string values = e.value().dump();
                 std::cout << "{\"name\": " << compare::V::quote(e.name) << ", \"values\": " << values << "}"

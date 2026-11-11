@@ -2,17 +2,21 @@
 """The operation cache's gate (docs/operation-cache.md, "Testing it").
 
 The unit tests, the examples and the comparison cases, run with the cache off, then cold (an
-empty folder), then warm (the folder the cold run filled), keeping every operation (min_ms 0).
-Each shape's line carries a hash of its bytes (BUILD123D_SHOW_BREP), and each file an example
-writes is hashed too (a STEP without its FILE_NAME line).
+empty folder), then warm (the folder the cold run filled), keeping every operation (min_ms 0):
+tests/gate, linked into each of them, turns the cache on from BUILD123D_OPCACHE_DIR. Each
+comparison case's shape gets a line with a hash of its bytes (BUILD123D_SHOW_BREP), and each
+file an example writes is hashed (a STEP without its FILE_NAME line).
 
 Some of OCCT's results depend on where the heap puts things: maps keyed by address, so a
 run differs from the next one under ASLR, or under other malloc settings. Turning the cache
 on moves the heap too. So the gate first runs everything with the cache off under several
 heap layouts, and calls a line *stable* if every one of those runs gives the same bytes.
 Every stable line must be the same bytes cold and warm. One that is not gets a second look:
-its case or example run alone with the cache off under 16 more heap layouts; if one of those
-gives what the cache gave, the line was not stable after all. An unstable line is reported
+its case or example run alone with the cache off under 16 more heap layouts, then, if none
+gives what the cache gave, the whole program (all the cases, or the example) under 4 more,
+since a case alone meets another heap than among the others; if one of those gives what the
+cache gave, the line was not stable after all. Each run has a temporary folder of its own
+(TMPDIR): some unit tests write fixed names there, and the off runs run at once. An unstable line is reported
 with whether cold and warm gave one of the results the off runs gave, and whether its
 measures (all but the bytes' hash) are the same.
 
@@ -43,6 +47,7 @@ LAYOUTS = {
     "off-notcache": "glibc.malloc.tcache_count=0",
 }
 # The second look's.
+FULL_LAYOUTS = ["", "", "glibc.malloc.mmap_threshold=65536", "glibc.malloc.tcache_count=0"]
 MORE_LAYOUTS = ["", "", "", "glibc.malloc.mmap_threshold=32768", "glibc.malloc.mmap_threshold=131072",
                 "glibc.malloc.mmap_threshold=262144", "glibc.malloc.top_pad=65536", "glibc.malloc.top_pad=4194304",
                 "glibc.malloc.tcache_max=16", "glibc.malloc.tcache_max=256", "glibc.malloc.tcache_count=1",
@@ -82,8 +87,10 @@ def run_program(args, cwd, env, name):
     return out
 
 
-def environment(tunables, cached):
-    env = dict(os.environ, BUILD123D_SHOW_BREP="1")
+def environment(tunables, cached, work):
+    tmp = os.path.join(work, "tmp")
+    os.makedirs(tmp, exist_ok=True)
+    env = dict(os.environ, BUILD123D_SHOW_BREP="1", TMPDIR=tmp)
     env.pop("BUILD123D_OPCACHE_DIR", None)
     env.pop("GLIBC_TUNABLES", None)
     if tunables:
@@ -99,17 +106,17 @@ def run_example(e, work, env):
     out = run_program([os.path.join(BUILD, "examples", e)], work, env, "example " + e)
     for f in sorted(os.listdir(work)):
         path = os.path.join(work, f)
-        if os.path.isfile(path) and before.get(f) != os.path.getmtime(path):
+        if f != "tmp" and os.path.isfile(path) and before.get(f) != os.path.getmtime(path):
             out["file %s %s" % (e, f)] = file_hash(path)
     return out
 
 
 def run(mode, tunables=""):
     """Every output of one run, as {key: text}."""
-    env = environment(tunables, mode in ("cold", "warm"))
     work = os.path.join(OUT, "work-" + mode)
     shutil.rmtree(work, ignore_errors=True)
     os.makedirs(work)
+    env = environment(tunables, mode in ("cold", "warm"), work)
     t0 = time.monotonic()
     out = {}
     out.update(run_program([os.path.join(BUILD, "build123d_tests")], work, env, "tests"))
@@ -124,24 +131,33 @@ def run(mode, tunables=""):
     return out
 
 
-def second_look(key):
-    """What the case or example of `key` gives with the cache off under MORE_LAYOUTS (None
-    for an output that has no case or example of its own)."""
+def second_look(key, wanted):
+    """What the case or example of `key` gives with the cache off: alone under MORE_LAYOUTS,
+    then, unless `wanted` was among those, in its whole program under FULL_LAYOUTS (None for
+    an output that has no case or example of its own)."""
     words = key.split(" ")
     if words[0] == "cases" and len(words) == 2 and not words[1].startswith("#"):
-        def one(tunables):
-            r = subprocess.run([os.path.join(BUILD, "compare_cases"), words[1]], cwd=look, capture_output=True,
-                               env=environment(tunables, False))
+        def one(tunables, work, whole):
+            args = [os.path.join(BUILD, "compare_cases")] + ([] if whole else [words[1]])
+            r = subprocess.run(args, cwd=work, capture_output=True, env=environment(tunables, False, work))
             return lines_of(r.stdout.decode("utf-8", "replace"), "cases").get(key)
     elif words[0] in ("example", "file") and len(words) >= 3:
-        def one(tunables):
-            return run_example(words[1], look, environment(tunables, False)).get(key)
+        def one(tunables, work, whole):
+            return run_example(words[1], work, environment(tunables, False, work)).get(key)
     else:
         return None
-    look = os.path.join(OUT, "work-look")
-    shutil.rmtree(look, ignore_errors=True)
-    os.makedirs(look)
-    return {one(t) for t in MORE_LAYOUTS}
+
+    def at(i, tunables, whole):
+        work = os.path.join(OUT, "work-look-%d" % i)
+        shutil.rmtree(work, ignore_errors=True)
+        os.makedirs(work)
+        return one(tunables, work, whole)
+
+    seen = {at(0, t, False) for t in MORE_LAYOUTS}
+    if wanted not in seen:
+        with ThreadPoolExecutor(len(FULL_LAYOUTS)) as pool:
+            seen |= set(pool.map(lambda it: at(it[0] + 1, it[1], True), enumerate(FULL_LAYOUTS)))
+    return seen
 
 
 def measures(line):
@@ -180,10 +196,11 @@ for k in keys:
 looked = []
 seen_of = {}
 for k, mode in list(failures):
-    if k not in seen_of:
-        seen_of[k] = second_look(k)
-    seen = seen_of[k]
     got = (cold if mode == "cold" else warm).get(k)
+    if k not in seen_of or (seen_of[k] is not None and got not in seen_of[k]):
+        more = second_look(k, got)
+        seen_of[k] = None if more is None else (seen_of.get(k) or set()) | more
+    seen = seen_of[k]
     if seen is not None and got in seen:
         failures.remove((k, mode))
         looked.append((k, mode))

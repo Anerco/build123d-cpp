@@ -101,7 +101,8 @@ if(BUILD123D_BUILD_EXAMPLES)
   file(GLOB BUILD123D_EXAMPLES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/examples/*.cpp)
   foreach(example_src IN LISTS BUILD123D_EXAMPLES)
     get_filename_component(example_name ${example_src} NAME_WE)
-    add_executable(${example_name} ${example_src})
+    # with the operation cache's gate hook (tests/gate), inert unless its variables are set
+    add_executable(${example_name} ${example_src} ${CMAKE_CURRENT_SOURCE_DIR}/tests/gate/gate.cpp)
     target_link_libraries(${example_name} PRIVATE build123d)
     set_target_properties(${example_name} PROPERTIES RUNTIME_OUTPUT_DIRECTORY
                                                      ${CMAKE_BINARY_DIR}/examples)
@@ -111,18 +112,19 @@ endif()
 if(BUILD123D_BUILD_TESTS)
   enable_testing()
   file(GLOB BUILD123D_TEST_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cpp)
-  add_executable(build123d_tests ${BUILD123D_TEST_SOURCES})
+  add_executable(build123d_tests ${BUILD123D_TEST_SOURCES} ${CMAKE_CURRENT_SOURCE_DIR}/tests/gate/gate.cpp)
   target_link_libraries(build123d_tests PRIVATE build123d)
-  target_include_directories(build123d_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+  target_include_directories(build123d_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/gate)
   add_test(NAME build123d_tests COMMAND build123d_tests
            WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
   # Prints metrics of models also built with Python build123d (tests/compare/compare.py).
   file(GLOB BUILD123D_COMPARE_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tests/compare/*.cpp)
-  add_executable(compare_cases ${BUILD123D_COMPARE_SOURCES})
+  add_executable(compare_cases ${BUILD123D_COMPARE_SOURCES} ${CMAKE_CURRENT_SOURCE_DIR}/tests/gate/gate.cpp)
   target_link_libraries(compare_cases PRIVATE build123d)
   target_include_directories(compare_cases PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/examples
-                                                   ${CMAKE_CURRENT_SOURCE_DIR}/tests/compare)
+                                                   ${CMAKE_CURRENT_SOURCE_DIR}/tests/compare
+                                                   ${CMAKE_CURRENT_SOURCE_DIR}/tests/gate)
 endif()
 
 include(GNUInstallDirs)

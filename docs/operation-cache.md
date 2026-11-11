@@ -354,10 +354,15 @@ that meshes a build's shapes itself calls `incremental_mesh` in place of
   - the folder store keeps the first entry, removes a torn one, and stays
     within its budget.
 - **The gate**, `python3 -I scripts/opcache_gate.py <build folder>`: the unit
-  tests, the examples (their objects' lines and the files they write) and the
-  comparison cases, with every shape's bytes hashed (`BUILD123D_SHOW_BREP`),
-  each run with the cache off under five heap layouts, then with the cache
-  cold, then warm, keeping every operation (`min_ms` 0). Every output that is
+  tests, the examples (their objects' lines and the files they write, by
+  their bytes) and the comparison cases (each shape's bytes hashed too,
+  `BUILD123D_SHOW_BREP`), each run with the cache off under five heap
+  layouts, then with the cache cold, then warm, keeping every operation
+  (`min_ms` 0). `tests/gate/gate.cpp`, linked into each, turns the cache on
+  from `BUILD123D_OPCACHE_DIR`; `examples/` stays as it is, since vibe123d's
+  setup trains OpenCascade's profile on those programs and builds it again
+  when they change. Every output that is
   the same bytes in all five off runs must be the same bytes cold and warm,
-  unless a second look finds what the cache gave with the cache off under
-  another of 16 more heap layouts.
+  unless a second look finds what the cache gave with the cache off: the case
+  or example alone under 16 more heap layouts, then its whole program under 4
+  more. Each run has a temporary folder of its own.

@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "../src/opcache.hpp"
+#include "gate.hpp"
 #include "test_framework.hpp"
 
 using namespace build123d;
@@ -23,7 +24,7 @@ namespace fs = std::filesystem;
 namespace {
 
 /// A cache in a folder of its own for one test, keeping everything (min_ms 0). The cache
-/// the gate turned on (BUILD123D_OPCACHE_DIR, test_main.cpp) is turned on again after.
+/// the gate turned on (tests/gate) is turned on again after.
 struct TestCache {
     fs::path folder;
     explicit TestCache(const std::string& name, std::uint64_t budget = 1ull << 30) {
@@ -35,9 +36,7 @@ struct TestCache {
     ~TestCache() {
         disable_operation_cache();
         fs::remove_all(folder);
-        if (const char* dir = std::getenv("BUILD123D_OPCACHE_DIR")) {
-            enable_operation_cache({.folder = dir, .min_ms = 0});
-        }
+        gate::enable_from_environment();
     }
 };
 
