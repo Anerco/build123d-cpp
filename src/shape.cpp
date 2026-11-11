@@ -27,7 +27,9 @@
 #include <gp_GTrsf.hxx>
 
 #include "build123d/warnings.hpp"
+#include "build123d/operation_cache.hpp"
 #include "internal.hpp"
+#include "opcache.hpp"
 
 namespace build123d {
 
@@ -497,11 +499,13 @@ SplitResult split_shape(const Shape& self, const TopoDS_Shape& tool,
         throw std::invalid_argument("Keep.INSIDE/OUTSIDE are invalid for split");
     }
     return occt("split", [&] {
-        BRepAlgoAPI_Splitter splitter;
-        splitter.SetArguments(to_list({self.wrapped()}));
-        splitter.SetTools(to_list({tool}));
-        splitter.Build();
-        const TopoDS_Shape result = unwrap(splitter.Shape(), true);
+        const TopoDS_Shape result = detail::opcache::run_shape(detail::opcache::Args("split"), {self.wrapped(), tool}, [&] {
+            BRepAlgoAPI_Splitter splitter;
+            splitter.SetArguments(to_list({self.wrapped()}));
+            splitter.SetTools(to_list({tool}));
+            splitter.Build();
+            return unwrap(splitter.Shape(), true);
+        });
 
         SplitResult out;
         if (keep == Keep::ALL) {
@@ -585,8 +589,17 @@ void Shape::locate(const Location& loc) {
 void Shape::mesh(double tolerance, double angular_tolerance) const {
     require_not_null("Cannot mesh an empty shape");
     if (!BRepTools::Triangulation(obj_, tolerance)) {
-        BRepMesh_IncrementalMesh(obj_, tolerance, true, angular_tolerance, true);
+        incremental_mesh(obj_, tolerance, true, angular_tolerance, true);
     }
+}
+
+void incremental_mesh(const TopoDS_Shape& shape, double linear_deflection, bool relative, double angular_deflection,
+                      bool parallel) {
+    const auto args = detail::opcache::Args("mesh").add(linear_deflection).add(relative).add(angular_deflection).add(parallel);
+    detail::opcache::run(args, {shape}, [&] {
+        BRepMesh_IncrementalMesh(shape, linear_deflection, relative, angular_deflection, parallel);
+        return detail::opcache::Outcome{};
+    });
 }
 
 std::pair<std::vector<Vector>, std::vector<std::array<int, 3>>> Shape::tessellate(
@@ -708,12 +721,16 @@ TopoDS_Shape Shape::clean_topods(std::shared_ptr<ShapeHistory>* history) const {
     if (history) *history = history_;
     if (obj_.IsNull()) return obj_;
     try {
-        ShapeUpgrade_UnifySameDomain upgrader(obj_, true, true, true);
-        upgrader.AllowInternalEdges(false);
-        upgrader.Build();
-        const TopoDS_Shape cleaned = upgrader.Shape();
+        const detail::opcache::Outcome r =
+            detail::opcache::run(detail::opcache::Args("clean").add(history != nullptr), {obj_}, [&] {
+                ShapeUpgrade_UnifySameDomain upgrader(obj_, true, true, true);
+                upgrader.AllowInternalEdges(false);
+                upgrader.Build();
+                return detail::opcache::Outcome{{upgrader.Shape()}, history ? ShapeHistory::from_unify(upgrader) : nullptr};
+            });
+        const TopoDS_Shape cleaned = r.shapes.at(0);
         if (history) {
-            const auto unified = ShapeHistory::from_unify(upgrader);
+            const auto unified = r.history;
             // build123d merges into the record in place; a copy keeps this shape's own intact
             *history = history_ ? std::shared_ptr<ShapeHistory>(history_->clone()) : unified;
             if (history_) (*history)->merge(unified);

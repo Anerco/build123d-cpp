@@ -3,6 +3,9 @@
 #include <iostream>
 #include <mutex>
 #include <utility>
+#include <vector>
+
+#include "opcache.hpp"
 
 namespace build123d {
 
@@ -20,6 +23,9 @@ WarningHandler& current_handler() {
     return handler;
 }
 
+/// The warning captures open on this thread, innermost last (detail::opcache::WarningCapture).
+thread_local std::vector<std::vector<std::string>*> captures;
+
 }  // namespace
 
 WarningHandler set_warning_handler(WarningHandler handler) {
@@ -29,6 +35,7 @@ WarningHandler set_warning_handler(WarningHandler handler) {
 }
 
 void warn(const std::string& message) {
+    for (auto* capture : captures) capture->push_back(message);
     WarningHandler handler;
     {
         const std::lock_guard<std::mutex> lock(handler_mutex());
@@ -36,5 +43,21 @@ void warn(const std::string& message) {
     }
     if (handler) handler(message);
 }
+
+namespace detail::opcache {
+
+WarningCapture::WarningCapture() { captures.push_back(&messages); }
+
+WarningCapture::~WarningCapture() {
+    for (auto it = captures.end(); it != captures.begin();) {
+        --it;
+        if (*it == &messages) {
+            captures.erase(it);
+            break;
+        }
+    }
+}
+
+}  // namespace detail::opcache
 
 }  // namespace build123d

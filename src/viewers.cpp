@@ -3,6 +3,7 @@
 // a feature angle of 360 (vtkTriangle::ComputeNormal per cell; per point, the normalized float
 // sum of the normals of its cells, in cell order).
 #include "build123d/viewers.hpp"
+#include "build123d/operation_cache.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -183,7 +184,7 @@ std::string random_hex(int digits) {
 ShapeMesh mesh_shape(const Shape& shape, double linear_deflection, double angular_deflection) {
     ShapeMesh mesh;
     if (shape.is_null()) return mesh;
-    BRepMesh_IncrementalMesh(shape.wrapped(), linear_deflection, true, angular_deflection, true);
+    incremental_mesh(shape.wrapped(), linear_deflection, true, angular_deflection, true);
     std::int64_t offset = 0;
     for (const auto& facet : shape.faces()) {
         TopLoc_Location loc;

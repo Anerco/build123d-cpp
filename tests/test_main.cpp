@@ -10,6 +10,7 @@
 #include <TopoDS.hxx>
 
 #include <chrono>
+#include <cstdlib>
 #include <cmath>
 #include <filesystem>
 #include <functional>
@@ -356,6 +357,8 @@ TEST(warning_handler) {
 }
 
 int main(int argc, char** argv) {
+    // The operation cache's gate (scripts/opcache_gate.py) runs the tests with it on.
+    if (const char* dir = std::getenv("BUILD123D_OPCACHE_DIR")) enable_operation_cache({.folder = dir, .min_ms = 0});
     int failed = 0, run = 0;
     const std::set<std::string> only(argv + 1, argv + argc);
     for (const auto& test : testing::registry()) {

@@ -169,10 +169,11 @@ themselves, not just compiled:
   (points, axes, mass properties, file contents, …). All of them match.
 - All 24 of build123d's official algebra examples are ported in `examples/`. The 47 objects they
   show match their Python originals the same way.
-- `tests/test_*.cpp` has 79 unit tests for the C++ API itself (static result types, joints and
-  tree semantics, error handling, file round trips, PCBWay uploads against a local server).
+- `tests/test_*.cpp` has 87 unit tests for the C++ API itself (static result types, joints and
+  tree semantics, error handling, file round trips, PCBWay uploads against a local server, the
+  operation cache).
 
-With OCCT 8.0.1 all of them pass: 79/79 unit tests, 3,288/3,288 cases and 47/47 example
+With OCCT 8.0.1 all of them pass: 87/87 unit tests, 3,288/3,288 cases and 47/47 example
 objects, against Python build123d 0.13 on the same OCCT (its OCP wheel is 8.0.1). They pass
 with 8.0.0 too: there `export_step` gives the STEP writer the defaults 8.0.1 gives it (OCCT
 #1334), without which 8.0.0 drops cones that narrow along their axis, such as a chamfer on a
@@ -234,6 +235,20 @@ idle machine; a second pass moved the ratios by 1% (median), at most 6%. Every m
 are in [`bench/results/report.md`](bench/results/report.md). To reproduce, with the Release build
 and a Python with build123d 0.13 and bd_warehouse 0.4: `PY=/path/to/python bench/run.sh` (about
 50 minutes).
+
+## The operation cache
+
+A program built again with one parameter changed recomputes most of its operations with the
+same inputs. `enable_operation_cache({.folder = ..., .budget_bytes = ...})` keeps the result of
+each expensive operation (booleans, fillets, sweeps, lofts, offsets, meshing, ...) in a folder,
+keyed by its arguments and its inputs' content, and reads it back when the same operation
+comes again, in this process or another. A hit gives what computing gave, down to the bytes:
+the same shape, sharing the same sub-shapes with its inputs, the inputs changed in place as
+OCCT changes them, the same warnings and history. Each entry is checked against the
+computation before it is written. It is off unless turned on.
+[`docs/operation-cache.md`](docs/operation-cache.md) has the design;
+`scripts/opcache_gate.py` runs the unit tests, examples and comparison cases with it off,
+cold and warm.
 
 ## Building
 
@@ -455,7 +470,7 @@ include/bd_warehouse/ bd_warehouse's headers (bd_warehouse.hpp includes them all
 src/                 implementation, bd_warehouse's in src/bd_warehouse/
 data/fonts/          the bundled single-line font (SIL Open Font License)
 data/textures/       the materials' textures, once scripts/fetch-textures.sh has fetched them
-third_party/         lodepng (PNG files)
+third_party/         lodepng (PNG files), xxHash (the operation cache's keys)
 examples/            ports of build123d's algebra examples; show.hpp prints results
 tests/test_*.cpp     unit tests
 tests/compare/       comparison with Python build123d
@@ -463,7 +478,9 @@ bench/               the benchmark against Python build123d (Performance); resul
                      has every model's numbers
 .github/workflows/   CI: the build, unit tests and examples, and the comparison with Python
 scripts/             toolchain setup, fetch-textures.sh, the gen_*.py generators of the tables
-                     in src/ (from the Python packages), render_examples.py (docs/examples.png)
+                     in src/ (from the Python packages), render_examples.py (docs/examples.png),
+                     opcache_gate.py (the operation cache's gate)
+docs/                operation-cache.md (the operation cache's design), examples.png
 cmake/               the package config for find_package(build123d)
 ```
 
@@ -480,5 +497,6 @@ Other files have their own licenses:
 - the bundled Relief SingleLine CAD font: SIL Open Font License
   (`data/fonts/reliefsingleline/OFL.txt`);
 - lodepng, used for PNG files: zlib license (`third_party/lodepng/LICENSE`);
+- xxHash, the operation cache's hash: BSD 2-Clause license (`third_party/xxhash/LICENSE`);
 - the textures that `scripts/fetch-textures.sh` downloads: CC0 (ambientCG), MIT (AMD GPUOpen)
   and Apache License 2.0 (threejs_materials).

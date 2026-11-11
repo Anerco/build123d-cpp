@@ -55,6 +55,7 @@
 #include <gp_Pnt2d.hxx>
 
 #include "internal.hpp"
+#include "opcache.hpp"
 
 namespace build123d {
 
@@ -593,16 +594,18 @@ Wire Mixin1D::offset_2d(double distance, Kind kind, Side side, bool closed) cons
     } else {
         topods_wire = TopoDS::Wire(line.wrapped());
     }
-    Wire offset_wire = occt("offset_2d", [&] {
-        BRepOffsetAPI_MakeOffset builder;
-        builder.Init(to_occ(kind));
-        builder.AddWire(topods_wire);
-        builder.Perform(distance);
-        if (!builder.IsDone()) throw std::runtime_error("2D offset failed with distance " + std::to_string(distance));
-        TopoDS_Shape obj = unwrap(builder.Shape(), true);
-        if (obj.ShapeType() != TopAbs_WIRE) throw std::runtime_error("Unexpected result type");
-        return Wire(obj);
-    });
+    Wire offset_wire(detail::opcache::run_shape(detail::opcache::Args("offset_2d").add(distance).add(kind), {topods_wire}, [&] {
+        return occt("offset_2d", [&] {
+            BRepOffsetAPI_MakeOffset builder;
+            builder.Init(to_occ(kind));
+            builder.AddWire(topods_wire);
+            builder.Perform(distance);
+            if (!builder.IsDone()) throw std::runtime_error("2D offset failed with distance " + std::to_string(distance));
+            TopoDS_Shape obj = unwrap(builder.Shape(), true);
+            if (obj.ShapeType() != TopAbs_WIRE) throw std::runtime_error("Unexpected result type");
+            return obj;
+        });
+    }));
 
     if (side != Side::BOTH) {
         const Vector p0 = line.position_at(0), p1 = line.position_at(1);

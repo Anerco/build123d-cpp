@@ -14,6 +14,7 @@
 #include "build123d/history.hpp"
 #include "build123d/warnings.hpp"
 #include "internal.hpp"
+#include "opcache.hpp"
 
 namespace build123d::detail {
 
@@ -37,15 +38,10 @@ void copy_attributes_to(const Shape& from, Shape& to, const std::vector<std::str
     if (!excluded("joints") && to.joints.empty()) to.joints = from.joints;
 }
 
-BoolResult bool_op_history(BoolOp op, const std::vector<TopoDS_Shape>& args_in,
-                           const std::vector<TopoDS_Shape>& tools_in, double fuzzy, bool glue) {
-    std::vector<TopoDS_Shape> args, tools;
-    for (const auto& s : args_in) {
-        if (!s.IsNull()) args.push_back(s);
-    }
-    for (const auto& s : tools_in) {
-        if (!s.IsNull()) tools.push_back(s);
-    }
+namespace {
+
+BoolResult computed_bool_op_history(BoolOp op, const std::vector<TopoDS_Shape>& args,
+                                    const std::vector<TopoDS_Shape>& tools, double fuzzy, bool glue) {
 
     // Operations with "zero" shapes
     TopoDS_Shape topo_result;
@@ -105,6 +101,28 @@ BoolResult bool_op_history(BoolOp op, const std::vector<TopoDS_Shape>& args_in,
     }
     if (topo_result.ShapeType() == TopAbs_COMPOUND) topo_result = unwrap(topo_result, true);
     return {topo_result, history};
+}
+
+}  // namespace
+
+BoolResult bool_op_history(BoolOp op, const std::vector<TopoDS_Shape>& args_in,
+                           const std::vector<TopoDS_Shape>& tools_in, double fuzzy, bool glue) {
+    std::vector<TopoDS_Shape> args, tools;
+    for (const auto& s : args_in) {
+        if (!s.IsNull()) args.push_back(s);
+    }
+    for (const auto& s : tools_in) {
+        if (!s.IsNull()) tools.push_back(s);
+    }
+    if (!opcache::enabled()) return computed_bool_op_history(op, args, tools, fuzzy, glue);
+    std::vector<TopoDS_Shape> inputs = args;
+    inputs.insert(inputs.end(), tools.begin(), tools.end());
+    const opcache::Outcome r =
+        opcache::run(opcache::Args("boolean").add(op).add(fuzzy).add(glue).add(static_cast<int>(args.size())), inputs, [&] {
+            BoolResult b = computed_bool_op_history(op, args, tools, fuzzy, glue);
+            return opcache::Outcome{{b.shape}, b.history};
+        });
+    return {r.shapes.at(0), r.history};
 }
 
 Shape bool_op_shape(BoolOp op, const std::vector<const Shape*>& args, const std::vector<const Shape*>& tools,

@@ -27,6 +27,7 @@
 #include <TopoDS.hxx>
 
 #include "internal.hpp"
+#include "opcache.hpp"
 
 namespace build123d {
 
@@ -64,6 +65,13 @@ void set_sweep_mode(BRepOffsetAPI_MakePipeShell& builder, const Wire& path, bool
 
 }  // namespace
 
+namespace {
+
+/// A fillet or chamfer that OCCT did not make, or made invalid (said once, outside the cache).
+struct NotDone {};
+
+}  // namespace
+
 // ---------------------------------------------------------------------------
 // Mixin3D
 // ---------------------------------------------------------------------------
@@ -79,17 +87,26 @@ TopoDS_Shape Mixin3D::fillet_topods(double radius, const std::vector<Edge>& edge
     require_not_null("Can't fillet an empty shape");
     TopoDS_Shape result;
     bool ok = true;
+    std::vector<TopoDS_Shape> inputs{obj_};
+    for (const auto& e : edge_list) inputs.push_back(e.wrapped());
     try {
-        BRepFilletAPI_MakeFillet builder(obj_);
-        for (const auto& e : edge_list) builder.Add(radius, TopoDS::Edge(e.wrapped()));
-        builder.Build();
-        ok = builder.IsDone();
-        if (ok) {
-            result = make_3d_result(builder.Shape());
-            ok = Shape(result).is_valid();
-        }
-        if (ok && history) *history = ShapeHistory::from_algorithm(builder, {obj_}, result);
+        const detail::opcache::Outcome r =
+            detail::opcache::run(detail::opcache::Args("fillet").add(radius).add(history != nullptr), inputs, [&] {
+                detail::opcache::Outcome out;
+                BRepFilletAPI_MakeFillet builder(obj_);
+                for (const auto& e : edge_list) builder.Add(radius, TopoDS::Edge(e.wrapped()));
+                builder.Build();
+                if (!builder.IsDone()) throw NotDone();
+                out.shapes = {make_3d_result(builder.Shape())};
+                if (!Shape(out.shapes[0]).is_valid()) throw NotDone();
+                if (history) out.history = ShapeHistory::from_algorithm(builder, {obj_}, out.shapes[0]);
+                return out;
+            });
+        result = r.shapes.at(0);
+        if (history) *history = r.history;
     } catch (const Standard_Failure&) {
+        ok = false;
+    } catch (const NotDone&) {
         ok = false;
     }
     if (!ok) {
@@ -117,27 +134,37 @@ TopoDS_Shape Mixin3D::chamfer_topods(double length, std::optional<double> length
     const double d2 = (length2 && *length2 != 0.0) ? *length2 : length;
     TopoDS_Shape result;
     bool ok = true;
+    std::vector<TopoDS_Shape> inputs{obj_};
+    for (const auto& e : edge_list) inputs.push_back(e.wrapped());
+    if (face) inputs.push_back(face->wrapped());
     try {
-        BRepFilletAPI_MakeChamfer builder(obj_);
-        for (const auto& e : edge_list) {
-            const TopoDS_Edge& edge = TopoDS::Edge(e.wrapped());
-            TopoDS_Face topo_face;
-            if (face) {
-                topo_face = TopoDS::Face(face->wrapped());
-            } else {
-                if (!edge_face_map.Contains(edge)) throw std::invalid_argument("Edge is not part of the shape");
-                topo_face = TopoDS::Face(edge_face_map.FindFromKey(edge).First());
+        const auto args = detail::opcache::Args("chamfer").add(d1).add(d2).add(face.has_value()).add(history != nullptr);
+        const detail::opcache::Outcome r = detail::opcache::run(args, inputs, [&] {
+            detail::opcache::Outcome out;
+            BRepFilletAPI_MakeChamfer builder(obj_);
+            for (const auto& e : edge_list) {
+                const TopoDS_Edge& edge = TopoDS::Edge(e.wrapped());
+                TopoDS_Face topo_face;
+                if (face) {
+                    topo_face = TopoDS::Face(face->wrapped());
+                } else {
+                    if (!edge_face_map.Contains(edge)) throw std::invalid_argument("Edge is not part of the shape");
+                    topo_face = TopoDS::Face(edge_face_map.FindFromKey(edge).First());
+                }
+                builder.Add(d1, d2, edge, topo_face);
             }
-            builder.Add(d1, d2, edge, topo_face);
-        }
-        builder.Build();
-        ok = builder.IsDone();
-        if (ok) {
-            result = make_3d_result(builder.Shape());
-            ok = Shape(result).is_valid();
-        }
-        if (ok && history) *history = ShapeHistory::from_algorithm(builder, {obj_}, result);
+            builder.Build();
+            if (!builder.IsDone()) throw NotDone();
+            out.shapes = {make_3d_result(builder.Shape())};
+            if (!Shape(out.shapes[0]).is_valid()) throw NotDone();
+            if (history) out.history = ShapeHistory::from_algorithm(builder, {obj_}, out.shapes[0]);
+            return out;
+        });
+        result = r.shapes.at(0);
+        if (history) *history = r.history;
     } catch (const Standard_Failure&) {
+        ok = false;
+    } catch (const NotDone&) {
         ok = false;
     }
     if (!ok) throw std::invalid_argument("Failed creating a chamfer, try a smaller length value(s)");
@@ -150,18 +177,22 @@ TopoDS_Shape Mixin3D::offset_3d_topods(const std::vector<Face>& openings, double
     if (kind == Kind::TANGENT) throw std::invalid_argument("Kind.TANGENT not supported");
     std::vector<TopoDS_Shape> faces;
     for (const auto& f : openings) faces.push_back(f.wrapped());
-    TopoDS_Shape result;
-    try {
-        BRepOffsetAPI_MakeThickSolid builder;
-        builder.MakeThickSolidByJoin(obj_, to_list(faces), thickness, tolerance, BRepOffset_Skin, true,
-                                     false, to_occ(kind), true);
-        builder.Build();
-        result = builder.Shape();
-    } catch (const Standard_Failure&) {
-        throw std::runtime_error("offset Error, an alternative kind may resolve this error");
-    }
-    if (Shape(result).volume() < 0) result.Reverse();
-    return result;
+    std::vector<TopoDS_Shape> inputs{obj_};
+    inputs.insert(inputs.end(), faces.begin(), faces.end());
+    return detail::opcache::run_shape(detail::opcache::Args("offset_3d").add(thickness).add(tolerance).add(kind), inputs, [&] {
+        TopoDS_Shape result;
+        try {
+            BRepOffsetAPI_MakeThickSolid builder;
+            builder.MakeThickSolidByJoin(obj_, to_list(faces), thickness, tolerance, BRepOffset_Skin, true,
+                                         false, to_occ(kind), true);
+            builder.Build();
+            result = builder.Shape();
+        } catch (const Standard_Failure&) {
+            throw std::runtime_error("offset Error, an alternative kind may resolve this error");
+        }
+        if (Shape(result).volume() < 0) result.Reverse();
+        return result;
+    });
 }
 
 double Mixin3D::max_fillet(const std::vector<Edge>& edge_list, double tolerance, int max_iterations) const {
@@ -328,15 +359,21 @@ Solid Solid::extrude_linear_with_rotation(const Face& section, const Vector& cen
 }
 
 Solid Solid::revolve(const Face& section, double angle, const Axis& axis) {
-    return Solid(occt("Solid.revolve", [&] {
-        BRepPrimAPI_MakeRevol builder(section.wrapped(), axis.wrapped(), angle * DEG2RAD, true);
-        return unwrap(builder.Shape(), true);
+    return Solid(detail::opcache::run_shape(detail::opcache::Args("revolve").add(angle).add(axis.wrapped()), {section.wrapped()}, [&] {
+        return occt("Solid.revolve", [&] {
+            BRepPrimAPI_MakeRevol builder(section.wrapped(), axis.wrapped(), angle * DEG2RAD, true);
+            return unwrap(builder.Shape(), true);
+        });
     }));
 }
 
 Solid Solid::sweep(const Shape& section, const Shape& path, bool make_solid, bool is_frenet,
                    std::optional<Vector> binormal_dir, const std::optional<Wire>& binormal_wire,
                    Transition transition) {
+    std::vector<TopoDS_Shape> inputs{section.wrapped(), path.wrapped()};
+    if (binormal_wire) inputs.push_back(binormal_wire->wrapped());
+    const auto args = detail::opcache::Args("sweep").add(make_solid).add(is_frenet).add(binormal_dir).add(binormal_wire.has_value()).add(transition);
+    return Solid(detail::opcache::run_shape(args, inputs, [&]() -> TopoDS_Shape {
     const Wire path_wire = as_wire(path);
     std::vector<Wire> wires;
     if (section.wrapped().ShapeType() == TopAbs_FACE) {
@@ -361,15 +398,21 @@ Solid Solid::sweep(const Shape& section, const Shape& path, bool make_solid, boo
     }
     if (shapes.size() > 1) {
         std::vector<TopoDS_Shape> tools(shapes.begin() + 1, shapes.end());
-        return Solid(bool_op(BoolOp::CUT, {shapes[0]}, tools));
+        return Solid(bool_op(BoolOp::CUT, {shapes[0]}, tools)).wrapped();
     }
-    return Solid(shapes[0]);
+    return Solid(shapes[0]).wrapped();
+    }));
 }
 
 Solid Solid::sweep_multi(const std::vector<Shape>& profiles, const Shape& path, bool make_solid, bool is_frenet,
                          std::optional<Vector> binormal_dir, const std::optional<Wire>& binormal_wire) {
+    std::vector<TopoDS_Shape> inputs{path.wrapped()};
+    for (const auto& p : profiles) inputs.push_back(p.wrapped());
+    if (binormal_wire) inputs.push_back(binormal_wire->wrapped());
+    const auto args = detail::opcache::Args("sweep_multi").add(make_solid).add(is_frenet).add(binormal_dir).add(binormal_wire.has_value());
+    return Solid(detail::opcache::run_shape(args, inputs, [&] {
     const Wire path_wire = as_wire(path);
-    return Solid(occt("Solid.sweep_multi", [&] {
+    return occt("Solid.sweep_multi", [&] {
         BRepOffsetAPI_MakePipeShell builder(TopoDS::Wire(path_wire.wrapped()));
         bool rotate = false;
         set_sweep_mode(builder, path_wire, is_frenet, binormal_dir, binormal_wire, rotate);
@@ -382,6 +425,7 @@ Solid Solid::sweep_multi(const std::vector<Shape>& profiles, const Shape& path, 
         builder.Build();
         if (make_solid) builder.MakeSolid();
         return unwrap(builder.Shape(), true);
+    });
     }));
 }
 
@@ -392,13 +436,15 @@ Solid Solid::thicken(const Shape& surface, double depth, std::optional<Vector> n
         const Vector n = face.normal_at(face.center()).normalized();
         if (n.dot(normal_override->normalized()) < 0) adjusted = -depth;
     }
-    return Solid(occt("Error applying thicken to given surface", [&] {
-        BRepOffset_MakeOffset builder;
-        builder.Initialize(surface.wrapped(), adjusted, 1.0e-5, BRepOffset_Skin, true, false, GeomAbs_Intersection,
-                           true, true);
-        builder.MakeOffsetShape();
-        if (!builder.IsDone()) throw std::runtime_error("thicken failed");
-        return unwrap(builder.Shape(), true);
+    return Solid(detail::opcache::run_shape(detail::opcache::Args("thicken").add(adjusted), {surface.wrapped()}, [&] {
+        return occt("Error applying thicken to given surface", [&] {
+            BRepOffset_MakeOffset builder;
+            builder.Initialize(surface.wrapped(), adjusted, 1.0e-5, BRepOffset_Skin, true, false, GeomAbs_Intersection,
+                               true, true);
+            builder.MakeOffsetShape();
+            if (!builder.IsDone()) throw std::runtime_error("thicken failed");
+            return unwrap(builder.Shape(), true);
+        });
     }));
 }
 

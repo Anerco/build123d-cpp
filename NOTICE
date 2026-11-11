@@ -21,3 +21,4 @@ Other files it includes have their own licenses:
 - the Relief SingleLine CAD font (data/fonts/reliefsingleline/): SIL Open
   Font License 1.1, data/fonts/reliefsingleline/OFL.txt.
 - lodepng (third_party/lodepng/): zlib license, third_party/lodepng/LICENSE.
+- xxHash (third_party/xxhash/): BSD 2-Clause license, third_party/xxhash/LICENSE.

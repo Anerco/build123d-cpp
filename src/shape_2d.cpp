@@ -35,6 +35,7 @@
 #include <TopoDS_Shell.hxx>
 
 #include "internal.hpp"
+#include "opcache.hpp"
 
 namespace build123d {
 
@@ -565,14 +566,16 @@ Shell Shell::revolve(const Shape& profile, double angle, const Axis& axis) {
 }
 
 Shell Shell::sweep(const Shape& profile, const Shape& path, Transition transition) {
-    const Wire profile_wire(std::vector<Edge>(profile.edges()));
-    const Wire path_wire(std::vector<Edge>(Wire(std::vector<Edge>(path.edges())).order_edges()));
-    Shell result(occt("Shell.sweep", [&] {
-        BRepOffsetAPI_MakePipeShell builder(TopoDS::Wire(path_wire.wrapped()));
-        builder.Add(profile_wire.wrapped(), false, false);
-        builder.SetTransitionMode(to_occ(transition));
-        builder.Build();
-        return builder.Shape();
+    Shell result(detail::opcache::run_shape(detail::opcache::Args("shell_sweep").add(transition), {profile.wrapped(), path.wrapped()}, [&] {
+        const Wire profile_wire(std::vector<Edge>(profile.edges()));
+        const Wire path_wire(std::vector<Edge>(Wire(std::vector<Edge>(path.edges())).order_edges()));
+        return occt("Shell.sweep", [&] {
+            BRepOffsetAPI_MakePipeShell builder(TopoDS::Wire(path_wire.wrapped()));
+            builder.Add(profile_wire.wrapped(), false, false);
+            builder.SetTransitionMode(to_occ(transition));
+            builder.Build();
+            return builder.Shape();
+        });
     }));
     if (clean_enabled()) result = result.clean();
     return result;

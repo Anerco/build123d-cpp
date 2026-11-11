@@ -25,6 +25,7 @@
 #include "build123d/materials.hpp"
 #include "build123d/mesher.hpp"
 #include "build123d/objects.hpp"
+#include "build123d/operation_cache.hpp"
 #include "build123d/operations.hpp"
 #include "build123d/pack.hpp"
 #include "build123d/pbr.hpp"

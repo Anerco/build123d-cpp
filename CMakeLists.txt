@@ -86,6 +86,8 @@ endif()
 
 target_include_directories(build123d SYSTEM PRIVATE ${LIB3MF_INCLUDE_DIR})
 target_include_directories(build123d SYSTEM PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lodepng)
+# xxHash (BSD 2-Clause, third_party/xxhash): the operation cache's keys and checksums, header only.
+target_include_directories(build123d SYSTEM PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/xxhash)
 target_link_libraries(build123d PRIVATE ${LIB3MF_LIBRARY})
 if(MSVC)
   target_compile_options(build123d PRIVATE /W3 /bigobj /permissive-)

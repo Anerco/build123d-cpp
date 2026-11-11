@@ -30,6 +30,7 @@
 #include <gp_Quaternion.hxx>
 
 #include "internal.hpp"
+#include "opcache.hpp"
 
 namespace build123d {
 
@@ -222,10 +223,12 @@ OccShapeList to_list(const std::vector<TopoDS_Shape>& shapes) {
 TopoDS_Shape clean_shape(const TopoDS_Shape& shape) {
     if (shape.IsNull()) return shape;
     try {
-        ShapeUpgrade_UnifySameDomain upgrader(shape, true, true, true);
-        upgrader.AllowInternalEdges(false);
-        upgrader.Build();
-        return upgrader.Shape();
+        return opcache::run_shape(opcache::Args("clean"), {shape}, [&] {
+            ShapeUpgrade_UnifySameDomain upgrader(shape, true, true, true);
+            upgrader.AllowInternalEdges(false);
+            upgrader.Build();
+            return upgrader.Shape();
+        });
     } catch (const Standard_Failure&) {
         return shape;  // best effort, like build123d
     }
@@ -239,7 +242,10 @@ TopoDS_Shape fix_shape(const TopoDS_Shape& shape) {
 
 TopoDS_Shape bool_op(BoolOp op, const std::vector<TopoDS_Shape>& args,
                      const std::vector<TopoDS_Shape>& tools, double fuzzy, bool clean, bool glue) {
-    return occt("Boolean operation", [&] {
+    std::vector<TopoDS_Shape> inputs = args;
+    inputs.insert(inputs.end(), tools.begin(), tools.end());
+    const auto args_of = opcache::Args("bool_op").add(op).add(fuzzy).add(clean).add(glue).add(static_cast<int>(args.size()));
+    return opcache::run_shape(args_of, inputs, [&] { return occt("Boolean operation", [&] {
         std::unique_ptr<BRepAlgoAPI_BooleanOperation> operation;
         switch (op) {
             case BoolOp::FUSE: operation = std::make_unique<BRepAlgoAPI_Fuse>(); break;
@@ -259,7 +265,7 @@ TopoDS_Shape bool_op(BoolOp op, const std::vector<TopoDS_Shape>& args,
         TopoDS_Shape result = operation->Shape();
         if (clean && clean_enabled()) result = clean_shape(result);
         return unwrap(result, true);
-    });
+    }); });
 }
 
 TopoDS_Face make_face_from_wires(const TopoDS_Wire& outer, const std::vector<TopoDS_Wire>& inner) {
@@ -303,7 +309,7 @@ TopoDS_Shape extrude_shape(const TopoDS_Shape& shape, const Vector& direction) {
         type != TopAbs_FACE && type != TopAbs_SHELL) {
         throw std::invalid_argument("extrude not supported for this shape type");
     }
-    return occt("extrude", [&] {
+    return opcache::run_shape(opcache::Args("extrude").add(direction), {shape}, [&] { return occt("extrude", [&] {
         BRepPrimAPI_MakePrism prism(shape, direction.to_vec());
         TopoDS_Shape result = prism.Shape();
         if (result.ShapeType() == TopAbs_COMPSOLID) {
@@ -314,7 +320,7 @@ TopoDS_Shape extrude_shape(const TopoDS_Shape& shape, const Vector& direction) {
             result = make_compound(solids);
         }
         return result;
-    });
+    }); });
 }
 
 TopoDS_Shape make_loft(const std::vector<TopoDS_Shape>& sections, bool filled, bool ruled) {
@@ -337,7 +343,7 @@ TopoDS_Shape make_loft(const std::vector<TopoDS_Shape>& sections, bool filled, b
             throw std::invalid_argument("The vertices must be at the beginning and end of the list");
         }
     }
-    return occt("loft", [&] {
+    return opcache::run_shape(opcache::Args("loft").add(filled).add(ruled), sections, [&] { return occt("loft", [&] {
         BRepOffsetAPI_ThruSections builder(filled, ruled);
         for (const auto& s : sections) {
             if (s.ShapeType() == TopAbs_VERTEX) {
@@ -348,7 +354,7 @@ TopoDS_Shape make_loft(const std::vector<TopoDS_Shape>& sections, bool filled, b
         }
         builder.Build();
         return builder.Shape();
-    });
+    }); });
 }
 
 TopoDS_Shape sew_faces(const std::vector<TopoDS_Shape>& faces) {
