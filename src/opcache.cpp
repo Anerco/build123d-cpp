@@ -392,10 +392,16 @@ private:
             const Handle(TopLoc_Datum3D)& datum = it.FirstDatum();
             if (add(datum)) {
                 // the transformation as it is held, its form too, which BinTools reads back as a
-                // compound transformation (and OCCT computes differently by form)
+                // compound transformation (and OCCT computes differently by form); field by
+                // field, as a gp_Trsf has padding between its form and its matrix
                 datums.push_back(datum);
                 const gp_Trsf& t = datum->Transformation();
-                signature.append(reinterpret_cast<const char*>(&t), sizeof t);
+                sig(t.ScaleFactor());
+                sig(static_cast<std::uint32_t>(t.Form()));
+                for (int r = 1; r <= 3; ++r) {
+                    for (int c = 1; c <= 3; ++c) sig(t.HVectorialPart().Value(r, c));
+                }
+                for (int i = 1; i <= 3; ++i) sig(t.TranslationPart().Coord(i));
             }
             sig(static_cast<std::uint32_t>(it.FirstPower()));
         }

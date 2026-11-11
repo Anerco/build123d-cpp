@@ -72,7 +72,9 @@ key = XXH3-128( the build, the operation's name, each argument's exact bits,
   - each face's list of triangulations;
   - the range of every curve representation, also one with no curve;
   - each p-curve's end points, which `BinTools` reads back recomputed;
-  - each location datum's `gp_Trsf` as it is held, with its form;
+  - each location datum's `gp_Trsf` as it is held, with its form, field by
+    field (a `gp_Trsf` has 4 bytes of padding after its form, whatever was
+    in memory: hashed whole, they made equal inputs miss);
   - each elementary curve's and surface's axis system as it is held:
     `BinTools` reads one back from its main and X directions, so its Y
     direction comes back recomputed;
@@ -329,13 +331,34 @@ that meshes a build's shapes itself calls `incremental_mesh` in place of
 - Between threads in one process (a program's parts built concurrently):
   the state is read under a mutex and the statistics kept under one, the
   store keeps no index in memory, each thread writes its temporaries under
-  names of its own, and the warning capture is per thread, so a hit replays
-  the warnings its own operation raised. Two threads that compute the same
+  names of its own, and the warning capture is per thread. A hit raises its
+  operation's warnings with `warn()` on the thread that asked, from inside
+  the same call, so a host that places a warning by the thread's stack
+  places it where computing would have. Two threads that compute the same
   key at once both compute it, each on its own inputs; the first entry
   linked stays and the other's `put` returns false. Each operation's key and
   walk read only its own inputs. Two threads must not run operations on the
   same shapes at once: OCCT itself doesn't allow that, since operations
   change their inputs (and a hit changes them as computing would).
+- **A hit is a copy.** An entry is bytes, written once and never rewritten,
+  and every hit decodes new TShapes and geometry from them, sharing only with
+  that caller's own live inputs, as computing would. OCCT changes shapes it
+  works with (booleans are destructive, meshing writes triangles onto the
+  faces), so a later operation may change what a hit gave: it changes that
+  build's or that branch's copy, never the entry nor another hit
+  (`opcache_hit_is_a_copy`).
+- **Booleans stay destructive.** Making them non-destructive
+  (`SetNonDestructive(true)` on both of the library's boolean paths) was
+  measured on the 3,288 comparison cases, alternating with today's, twice
+  each: about as fast (237 and 237 s against 249 and 230 s), but 775 cases
+  give other bytes and 56 other measures (centroids at 1e-15 to 1e-10, two
+  assemblies' values), and Python build123d's booleans are destructive
+  (OCP's default). The cache needs neither: it replays what computing does
+  to the inputs, and hands out copies.
+- **Settings kept per thread.** The library keeps one, `SkipClean` (which a
+  host carries into a program's branches); the key reads it on the asking
+  thread. The cache adds none: whether it is on, its store and its options
+  are the process's.
 
 ## Testing it
 
@@ -349,6 +372,8 @@ that meshes a build's shapes itself calls `incremental_mesh` in place of
   - a changed argument, or an input moved by 1e-9, misses;
   - a fillet of other edges of the same box misses;
   - meshing is kept;
+  - a hit is a copy: changing what one hit gave doesn't change the next;
+  - two equal locations whose `gp_Trsf` padding differs are one key;
   - eight threads computing the same keys at once, cold and then warm, each
     give what computing alone gives;
   - the folder store keeps the first entry, removes a torn one, and stays

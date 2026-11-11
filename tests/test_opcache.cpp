@@ -3,9 +3,11 @@
 #include <build123d/build123d.hpp>
 
 #include <BinTools_ShapeSet.hxx>
+#include <TopLoc_Datum3D.hxx>
 #include <TopoDS_Iterator.hxx>
 
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <set>
@@ -111,6 +113,20 @@ TEST(opcache_hit_gives_what_computing_gave) {
     CHECK(cold.result.vertices().size() == warm.result.vertices().size());
 }
 
+TEST(opcache_hit_is_a_copy) {
+    // Each hit decodes a copy of its own: changing what one hit gave (meshing it, a destructive
+    // boolean on it, as OCCT's are) changes neither the entry nor what the next hit gives.
+    const TestCache cache("copy");
+    const std::string computed = together({box_minus_cylinder().result.wrapped()});
+    Part first = box_minus_cylinder().result;
+    CHECK(operation_cache_stats().hits >= 1);
+    first.mesh(0.01);
+    (void)(first + Pos(5, 0, 0) * Box(10, 10, 10));
+    CHECK(together({first.wrapped()}) != computed);
+    const Part second = box_minus_cylinder().result;
+    CHECK(together({second.wrapped()}) == computed);
+}
+
 TEST(opcache_keeps_the_history) {
     const TestCache cache("history");
     const Made cold = box_minus_cylinder();
@@ -189,6 +205,30 @@ TEST(opcache_misses_when_an_argument_changes) {
     (void)(a - b);
     (void)(Pos(0, 0, 1e-9) * a - b);
     CHECK(operation_cache_stats().hits == 0);
+}
+
+TEST(opcache_keys_skip_padding) {
+    // A gp_Trsf has padding between its form and its matrix, whatever was in memory: two equal
+    // locations whose padding differs are one key.
+    const TestCache cache("padding");
+    const auto located = [](unsigned char fill) {
+        gp_Trsf t;
+        t.SetTranslation(gp_Vec(1, 2, 3));
+        const TopLoc_Location loc(t);
+        // the padding of the transformation the location holds, after its scale and form
+        const gp_Trsf& held = loc.FirstDatum()->Transformation();
+        char* at = const_cast<char*>(reinterpret_cast<const char*>(&held));
+        const std::size_t from = sizeof(double) + sizeof(gp_TrsfForm);
+        const std::size_t to = static_cast<std::size_t>(reinterpret_cast<const char*>(&held.HVectorialPart()) - at);
+        if (to > from) std::memset(at + from, fill, to - from);
+        Part box = Box(10, 10, 10);
+        box.set_wrapped(box.wrapped().Located(loc));
+        return box;
+    };
+    const Part tool = Cylinder(3, 20);
+    (void)(located(0xAB) - tool);
+    (void)(located(0x00) - tool);
+    CHECK(operation_cache_stats().hits == 1);
 }
 
 TEST(opcache_fillet_selects_the_same_edges) {
