@@ -4,6 +4,8 @@
 
 #include <BRepBuilderAPI_Copy.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepBuilderAPI_MakePolygon.hxx>
+#include <BRepCheck_Analyzer.hxx>
 #include <gp_Pln.hxx>
 #include <BRep_Tool.hxx>
 #include <BinTools_ShapeSet.hxx>
@@ -432,9 +434,11 @@ TEST(incremental_mesh_delabella_planes) {
     for (const int n : delabella) CHECK(n > 0);
 }
 
-// A face the mesher cuts no triangles of, an unbounded plane's: meshing it throws, by either
-// mesher, where it went on with the face uncut and its triangles had a hole there; and nothing
-// is kept of it, so asked again it throws again rather than being handed the hole.
+// A sound face the mesher cuts no triangles of, an unbounded plane's: meshing it throws, by
+// either mesher, where it went on with the face uncut and its triangles had a hole there; and
+// nothing is kept of it, so asked again it throws again rather than being handed the hole. An
+// unsound face, its wire crossing itself, is the program's own geometry: meshed as it always
+// was, uncut where the mesher leaves it so, without a throw.
 TEST(incremental_mesh_throws_where_a_face_is_left_uncut) {
     const TestCache cache("uncut");
     for (const bool delabella : {false, true}) {
@@ -444,6 +448,10 @@ TEST(incremental_mesh_throws_where_a_face_is_left_uncut) {
     }
     CHECK(operation_cache_stats().stored == 0);
     CHECK(operation_cache_stats().hits == 0);
+    BRepBuilderAPI_MakePolygon eight(gp_Pnt(0, 0, 0), gp_Pnt(10, 10, 0), gp_Pnt(10, 0, 0), gp_Pnt(0, 10, 0), true);
+    const TopoDS_Face crossed = BRepBuilderAPI_MakeFace(eight.Wire(), true).Face();
+    CHECK(!BRepCheck_Analyzer(crossed).IsValid());
+    for (const bool delabella : {false, true}) incremental_mesh(BRepBuilderAPI_Copy(crossed, false, false).Shape(), 0.1, false, 0.1, true, delabella);
     // A face it cuts whole is meshed as before.
     const TopoDS_Shape box = BRepBuilderAPI_Copy(Part(Box(10, 10, 10)).wrapped(), false, false).Shape();
     incremental_mesh(box, 0.1, false, 0.1, true, false);

@@ -16,6 +16,11 @@
 #include <BRepMesh_DelabellaMeshAlgoFactory.hxx>
 #include <BRepMesh_FaceDiscret.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
+#include <cmath>
+#include <IMeshData_Model.hxx>
+#include <IMeshData_Face.hxx>
+#include <GProp_GProps.hxx>
+#include <BRepGProp.hxx>
 #include <IMeshData_Status.hxx>
 #include <BRepMesh_MeshAlgoFactory.hxx>
 #include <BRepPrimAPI_MakeHalfSpace.hxx>
@@ -617,20 +622,39 @@ private:
 
 namespace {
 
-/// Throws where the mesher did not cut every face of `shape`: a face left without triangles, or
-/// one the mesher says it failed on. It goes on past such a face (an allocation that failed under
-/// a cap on the address space left three of a box's faces with none, 12 November) and the shape's
-/// triangles would have a hole there, said nowhere; thrown, the operation cache keeps nothing of
-/// it (an operation that throws is never kept) and whoever asked fails in these words.
-void require_cut(const BRepMesh_IncrementalMesh& mesh, const TopoDS_Shape& shape) {
-    int faces = 0, uncut = 0;
-    for (TopExp_Explorer f(shape, TopAbs_FACE); f.More(); f.Next()) {
-        ++faces;
-        TopLoc_Location at;
-        if (BRep_Tool::Triangulation(TopoDS::Face(f.Current()), at).IsNull()) ++uncut;
+/// Whether a face the mesher did not cut leaves a hole the program did not make: the face is
+/// sound (BRepCheck) and wider than the band its own tolerance draws along its boundary. An
+/// unsound face, its wire crossing itself, is left uncut the same way at every build, the
+/// program's own geometry (a phone stand-in's 124 mm² B-spline face, 12 November), and one no
+/// wider than its tolerance is no hole a mesh can show.
+bool leaves_a_hole(const TopoDS_Face& face) {
+    if (!BRepCheck_Analyzer(face).IsValid()) return false;
+    GProp_GProps area, boundary;
+    BRepGProp::SurfaceProperties(face, area);
+    BRepGProp::LinearProperties(face, boundary);
+    return std::abs(area.Mass()) > BRep_Tool::Tolerance(face) * boundary.Mass();
+}
+
+/// Meshes `shape` by `context` with `mesh`'s parameters, then throws where it did not cut a face
+/// it should have: a sound face (`leaves_a_hole`) left without triangles, or one it says it
+/// failed on. It goes on past such a face (an allocation that failed under a cap on the address
+/// space left three of a box's faces with none, 12 November) and the shape's triangles would have
+/// a hole there, said nowhere; thrown, the operation cache keeps nothing of it (an operation that
+/// throws is never kept) and whoever asked fails in these words.
+void cut(BRepMesh_IncrementalMesh& mesh, const TopoDS_Shape& shape, const occ::handle<BRepMesh_Context>& context) {
+    mesh.Perform(context);
+    std::vector<std::pair<TopoDS_Face, bool>> faces;  // each face, and whether the mesher says it failed on it
+    if (const occ::handle<IMeshData_Model>& model = context->GetModel(); !model.IsNull()) {
+        for (int k = 0; k < model->FacesNb(); ++k) faces.emplace_back(model->GetFace(k)->GetFace(), (model->GetFace(k)->GetStatusMask() & (IMeshData_Failure | IMeshData_UserBreak)) != 0);
+    } else {
+        for (TopExp_Explorer f(shape, TopAbs_FACE); f.More(); f.Next()) faces.emplace_back(TopoDS::Face(f.Current()), false);
     }
-    if (uncut) throw std::runtime_error("the mesher left " + std::to_string(uncut) + " of the shape's " + std::to_string(faces) + " faces without triangles");
-    if (mesh.GetStatusFlags() & (IMeshData_Failure | IMeshData_UserBreak)) throw std::runtime_error("the mesher failed on a face of the shape, whose triangles are not whole");
+    int holes = 0;
+    for (const auto& [face, failed] : faces) {
+        TopLoc_Location at;
+        if ((failed || BRep_Tool::Triangulation(face, at).IsNull()) && leaves_a_hole(face)) ++holes;
+    }
+    if (holes) throw std::runtime_error("the mesher could not cut " + std::to_string(holes) + " of the shape's " + std::to_string(faces.size()) + " faces, a hole in its triangles");
 }
 
 }  // namespace
@@ -640,11 +664,6 @@ void incremental_mesh(const TopoDS_Shape& shape, double linear_deflection, bool 
     // The default's key as it always was, so what is kept of it still holds.
     const auto args = detail::opcache::Args(delabella_planes ? "mesh_delabella_planes" : "mesh").add(linear_deflection).add(relative).add(angular_deflection).add(parallel);
     detail::opcache::run(args, {shape}, [&] {
-        if (!delabella_planes) {
-            const BRepMesh_IncrementalMesh mesh(shape, linear_deflection, relative, angular_deflection, parallel);
-            require_cut(mesh, shape);
-            return detail::opcache::Outcome{};
-        }
         BRepMesh_IncrementalMesh mesh;
         mesh.SetShape(shape);
         IMeshTools_Parameters& p = mesh.ChangeParameters();
@@ -652,10 +671,10 @@ void incremental_mesh(const TopoDS_Shape& shape, double linear_deflection, bool 
         p.Angle = angular_deflection;
         p.Relative = relative;
         p.InParallel = parallel;
-        occ::handle<BRepMesh_Context> context = new BRepMesh_Context(IMeshTools_MeshAlgoType_Watson);
-        context->SetFaceDiscret(new BRepMesh_FaceDiscret(new PlanesDelabella));
-        mesh.Perform(context);
-        require_cut(mesh, shape);
+        // The default's context as its own constructor makes it; with Delabella for planar faces, Watson's for the rest.
+        occ::handle<BRepMesh_Context> context = new BRepMesh_Context(delabella_planes ? IMeshTools_MeshAlgoType_Watson : p.MeshAlgo);
+        if (delabella_planes) context->SetFaceDiscret(new BRepMesh_FaceDiscret(new PlanesDelabella));
+        cut(mesh, shape, context);
         return detail::opcache::Outcome{};
     });
 }
