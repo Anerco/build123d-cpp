@@ -19,6 +19,7 @@
 #include <TopTools_ShapeMapHasher.hxx>
 #include <TopoDS_Compound.hxx>
 #include <TopoDS_Face.hxx>
+#include <BRepAlgoAPI_BooleanOperation.hxx>
 #include <TopoDS_Shape.hxx>
 #include <TopoDS_Wire.hxx>
 #include <TopLoc_Location.hxx>
@@ -133,6 +134,13 @@ OccShapeList to_list(const std::vector<TopoDS_Shape>& shapes);
 // ---- algorithms
 TopoDS_Shape clean_shape(const TopoDS_Shape& shape);
 TopoDS_Shape fix_shape(const TopoDS_Shape& shape);
+
+/// A boolean's operands told apart by oriented boxes as well (BRepAlgoAPI's SetUseOBB), where
+/// all of them are bounded: every face on a wire and every edge at a vertex. An infinite face
+/// (a whole plane, a half-space's) or edge (a whole line) has no oriented box that bounds it,
+/// and its pairs would be dropped.
+void use_obb_where_bounded(BRepAlgoAPI_BooleanOperation& operation, const std::vector<TopoDS_Shape>& args,
+                           const std::vector<TopoDS_Shape>& tools);
 enum class BoolOp { FUSE, CUT, COMMON, SECTION };
 /// Boolean with optional fuzzy value; cleans (if enabled) and unwraps single compounds.
 TopoDS_Shape bool_op(BoolOp op, const std::vector<TopoDS_Shape>& args,

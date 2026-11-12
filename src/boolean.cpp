@@ -79,6 +79,7 @@ BoolResult computed_bool_op_history(BoolOp op, const std::vector<TopoDS_Shape>& 
             operation->SetArguments(to_list(args));
             operation->SetTools(to_list(tools));
             operation->SetRunParallel(true);
+            use_obb_where_bounded(*operation, args, tools);
             operation->Build();
             topo_result = operation->Shape();
             history = ShapeHistory::from_boolean(*operation, args, tools);

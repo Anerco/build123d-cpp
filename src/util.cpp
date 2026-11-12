@@ -240,6 +240,21 @@ TopoDS_Shape fix_shape(const TopoDS_Shape& shape) {
     return fixer.Shape();
 }
 
+void use_obb_where_bounded(BRepAlgoAPI_BooleanOperation& operation, const std::vector<TopoDS_Shape>& args,
+                           const std::vector<TopoDS_Shape>& tools) {
+    const auto bounded = [](const TopoDS_Shape& shape) {
+        for (TopExp_Explorer f(shape, TopAbs_FACE); f.More(); f.Next())
+            if (!TopoDS_Iterator(f.Current()).More()) return false;
+        for (TopExp_Explorer e(shape, TopAbs_EDGE); e.More(); e.Next())
+            if (!TopoDS_Iterator(e.Current()).More()) return false;
+        return true;
+    };
+    for (const auto* list : {&args, &tools})
+        for (const TopoDS_Shape& s : *list)
+            if (!bounded(s)) return;
+    operation.SetUseOBB(true);
+}
+
 TopoDS_Shape bool_op(BoolOp op, const std::vector<TopoDS_Shape>& args,
                      const std::vector<TopoDS_Shape>& tools, double fuzzy, bool clean, bool glue) {
     std::vector<TopoDS_Shape> inputs = args;
@@ -256,6 +271,7 @@ TopoDS_Shape bool_op(BoolOp op, const std::vector<TopoDS_Shape>& args,
         operation->SetArguments(to_list(args));
         operation->SetTools(to_list(tools));
         operation->SetRunParallel(true);
+        use_obb_where_bounded(*operation, args, tools);
         if (fuzzy > 0) operation->SetFuzzyValue(fuzzy);
         if (glue) operation->SetGlue(BOPAlgo_GlueShift);
         operation->Build();
