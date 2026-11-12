@@ -82,7 +82,7 @@ namespace detail::opcache {
 namespace {
 
 /// The entry format: entries of another format are never read (the format is in the key).
-constexpr std::uint32_t kFormat = 1;
+constexpr std::uint32_t kFormat = 2;
 
 using Clock = std::chrono::steady_clock;
 double ms_since(Clock::time_point t0) { return std::chrono::duration<double, std::milli>(Clock::now() - t0).count(); }
@@ -245,7 +245,7 @@ enum : std::uint8_t {
 };
 enum : std::uint8_t { kPointOnCurve = 1, kPointOnCurveOnSurface, kPointOnSurface };
 
-std::uint8_t curve_kind(const Handle(BRep_CurveRepresentation)& cr) {
+std::uint8_t curve_kind(const BRep_CurveRepresentation* cr) {
     const Handle(Standard_Type)& t = cr->DynamicType();
     if (t == STANDARD_TYPE(BRep_Curve3D)) return kCurve3D;
     if (t == STANDARD_TYPE(BRep_CurveOnSurface)) return kCurveOnSurface;
@@ -258,6 +258,8 @@ std::uint8_t curve_kind(const Handle(BRep_CurveRepresentation)& cr) {
     if (t == STANDARD_TYPE(BRep_PolygonOnClosedSurface)) return kPolygonOnClosedSurface;
     return 0;
 }
+
+std::uint8_t curve_kind(const Handle(BRep_CurveRepresentation)& cr) { return curve_kind(cr.get()); }
 
 std::uint8_t point_kind(const Handle(BRep_PointRepresentation)& pr) {
     const Handle(Standard_Type)& t = pr->DynamicType();
@@ -280,65 +282,170 @@ void put_raw(std::string& out, const T& v) {
     out.append(reinterpret_cast<const char*>(&v), sizeof v);
 }
 
+/// The geometry classes whose state BinTools reads back otherwise (geometry_state), each
+/// class found once per thread from its type, as a chain of DownCasts would find it.
+enum GeomKind : std::uint8_t {
+    gNone,
+    gLine,
+    gConic,
+    gTrimmedCurve,
+    gOffsetCurve,
+    gElementarySurface,
+    gLinearExtrusion,
+    gRevolution,
+    gRectangularTrimmed,
+    gOffsetSurface,
+    gLine2d,
+    gConic2d,
+    gTrimmedCurve2d,
+    gOffsetCurve2d,
+    gTriangulation,
+};
+
+GeomKind kind_of_type(const Handle(Standard_Type)& t) {
+    if (t->SubType(STANDARD_TYPE(Geom_Line))) return gLine;
+    if (t->SubType(STANDARD_TYPE(Geom_Conic))) return gConic;
+    if (t->SubType(STANDARD_TYPE(Geom_TrimmedCurve))) return gTrimmedCurve;
+    if (t->SubType(STANDARD_TYPE(Geom_OffsetCurve))) return gOffsetCurve;
+    if (t->SubType(STANDARD_TYPE(Geom_ElementarySurface))) return gElementarySurface;
+    if (t->SubType(STANDARD_TYPE(Geom_SurfaceOfLinearExtrusion))) return gLinearExtrusion;
+    if (t->SubType(STANDARD_TYPE(Geom_SurfaceOfRevolution))) return gRevolution;
+    if (t->SubType(STANDARD_TYPE(Geom_RectangularTrimmedSurface))) return gRectangularTrimmed;
+    if (t->SubType(STANDARD_TYPE(Geom_OffsetSurface))) return gOffsetSurface;
+    if (t->SubType(STANDARD_TYPE(Geom2d_Line))) return gLine2d;
+    if (t->SubType(STANDARD_TYPE(Geom2d_Conic))) return gConic2d;
+    if (t->SubType(STANDARD_TYPE(Geom2d_TrimmedCurve))) return gTrimmedCurve2d;
+    if (t->SubType(STANDARD_TYPE(Geom2d_OffsetCurve))) return gOffsetCurve2d;
+    if (t->SubType(STANDARD_TYPE(Poly_Triangulation))) return gTriangulation;
+    return gNone;
+}
+
+GeomKind geom_kind(const Standard_Transient* g) {
+    thread_local std::vector<std::pair<const Standard_Type*, GeomKind>> known;
+    const Handle(Standard_Type)& t = g->DynamicType();
+    for (const auto& [type, kind] : known) {
+        if (type == t.get()) return kind;
+    }
+    const GeomKind kind = kind_of_type(t);
+    known.emplace_back(t.get(), kind);
+    return kind;
+}
+
 /// What BinTools reads back otherwise of a geometry object (and of its basis, written
 /// inline): the axes it is placed by, as they are held. BinTools reads an axis system back
 /// from its main and X directions, so its Y direction comes back recomputed (with the
 /// signs of its zeros changed), and a direction back normalized again.
-void geometry_state(const Handle(Standard_Transient)& g, std::string& out) {
-    if (g.IsNull()) return;
-    if (const Handle(Geom_Line) c = Handle(Geom_Line)::DownCast(g)) {
-        put_raw(out, c->Position());
-    } else if (const Handle(Geom_Conic) c = Handle(Geom_Conic)::DownCast(g)) {
-        put_raw(out, c->Position());
-    } else if (const Handle(Geom_TrimmedCurve) c = Handle(Geom_TrimmedCurve)::DownCast(g)) {
-        geometry_state(c->BasisCurve(), out);
-    } else if (const Handle(Geom_OffsetCurve) c = Handle(Geom_OffsetCurve)::DownCast(g)) {
-        put_raw(out, c->Direction());
-        geometry_state(c->BasisCurve(), out);
-    } else if (const Handle(Geom_ElementarySurface) e = Handle(Geom_ElementarySurface)::DownCast(g)) {
-        put_raw(out, e->Position());
-    } else if (const Handle(Geom_SurfaceOfLinearExtrusion) e = Handle(Geom_SurfaceOfLinearExtrusion)::DownCast(g)) {
-        put_raw(out, e->Direction());
-        geometry_state(e->BasisCurve(), out);
-    } else if (const Handle(Geom_SurfaceOfRevolution) e = Handle(Geom_SurfaceOfRevolution)::DownCast(g)) {
-        put_raw(out, e->Axis());
-        geometry_state(e->BasisCurve(), out);
-    } else if (const Handle(Geom_RectangularTrimmedSurface) e = Handle(Geom_RectangularTrimmedSurface)::DownCast(g)) {
-        geometry_state(e->BasisSurface(), out);
-    } else if (const Handle(Geom_OffsetSurface) e = Handle(Geom_OffsetSurface)::DownCast(g)) {
-        geometry_state(e->BasisSurface(), out);
-    } else if (const Handle(Geom2d_Line) c = Handle(Geom2d_Line)::DownCast(g)) {
-        put_raw(out, c->Position());
-    } else if (const Handle(Geom2d_Conic) c = Handle(Geom2d_Conic)::DownCast(g)) {
-        put_raw(out, c->Position());
-    } else if (const Handle(Geom2d_TrimmedCurve) c = Handle(Geom2d_TrimmedCurve)::DownCast(g)) {
-        geometry_state(c->BasisCurve(), out);
-    } else if (const Handle(Geom2d_OffsetCurve) c = Handle(Geom2d_OffsetCurve)::DownCast(g)) {
-        geometry_state(c->BasisCurve(), out);
-    } else if (const Handle(Poly_Triangulation) t = Handle(Poly_Triangulation)::DownCast(g)) {
-        put_raw(out, static_cast<std::int32_t>(t->MeshPurpose()));
+void geometry_state(const Standard_Transient* g, std::string& out) {
+    if (g == nullptr) return;
+    switch (geom_kind(g)) {
+        case gLine: put_raw(out, static_cast<const Geom_Line*>(g)->Position()); break;
+        case gConic: put_raw(out, static_cast<const Geom_Conic*>(g)->Position()); break;
+        case gTrimmedCurve: geometry_state(static_cast<const Geom_TrimmedCurve*>(g)->BasisCurve().get(), out); break;
+        case gOffsetCurve: {
+            const auto* c = static_cast<const Geom_OffsetCurve*>(g);
+            put_raw(out, c->Direction());
+            geometry_state(c->BasisCurve().get(), out);
+            break;
+        }
+        case gElementarySurface: put_raw(out, static_cast<const Geom_ElementarySurface*>(g)->Position()); break;
+        case gLinearExtrusion: {
+            const auto* e = static_cast<const Geom_SurfaceOfLinearExtrusion*>(g);
+            put_raw(out, e->Direction());
+            geometry_state(e->BasisCurve().get(), out);
+            break;
+        }
+        case gRevolution: {
+            const auto* e = static_cast<const Geom_SurfaceOfRevolution*>(g);
+            put_raw(out, e->Axis());
+            geometry_state(e->BasisCurve().get(), out);
+            break;
+        }
+        case gRectangularTrimmed: geometry_state(static_cast<const Geom_RectangularTrimmedSurface*>(g)->BasisSurface().get(), out); break;
+        case gOffsetSurface: geometry_state(static_cast<const Geom_OffsetSurface*>(g)->BasisSurface().get(), out); break;
+        case gLine2d: put_raw(out, static_cast<const Geom2d_Line*>(g)->Position()); break;
+        case gConic2d: put_raw(out, static_cast<const Geom2d_Conic*>(g)->Position()); break;
+        case gTrimmedCurve2d: geometry_state(static_cast<const Geom2d_TrimmedCurve*>(g)->BasisCurve().get(), out); break;
+        case gOffsetCurve2d: geometry_state(static_cast<const Geom2d_OffsetCurve*>(g)->BasisCurve().get(), out); break;
+        case gTriangulation: put_raw(out, static_cast<std::int32_t>(static_cast<const Poly_Triangulation*>(g)->MeshPurpose())); break;
+        case gNone: break;
     }
 }
 
+/// Where each object of a walk is, by its address: open addressing, its slots a power of two.
+class PtrIndex {
+public:
+    PtrIndex() : slots_(1024, Slot{nullptr, 0}), mask_(1023) {}
+    /// The object's position, added at `next` where it has none; whether it was added.
+    std::pair<std::uint32_t, bool> emplace(const void* p, std::uint32_t next) {
+        if ((size_ + 1) * 2 > slots_.size()) grow();
+        Slot& s = slot(p);
+        if (s.p == p) return {s.at, false};
+        s = {p, next};
+        ++size_;
+        return {next, true};
+    }
+    /// The object's position, or null where it has none.
+    const std::uint32_t* find(const void* p) const {
+        std::size_t i = hash(p) & mask_;
+        while (slots_[i].p != nullptr) {
+            if (slots_[i].p == p) return &slots_[i].at;
+            i = (i + 1) & mask_;
+        }
+        return nullptr;
+    }
+
+private:
+    struct Slot {
+        const void* p;
+        std::uint32_t at;
+    };
+    std::vector<Slot> slots_;
+    std::size_t mask_;
+    std::size_t size_ = 0;
+    static std::size_t hash(const void* p) {
+        return static_cast<std::size_t>((reinterpret_cast<std::uintptr_t>(p) >> 4) * 0x9E3779B97F4A7C15ull >> 20);
+    }
+    Slot& slot(const void* p) {
+        std::size_t i = hash(p) & mask_;
+        while (slots_[i].p != nullptr && slots_[i].p != p) i = (i + 1) & mask_;
+        return slots_[i];
+    }
+    void grow() {
+        std::vector<Slot> old(slots_.size() * 2, Slot{nullptr, 0});
+        old.swap(slots_);
+        mask_ = slots_.size() - 1;
+        for (const Slot& s : old) {
+            if (s.p != nullptr) slot(s.p) = s;
+        }
+    }
+};
+
+/// What BinTools reads back otherwise, as the walk meets it (Walk::state).
+enum StateKind : std::uint8_t { sCurve, sDatum, sGeometry };
+
 /// Every object a set of shapes is made of that can be shared (TShapes, surfaces, curves,
 /// p-curves, polygons, triangulations, location datums), each once, in an order that
-/// depends only on the shapes' structure; and a signature of that structure: each
-/// object's kind and where it is met again, each representation's kind, each face's
-/// triangulations, each TShape's lock.
+/// depends only on the shapes' structure; a signature of that structure: each object's kind
+/// and where it is met again, each representation's kind, each face's triangulations, each
+/// TShape's lock, and what BinTools reads back otherwise; and that last apart, as `state`,
+/// with where it was met (`stated`), so it can be put back on shapes just read.
 class Walk {
 public:
     std::vector<Handle(Standard_Transient)> objects;
-    std::unordered_map<const Standard_Transient*, std::uint32_t> index;
-    /// Every curve representation, in walk order (what BinTools reads back otherwise is
-    /// restored on them: see State).
-    std::vector<Handle(BRep_CurveRepresentation)> curves;
-    /// Every location datum, in walk order.
-    std::vector<Handle(TopLoc_Datum3D)> datums;
-    /// Every geometry object and triangulation, in walk order.
-    std::vector<Handle(Standard_Transient)> geometry;
+    PtrIndex index;
     std::string signature;
+    /// What BinTools doesn't read back as it was, in walk order: each curve representation's
+    /// range and p-curve ends, each location datum's transformation as it is held, each
+    /// geometry object's axes (geometry_state).
+    std::string state;
+    std::vector<std::pair<StateKind, Standard_Transient*>> stated;
     /// An object of a class the cache can't rebuild was met.
     bool unsupported = false;
+
+    Walk() {
+        objects.reserve(1024);
+        signature.reserve(1 << 16);
+    }
 
     void root(const TopoDS_Shape& s) {
         if (s.IsNull()) {
@@ -364,10 +471,10 @@ private:
 
     /// Record the object; false if it was met before.
     bool add(const Handle(Standard_Transient)& h) {
-        const auto [it, fresh] = index.emplace(h.get(), static_cast<std::uint32_t>(objects.size()));
+        const auto [at, fresh] = index.emplace(h.get(), static_cast<std::uint32_t>(objects.size()));
         if (!fresh) {
             sig('#');
-            sig(it->second);
+            sig(at);
             return false;
         }
         objects.push_back(h);
@@ -381,20 +488,22 @@ private:
             return;
         }
         if (add(h)) {
-            geometry.push_back(h);
-            geometry_state(h, signature);
+            const std::size_t from = state.size();
+            geometry_state(h.get(), state);
+            signature.append(state, from, std::string::npos);
+            stated.emplace_back(sGeometry, h.get());
         }
     }
 
     void location(const TopLoc_Location& l) {
         sig('L');
-        for (TopLoc_Location it = l; !it.IsIdentity(); it = it.NextLocation()) {
-            const Handle(TopLoc_Datum3D)& datum = it.FirstDatum();
+        for (const TopLoc_Location* it = &l; !it->IsIdentity(); it = &it->NextLocation()) {
+            const Handle(TopLoc_Datum3D)& datum = it->FirstDatum();
             if (add(datum)) {
                 // the transformation as it is held, its form too, which BinTools reads back as a
                 // compound transformation (and OCCT computes differently by form); field by
-                // field, as a gp_Trsf has padding between its form and its matrix
-                datums.push_back(datum);
+                // field in the signature, as a gp_Trsf has padding between its form and its
+                // matrix, and whole in the state, to be put back as it is
                 const gp_Trsf& t = datum->Transformation();
                 sig(t.ScaleFactor());
                 sig(static_cast<std::uint32_t>(t.Form()));
@@ -402,8 +511,10 @@ private:
                     for (int c = 1; c <= 3; ++c) sig(t.HVectorialPart().Value(r, c));
                 }
                 for (int i = 1; i <= 3; ++i) sig(t.TranslationPart().Coord(i));
+                put_raw(state, t);
+                stated.emplace_back(sDatum, datum.get());
             }
-            sig(static_cast<std::uint32_t>(it.FirstPower()));
+            sig(static_cast<std::uint32_t>(it->FirstPower()));
         }
         sig('.');
     }
@@ -412,7 +523,9 @@ private:
         if (!add(t)) return;
         sig(static_cast<std::uint32_t>(t->ShapeType()));
         sig(t->Locked() ? 'k' : 'u');
-        if (const Handle(BRep_TVertex) tv = Handle(BRep_TVertex)::DownCast(t)) {
+        const Handle(Standard_Type)& type = t->DynamicType();
+        if (type == STANDARD_TYPE(BRep_TVertex)) {
+            const auto* tv = static_cast<const BRep_TVertex*>(t.get());
             sig('v');
             for (const auto& pr : tv->Points()) {
                 const std::uint8_t kind = point_kind(pr);
@@ -428,30 +541,32 @@ private:
                 }
                 location(pr->Location());
             }
-        } else if (const Handle(BRep_TEdge) te = Handle(BRep_TEdge)::DownCast(t)) {
+        } else if (type == STANDARD_TYPE(BRep_TEdge)) {
+            const auto* te = static_cast<const BRep_TEdge*>(t.get());
             sig('e');
             for (const auto& cr : te->Curves()) {
                 const std::uint8_t kind = curve_kind(cr);
                 sig(static_cast<char>('0' + kind));
-                curves.push_back(cr);
                 // the range of every curve, also a null one (BinTools leaves those out), and the
                 // ends of each p-curve (which BinTools reads back recomputed)
-                if (const Handle(BRep_GCurve) gc = Handle(BRep_GCurve)::DownCast(cr)) {
-                    sig(gc->First());
-                    sig(gc->Last());
+                const std::size_t from = state.size();
+                if (kind == kCurve3D || kind == kCurveOnSurface || kind == kCurveOnClosedSurface) {
+                    const auto* gc = static_cast<const BRep_GCurve*>(cr.get());
+                    put_raw(state, gc->First());
+                    put_raw(state, gc->Last());
                 }
-                if (const Handle(BRep_CurveOnSurface) cos = Handle(BRep_CurveOnSurface)::DownCast(cr)) {
+                if (kind == kCurveOnSurface || kind == kCurveOnClosedSurface) {
                     gp_Pnt2d a, b;
-                    cos->UVPoints(a, b);
-                    sig(a);
-                    sig(b);
+                    static_cast<const BRep_CurveOnSurface*>(cr.get())->UVPoints(a, b);
+                    for (double v : {a.X(), a.Y(), b.X(), b.Y()}) put_raw(state, v);
                 }
-                if (const Handle(BRep_CurveOnClosedSurface) cocs = Handle(BRep_CurveOnClosedSurface)::DownCast(cr)) {
+                if (kind == kCurveOnClosedSurface) {
                     gp_Pnt2d a, b;
-                    cocs->UVPoints2(a, b);
-                    sig(a);
-                    sig(b);
+                    static_cast<const BRep_CurveOnClosedSurface*>(cr.get())->UVPoints2(a, b);
+                    for (double v : {a.X(), a.Y(), b.X(), b.Y()}) put_raw(state, v);
                 }
+                signature.append(state, from, std::string::npos);
+                stated.emplace_back(sCurve, cr.get());
                 switch (kind) {
                     case kCurve3D: object(cr->Curve3D()); break;
                     case kCurveOnSurface:
@@ -491,16 +606,16 @@ private:
                 }
                 location(cr->Location());
             }
-        } else if (const Handle(BRep_TFace) tf = Handle(BRep_TFace)::DownCast(t)) {
+        } else if (type == STANDARD_TYPE(BRep_TFace)) {
+            const auto* tf = static_cast<const BRep_TFace*>(t.get());
             sig('f');
             object(tf->Surface());
             location(tf->Location());
             sig(static_cast<std::uint32_t>(tf->Triangulations().Extent()));
             for (const auto& tri : tf->Triangulations()) object(tri);
             object(tf->ActiveTriangulation());
-        } else if (!t->IsKind(STANDARD_TYPE(TopoDS_TWire)) && !t->IsKind(STANDARD_TYPE(TopoDS_TShell)) &&
-                   !t->IsKind(STANDARD_TYPE(TopoDS_TSolid)) && !t->IsKind(STANDARD_TYPE(TopoDS_TCompSolid)) &&
-                   !t->IsKind(STANDARD_TYPE(TopoDS_TCompound))) {
+        } else if (type != STANDARD_TYPE(TopoDS_TWire) && type != STANDARD_TYPE(TopoDS_TShell) && type != STANDARD_TYPE(TopoDS_TSolid) &&
+                   type != STANDARD_TYPE(TopoDS_TCompSolid) && type != STANDARD_TYPE(TopoDS_TCompound)) {
             unsupported = true;
         }
         sig('(');
@@ -520,35 +635,7 @@ Walk walk_of(const std::vector<TopoDS_Shape>& roots) {
     return w;
 }
 
-/// What BinTools doesn't read back as it was, in walk order: each curve representation's
-/// range and p-curve ends, and each location datum's transformation as it is held.
 static_assert(std::is_trivially_copyable_v<gp_Trsf>);
-
-std::string state_of(const Walk& w) {
-    Writer out;
-    for (const auto& cr : w.curves) {
-        if (const Handle(BRep_GCurve) gc = Handle(BRep_GCurve)::DownCast(cr)) {
-            out.f64(gc->First());
-            out.f64(gc->Last());
-        }
-        if (const Handle(BRep_CurveOnSurface) cos = Handle(BRep_CurveOnSurface)::DownCast(cr)) {
-            gp_Pnt2d a, b;
-            cos->UVPoints(a, b);
-            for (double v : {a.X(), a.Y(), b.X(), b.Y()}) out.f64(v);
-        }
-        if (const Handle(BRep_CurveOnClosedSurface) cocs = Handle(BRep_CurveOnClosedSurface)::DownCast(cr)) {
-            gp_Pnt2d a, b;
-            cocs->UVPoints2(a, b);
-            for (double v : {a.X(), a.Y(), b.X(), b.Y()}) out.f64(v);
-        }
-    }
-    for (const auto& d : w.datums) {
-        const gp_Trsf& t = d->Transformation();
-        out.b.append(reinterpret_cast<const char*>(&t), sizeof t);
-    }
-    for (const auto& g : w.geometry) geometry_state(g, out.b);
-    return out.b;
-}
 
 template <class T>
 T get_raw(Reader& in) {
@@ -561,75 +648,76 @@ T get_raw(Reader& in) {
 }
 
 /// geometry_state's counterpart: the state put back on a geometry object just read.
-void restore_geometry(const Handle(Standard_Transient)& g, Reader& in) {
-    if (g.IsNull()) return;
-    if (const Handle(Geom_Line) c = Handle(Geom_Line)::DownCast(g)) {
-        c->SetPosition(get_raw<gp_Ax1>(in));
-    } else if (const Handle(Geom_Conic) c = Handle(Geom_Conic)::DownCast(g)) {
-        c->SetPosition(get_raw<gp_Ax2>(in));
-    } else if (const Handle(Geom_TrimmedCurve) c = Handle(Geom_TrimmedCurve)::DownCast(g)) {
-        restore_geometry(c->BasisCurve(), in);
-    } else if (const Handle(Geom_OffsetCurve) c = Handle(Geom_OffsetCurve)::DownCast(g)) {
-        c->SetDirection(get_raw<gp_Dir>(in));
-        restore_geometry(c->BasisCurve(), in);
-    } else if (const Handle(Geom_ElementarySurface) e = Handle(Geom_ElementarySurface)::DownCast(g)) {
-        e->SetPosition(get_raw<gp_Ax3>(in));
-    } else if (const Handle(Geom_SurfaceOfLinearExtrusion) e = Handle(Geom_SurfaceOfLinearExtrusion)::DownCast(g)) {
-        const gp_Dir d = get_raw<gp_Dir>(in);
-        restore_geometry(e->BasisCurve(), in);
-        e->SetBasisCurve(e->BasisCurve());
-        e->SetDirection(d);
-    } else if (const Handle(Geom_SurfaceOfRevolution) e = Handle(Geom_SurfaceOfRevolution)::DownCast(g)) {
-        const gp_Ax1 a = get_raw<gp_Ax1>(in);
-        restore_geometry(e->BasisCurve(), in);
-        e->SetBasisCurve(e->BasisCurve());
-        e->SetAxis(a);
-    } else if (const Handle(Geom_RectangularTrimmedSurface) e = Handle(Geom_RectangularTrimmedSurface)::DownCast(g)) {
-        restore_geometry(e->BasisSurface(), in);
-    } else if (const Handle(Geom_OffsetSurface) e = Handle(Geom_OffsetSurface)::DownCast(g)) {
-        restore_geometry(e->BasisSurface(), in);
-    } else if (const Handle(Geom2d_Line) c = Handle(Geom2d_Line)::DownCast(g)) {
-        c->SetPosition(get_raw<gp_Ax2d>(in));
-    } else if (const Handle(Geom2d_Conic) c = Handle(Geom2d_Conic)::DownCast(g)) {
-        c->SetAxis(get_raw<gp_Ax22d>(in));
-    } else if (const Handle(Geom2d_TrimmedCurve) c = Handle(Geom2d_TrimmedCurve)::DownCast(g)) {
-        restore_geometry(c->BasisCurve(), in);
-    } else if (const Handle(Geom2d_OffsetCurve) c = Handle(Geom2d_OffsetCurve)::DownCast(g)) {
-        restore_geometry(c->BasisCurve(), in);
-    } else if (const Handle(Poly_Triangulation) t = Handle(Poly_Triangulation)::DownCast(g)) {
-        t->SetMeshPurpose(static_cast<Poly_MeshPurpose>(get_raw<std::int32_t>(in)));
+void restore_geometry(Standard_Transient* g, Reader& in) {
+    if (g == nullptr) return;
+    switch (geom_kind(g)) {
+        case gLine: static_cast<Geom_Line*>(g)->SetPosition(get_raw<gp_Ax1>(in)); break;
+        case gConic: static_cast<Geom_Conic*>(g)->SetPosition(get_raw<gp_Ax2>(in)); break;
+        case gTrimmedCurve: restore_geometry(static_cast<Geom_TrimmedCurve*>(g)->BasisCurve().get(), in); break;
+        case gOffsetCurve: {
+            auto* c = static_cast<Geom_OffsetCurve*>(g);
+            c->SetDirection(get_raw<gp_Dir>(in));
+            restore_geometry(c->BasisCurve().get(), in);
+            break;
+        }
+        case gElementarySurface: static_cast<Geom_ElementarySurface*>(g)->SetPosition(get_raw<gp_Ax3>(in)); break;
+        case gLinearExtrusion: {
+            auto* e = static_cast<Geom_SurfaceOfLinearExtrusion*>(g);
+            const gp_Dir d = get_raw<gp_Dir>(in);
+            restore_geometry(e->BasisCurve().get(), in);
+            e->SetBasisCurve(e->BasisCurve());
+            e->SetDirection(d);
+            break;
+        }
+        case gRevolution: {
+            auto* e = static_cast<Geom_SurfaceOfRevolution*>(g);
+            const gp_Ax1 a = get_raw<gp_Ax1>(in);
+            restore_geometry(e->BasisCurve().get(), in);
+            e->SetBasisCurve(e->BasisCurve());
+            e->SetAxis(a);
+            break;
+        }
+        case gRectangularTrimmed: restore_geometry(static_cast<Geom_RectangularTrimmedSurface*>(g)->BasisSurface().get(), in); break;
+        case gOffsetSurface: restore_geometry(static_cast<Geom_OffsetSurface*>(g)->BasisSurface().get(), in); break;
+        case gLine2d: static_cast<Geom2d_Line*>(g)->SetPosition(get_raw<gp_Ax2d>(in)); break;
+        case gConic2d: static_cast<Geom2d_Conic*>(g)->SetAxis(get_raw<gp_Ax22d>(in)); break;
+        case gTrimmedCurve2d: restore_geometry(static_cast<Geom2d_TrimmedCurve*>(g)->BasisCurve().get(), in); break;
+        case gOffsetCurve2d: restore_geometry(static_cast<Geom2d_OffsetCurve*>(g)->BasisCurve().get(), in); break;
+        case gTriangulation: static_cast<Poly_Triangulation*>(g)->SetMeshPurpose(static_cast<Poly_MeshPurpose>(get_raw<std::int32_t>(in))); break;
+        case gNone: break;
     }
 }
 
-/// Puts the state back on the representations of a walk of shapes just read; gives the
+/// Puts the state back on the shapes of a walk just read, where the walk met it; gives the
 /// datums as they were held, by the datum read.
 std::unordered_map<const Standard_Transient*, Handle(Standard_Transient)> restore_state(const Walk& w,
                                                                                         const std::string& state) {
     Reader in(state);
-    for (const auto& cr : w.curves) {
-        if (const Handle(BRep_GCurve) gc = Handle(BRep_GCurve)::DownCast(cr)) {
-            const double first = in.f64();
-            const double last = in.f64();
-            gc->SetRange(first, last);
-        }
-        if (const Handle(BRep_CurveOnSurface) cos = Handle(BRep_CurveOnSurface)::DownCast(cr)) {
-            const double ax = in.f64(), ay = in.f64(), bx = in.f64(), by = in.f64();
-            cos->SetUVPoints(gp_Pnt2d(ax, ay), gp_Pnt2d(bx, by));
-        }
-        if (const Handle(BRep_CurveOnClosedSurface) cocs = Handle(BRep_CurveOnClosedSurface)::DownCast(cr)) {
-            const double ax = in.f64(), ay = in.f64(), bx = in.f64(), by = in.f64();
-            cocs->SetUVPoints2(gp_Pnt2d(ax, ay), gp_Pnt2d(bx, by));
-        }
-    }
     std::unordered_map<const Standard_Transient*, Handle(Standard_Transient)> held;
-    for (const auto& d : w.datums) {
-        in.need(sizeof(gp_Trsf));
-        gp_Trsf t;
-        std::memcpy(static_cast<void*>(&t), in.p, sizeof t);
-        in.p += sizeof t;
-        held.emplace(d.get(), new TopLoc_Datum3D(t));
+    for (const auto& [kind, object] : w.stated) {
+        switch (kind) {
+            case sCurve: {
+                auto* cr = static_cast<BRep_CurveRepresentation*>(object);
+                const std::uint8_t k = curve_kind(cr);
+                if (k == kCurve3D || k == kCurveOnSurface || k == kCurveOnClosedSurface) {
+                    const double first = in.f64();
+                    const double last = in.f64();
+                    static_cast<BRep_GCurve*>(cr)->SetRange(first, last);
+                }
+                if (k == kCurveOnSurface || k == kCurveOnClosedSurface) {
+                    const double ax = in.f64(), ay = in.f64(), bx = in.f64(), by = in.f64();
+                    static_cast<BRep_CurveOnSurface*>(cr)->SetUVPoints(gp_Pnt2d(ax, ay), gp_Pnt2d(bx, by));
+                }
+                if (k == kCurveOnClosedSurface) {
+                    const double ax = in.f64(), ay = in.f64(), bx = in.f64(), by = in.f64();
+                    static_cast<BRep_CurveOnClosedSurface*>(cr)->SetUVPoints2(gp_Pnt2d(ax, ay), gp_Pnt2d(bx, by));
+                }
+                break;
+            }
+            case sDatum: held.emplace(object, new TopLoc_Datum3D(get_raw<gp_Trsf>(in))); break;
+            case sGeometry: restore_geometry(object, in); break;
+        }
     }
-    for (const auto& g : w.geometry) restore_geometry(g, in);
     if (in.p != in.end) throw std::runtime_error("operation cache: a bad state");
     return held;
 }
@@ -1088,7 +1176,7 @@ struct Entry {
     std::uint32_t walk_count = 0;
     std::uint64_t walk_signature = 0;
     std::string shapes;  ///< the inputs after the operation and its results, written together
-    std::string state;   ///< what BinTools doesn't read back as it was (state_of)
+    std::string state;   ///< what BinTools doesn't read back as it was (Walk::state)
     std::vector<std::pair<std::uint32_t, std::uint32_t>> links;  ///< (position in the entry's walk, in the inputs')
     bool has_history = false;
     std::string history;
@@ -1269,11 +1357,10 @@ std::optional<Entry> make_entry(const std::vector<TopoDS_Shape>& inputs, const s
     e.walk_count = static_cast<std::uint32_t>(w.objects.size());
     e.walk_signature = w.signature_hash();
     e.shapes = write_together(roots);
-    e.state = state_of(w);
+    e.state = w.state;
     e.mutated = write_together(inputs) != inputs_before || walk_of(inputs).signature != walk_before.signature;
     for (std::uint32_t p = 0; p < w.objects.size(); ++p) {
-        const auto it = walk_before.index.find(w.objects[p].get());
-        if (it != walk_before.index.end()) e.links.emplace_back(p, it->second);
+        if (const std::uint32_t* at = walk_before.index.find(w.objects[p].get())) e.links.emplace_back(p, *at);
     }
     if (outcome.history) {
         try {
@@ -1424,7 +1511,7 @@ Outcome run(const Args& args, const std::vector<TopoDS_Shape>& inputs, const std
 
     // A miss: what BinTools doesn't read back as it was is taken before the operation can
     // change it, for the check of the entry.
-    const std::string state_before = state_of(walk);
+    const std::string state_before = walk.state;
     Outcome outcome;
     std::vector<std::string> warnings;
     const auto c0 = Clock::now();

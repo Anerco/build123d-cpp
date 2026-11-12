@@ -86,9 +86,12 @@ key = XXH3-128( the build, the operation's name, each argument's exact bits,
 - **Doubles by their bits**, so formatting can't cause a miss and
   `-0.0 != 0.0`.
 
-Costs: `BinTools` writes about 500 MB/s, so a 479 KB phone stand-in costs
-about 1 ms per operation that takes it as an input. An operation on small
-shapes costs microseconds.
+Costs: `BinTools` writes about 250 MB/s (a plate with 72 holes, 107 KB, in
+0.4 ms), and the walk takes about a third of that: its index is an
+open-addressing table of addresses, each class is resolved once per type,
+and the state is gathered in the same pass. An operation on small shapes
+costs microseconds. A build of the Faraday box's 76 lookups spends 14 ms on
+keys, MagSafe's 156 about 38 ms.
 
 What makes keys miss:
 
