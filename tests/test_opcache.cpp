@@ -3,6 +3,8 @@
 #include <build123d/build123d.hpp>
 
 #include <BRepBuilderAPI_Copy.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <gp_Pln.hxx>
 #include <BRep_Tool.hxx>
 #include <BinTools_ShapeSet.hxx>
 #include <Poly_Triangulation.hxx>
@@ -428,4 +430,25 @@ TEST(incremental_mesh_delabella_planes) {
     CHECK(watson.size() == 406);
     CHECK(delabella == watson);
     for (const int n : delabella) CHECK(n > 0);
+}
+
+// A face the mesher cuts no triangles of, an unbounded plane's: meshing it throws, by either
+// mesher, where it went on with the face uncut and its triangles had a hole there; and nothing
+// is kept of it, so asked again it throws again rather than being handed the hole.
+TEST(incremental_mesh_throws_where_a_face_is_left_uncut) {
+    const TestCache cache("uncut");
+    for (const bool delabella : {false, true}) {
+        const TopoDS_Shape face = BRepBuilderAPI_MakeFace(gp_Pln()).Face();
+        CHECK_THROWS(incremental_mesh(face, 0.1, false, 0.1, true, delabella), std::runtime_error);
+        CHECK_THROWS(incremental_mesh(face, 0.1, false, 0.1, true, delabella), std::runtime_error);
+    }
+    CHECK(operation_cache_stats().stored == 0);
+    CHECK(operation_cache_stats().hits == 0);
+    // A face it cuts whole is meshed as before.
+    const TopoDS_Shape box = BRepBuilderAPI_Copy(Part(Box(10, 10, 10)).wrapped(), false, false).Shape();
+    incremental_mesh(box, 0.1, false, 0.1, true, false);
+    for (TopExp_Explorer f(box, TopAbs_FACE); f.More(); f.Next()) {
+        TopLoc_Location at;
+        CHECK(!BRep_Tool::Triangulation(TopoDS::Face(f.Current()), at).IsNull());
+    }
 }

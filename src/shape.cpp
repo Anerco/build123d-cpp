@@ -16,6 +16,7 @@
 #include <BRepMesh_DelabellaMeshAlgoFactory.hxx>
 #include <BRepMesh_FaceDiscret.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
+#include <IMeshData_Status.hxx>
 #include <BRepMesh_MeshAlgoFactory.hxx>
 #include <BRepPrimAPI_MakeHalfSpace.hxx>
 #include <BRepTools.hxx>
@@ -26,6 +27,7 @@
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
+#include <stdexcept>
 #include <TopoDS_Iterator.hxx>
 #include <gce_MakeLin.hxx>
 #include <gp_GTrsf.hxx>
@@ -613,13 +615,34 @@ private:
 
 }  // namespace
 
+namespace {
+
+/// Throws where the mesher did not cut every face of `shape`: a face left without triangles, or
+/// one the mesher says it failed on. It goes on past such a face (an allocation that failed under
+/// a cap on the address space left three of a box's faces with none, 12 November) and the shape's
+/// triangles would have a hole there, said nowhere; thrown, the operation cache keeps nothing of
+/// it (an operation that throws is never kept) and whoever asked fails in these words.
+void require_cut(const BRepMesh_IncrementalMesh& mesh, const TopoDS_Shape& shape) {
+    int faces = 0, uncut = 0;
+    for (TopExp_Explorer f(shape, TopAbs_FACE); f.More(); f.Next()) {
+        ++faces;
+        TopLoc_Location at;
+        if (BRep_Tool::Triangulation(TopoDS::Face(f.Current()), at).IsNull()) ++uncut;
+    }
+    if (uncut) throw std::runtime_error("the mesher left " + std::to_string(uncut) + " of the shape's " + std::to_string(faces) + " faces without triangles");
+    if (mesh.GetStatusFlags() & (IMeshData_Failure | IMeshData_UserBreak)) throw std::runtime_error("the mesher failed on a face of the shape, whose triangles are not whole");
+}
+
+}  // namespace
+
 void incremental_mesh(const TopoDS_Shape& shape, double linear_deflection, bool relative, double angular_deflection,
                       bool parallel, bool delabella_planes) {
     // The default's key as it always was, so what is kept of it still holds.
     const auto args = detail::opcache::Args(delabella_planes ? "mesh_delabella_planes" : "mesh").add(linear_deflection).add(relative).add(angular_deflection).add(parallel);
     detail::opcache::run(args, {shape}, [&] {
         if (!delabella_planes) {
-            BRepMesh_IncrementalMesh(shape, linear_deflection, relative, angular_deflection, parallel);
+            const BRepMesh_IncrementalMesh mesh(shape, linear_deflection, relative, angular_deflection, parallel);
+            require_cut(mesh, shape);
             return detail::opcache::Outcome{};
         }
         BRepMesh_IncrementalMesh mesh;
@@ -632,6 +655,7 @@ void incremental_mesh(const TopoDS_Shape& shape, double linear_deflection, bool 
         occ::handle<BRepMesh_Context> context = new BRepMesh_Context(IMeshTools_MeshAlgoType_Watson);
         context->SetFaceDiscret(new BRepMesh_FaceDiscret(new PlanesDelabella));
         mesh.Perform(context);
+        require_cut(mesh, shape);
         return detail::opcache::Outcome{};
     });
 }
