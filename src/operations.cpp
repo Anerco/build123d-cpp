@@ -652,12 +652,11 @@ TopoDS_Shape offset_impl(const std::vector<const Shape*>& objs, double amount, c
         } else {
             std::vector<TopoDS_Shape> inner_faces;
             for (const auto& w : inner_wires) inner_faces.push_back(Face(w).wrapped());
-            const TopoDS_Shape subtraction = bool_op(BoolOp::CUT, {new_face.wrapped()}, inner_faces);
-            // build123d fails (calling Face.unwrap) when the holes leave other than one face
-            if (subtraction.ShapeType() == TopAbs_COMPOUND) {
-                throw std::invalid_argument("'Face' object has no attribute 'unwrap'");
-            }
-            results.push_back(subtraction);
+            // Holes that grow into the outline leave the cut a compound of faces, which is kept.
+            // build123d 0.13 raises there, calling unwrap on the face it cut from rather than on
+            // the cut (operations_generic.py offset): a sketch with a web offset inward could not
+            // be offset at all.
+            results.push_back(bool_op(BoolOp::CUT, {new_face.wrapped()}, inner_faces));
         }
     }
     if (!edges.empty()) {

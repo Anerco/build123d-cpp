@@ -267,7 +267,11 @@ TEST(objects_operation_overloads) {
     CHECK(sweep(Circle(1), {path[0], path[1]}).solids().size() == 1);
     const std::vector<Edge> broken{Edge::make_line({0, 0, 0}, {0, 0, 5}), Edge::make_line({0, 1, 6}, {3, 0, 8})};
     CHECK_THROWS(sweep(Circle(1), broken), std::invalid_argument);
-    CHECK_THROWS(offset(Rectangle(10, 2) - Circle(0.8), -0.3), std::invalid_argument);
+    // A hole grown into the outline splits the face: its two halves, where build123d raises.
+    // 9.4 × 1.4 less the band of the r = 1.1 hole it crosses.
+    const Sketch split = offset(Rectangle(10, 2) - Circle(0.8), -0.3);
+    CHECK(split.faces().size() == 2);
+    CHECK_NEAR(split.area(), 9.4 * 1.4 - 2 * (0.7 * std::sqrt(1.1 * 1.1 - 0.7 * 0.7) + 1.1 * 1.1 * std::asin(0.7 / 1.1)), 1e-6);
     CHECK_NEAR(scale(std::vector<Part>{Box(2, 2, 2)}, Vector(1, 2, 3)).volume(), 48, 1e-9);
 }
 

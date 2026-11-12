@@ -918,6 +918,15 @@ def obj_clines():
     )
 
 
+def offset_hole_splits():
+    # build123d 0.13 raises here ("'Face' object has no attribute 'unwrap'": operations_generic.py
+    # offset unwraps the face it cut from, not the cut); the port keeps the cut, the two faces the
+    # grown hole leaves, which is what build123d's offset makes of it with the right one unwrapped.
+    face = (Rectangle(10, 2) - Circle(0.8)).face()
+    cut = Face(face.outer_wire().offset_2d(-0.3)).cut(*[Face(w.offset_2d(0.3)) for w in face.inner_wires()])
+    return Sketch(Compound([cut.unwrap(fully=True)]).wrapped)
+
+
 CASES = {
     # base classes for custom objects
     "obj_base_sketch": lambda: BaseSketchObject(
@@ -1254,7 +1263,7 @@ CASES = {
     "obj_ops_trace_wires": lambda: trace([Wire.make_polygon([(0, 0), (3, 0), (3, 2)], close=False)]),
     "obj_ops_trace_empty": lambda: trace([]),
     "obj_ops_offset_default": lambda: offset(Rectangle(2, 2)),
-    "obj_ops_offset_hole_splits": lambda: offset(Rectangle(10, 2) - Circle(0.8), -0.3),
+    "obj_ops_offset_hole_splits": offset_hole_splits,
     "obj_ops_offset_hole_grows": lambda: offset(Rectangle(10, 4) - Circle(0.8), -0.3),
     "obj_ops_offset_hole_vanishes": lambda: offset(Rectangle(10, 4) - Circle(0.8), 1),
     "obj_ops_offset_nested_compound": lambda: offset(

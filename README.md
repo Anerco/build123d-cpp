@@ -435,6 +435,8 @@ Where Python build123d has a bug, the C++ is the corrected version:
 - `IntersectingLine` ignores intersections behind its start point.
 - `Location(plane, offset)` applies the offset (Python ignores it).
 - `Color(0)` is black (Python makes it white).
+- `offset` of a face whose holes grow into its outline returns the faces that are left (Python
+  raises `'Face' object has no attribute 'unwrap'`).
 
 Smaller differences:
 
