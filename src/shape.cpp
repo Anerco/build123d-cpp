@@ -12,7 +12,11 @@
 #include <BRepExtrema_DistShapeShape.hxx>
 #include <BRepGProp_Face.hxx>
 #include <BRepIntCurveSurface_Inter.hxx>
+#include <BRepMesh_Context.hxx>
+#include <BRepMesh_DelabellaMeshAlgoFactory.hxx>
+#include <BRepMesh_FaceDiscret.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
+#include <BRepMesh_MeshAlgoFactory.hxx>
 #include <BRepPrimAPI_MakeHalfSpace.hxx>
 #include <BRepTools.hxx>
 #include <BRep_Tool.hxx>
@@ -593,11 +597,41 @@ void Shape::mesh(double tolerance, double angular_tolerance) const {
     }
 }
 
+namespace {
+
+/// Planar faces' algorithm Delabella's, every other surface's the default's (Watson's).
+class PlanesDelabella : public IMeshTools_MeshAlgoFactory {
+public:
+    occ::handle<IMeshTools_MeshAlgo> GetAlgo(const GeomAbs_SurfaceType type, const IMeshTools_Parameters& parameters) const override {
+        return type == GeomAbs_Plane ? delabella_->GetAlgo(type, parameters) : watson_->GetAlgo(type, parameters);
+    }
+
+private:
+    occ::handle<BRepMesh_DelabellaMeshAlgoFactory> delabella_ = new BRepMesh_DelabellaMeshAlgoFactory;
+    occ::handle<BRepMesh_MeshAlgoFactory> watson_ = new BRepMesh_MeshAlgoFactory;
+};
+
+}  // namespace
+
 void incremental_mesh(const TopoDS_Shape& shape, double linear_deflection, bool relative, double angular_deflection,
-                      bool parallel) {
-    const auto args = detail::opcache::Args("mesh").add(linear_deflection).add(relative).add(angular_deflection).add(parallel);
+                      bool parallel, bool delabella_planes) {
+    // The default's key as it always was, so what is kept of it still holds.
+    const auto args = detail::opcache::Args(delabella_planes ? "mesh_delabella_planes" : "mesh").add(linear_deflection).add(relative).add(angular_deflection).add(parallel);
     detail::opcache::run(args, {shape}, [&] {
-        BRepMesh_IncrementalMesh(shape, linear_deflection, relative, angular_deflection, parallel);
+        if (!delabella_planes) {
+            BRepMesh_IncrementalMesh(shape, linear_deflection, relative, angular_deflection, parallel);
+            return detail::opcache::Outcome{};
+        }
+        BRepMesh_IncrementalMesh mesh;
+        mesh.SetShape(shape);
+        IMeshTools_Parameters& p = mesh.ChangeParameters();
+        p.Deflection = linear_deflection;
+        p.Angle = angular_deflection;
+        p.Relative = relative;
+        p.InParallel = parallel;
+        occ::handle<BRepMesh_Context> context = new BRepMesh_Context(IMeshTools_MeshAlgoType_Watson);
+        context->SetFaceDiscret(new BRepMesh_FaceDiscret(new PlanesDelabella));
+        mesh.Perform(context);
         return detail::opcache::Outcome{};
     });
 }

@@ -103,8 +103,11 @@ void reset_operation_cache_stats();
 
 /// BRepMesh_IncrementalMesh(shape, linear_deflection, relative, angular_deflection, parallel),
 /// through the cache: a host that meshes a build's shapes itself keeps their triangles across
-/// builds as the library's own meshing does (Shape::mesh, tessellate, the exporters).
+/// builds as the library's own meshing does (Shape::mesh, tessellate, the exporters). With
+/// `delabella_planes`, planar faces are cut by OCCT's Delabella and every other surface by the
+/// default as before: the same triangles' count, volume and area, other diagonals, and a plate of
+/// a thousand holes cut in a second rather than half a minute.
 void incremental_mesh(const TopoDS_Shape& shape, double linear_deflection, bool relative, double angular_deflection,
-                      bool parallel);
+                      bool parallel, bool delabella_planes = false);
 
 }  // namespace build123d

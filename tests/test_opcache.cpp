@@ -2,7 +2,12 @@
 // gives what computing gave, down to the bytes of the results written with their inputs.
 #include <build123d/build123d.hpp>
 
+#include <BRepBuilderAPI_Copy.hxx>
+#include <BRep_Tool.hxx>
 #include <BinTools_ShapeSet.hxx>
+#include <Poly_Triangulation.hxx>
+#include <TopExp_Explorer.hxx>
+#include <TopoDS.hxx>
 #include <TopLoc_Datum3D.hxx>
 #include <TopoDS_Iterator.hxx>
 
@@ -397,4 +402,30 @@ TEST(opcache_deferred) {
     }
     CHECK(!kept[0].empty());
     CHECK(kept[0] == kept[1]);
+}
+
+// A plate of 400 holes meshed with Delabella for its planar faces: every face triangulated, as
+// many triangles as the default cuts (the same boundary's points, joined otherwise), the cylinders
+// cut as the default cuts them.
+TEST(incremental_mesh_delabella_planes) {
+    Part plate = Box(130, 130, 2);
+    std::vector<Part> holes;
+    for (int i = 0; i < 20; ++i)
+        for (int j = 0; j < 20; ++j) holes.push_back(Pos(-61.75 + i * 6.5, -61.75 + j * 6.5, 0) * Cylinder(1.5, 4));
+    plate = plate - holes;
+    const auto cut = [&](bool delabella) {
+        const TopoDS_Shape copy = BRepBuilderAPI_Copy(plate.wrapped(), false, false).Shape();
+        incremental_mesh(copy, 0.07, false, 0.1, true, delabella);
+        std::vector<int> each;
+        for (TopExp_Explorer f(copy, TopAbs_FACE); f.More(); f.Next()) {
+            TopLoc_Location at;
+            const occ::handle<Poly_Triangulation> t = BRep_Tool::Triangulation(TopoDS::Face(f.Current()), at);
+            each.push_back(t.IsNull() ? 0 : t->NbTriangles());
+        }
+        return each;
+    };
+    const std::vector<int> watson = cut(false), delabella = cut(true);
+    CHECK(watson.size() == 406);
+    CHECK(delabella == watson);
+    for (const int n : delabella) CHECK(n > 0);
 }
