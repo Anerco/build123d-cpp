@@ -45,6 +45,7 @@ struct OperationCacheEvent {
     std::string key;         ///< 32 hex digits
     bool hit = false;
     bool stored = false;     ///< a miss whose result was kept
+    bool deferred = false;   ///< a miss whose result is kept by flush_operation_cache()
     std::string rejected;    ///< why a miss's result was not kept ("" if kept or under the threshold)
     double ms = 0;           ///< the lookup's whole time: reading on a hit, computing (and keeping) on a miss
     double computed_ms = 0;  ///< what computing took (on a hit, what it took when it was kept)
@@ -56,6 +57,10 @@ struct OperationCacheOptions {
     std::uint64_t budget_bytes = 1ull << 30;
     /// Keep the results of operations that took at least this long to compute.
     double min_ms = 5.0;
+    /// Check and keep results only when flush_operation_cache() is called, not as each
+    /// operation ends: a host flushes once its build has answered, so the build's answer does
+    /// not wait for them. While a build runs only a snapshot of each result is taken.
+    bool deferred = false;
     /// Called after each lookup, on the thread that made it.
     std::function<void(const OperationCacheEvent&)> on_lookup;
 };
@@ -64,7 +69,12 @@ struct OperationCacheOptions {
 void enable_operation_cache(const OperationCacheOptions& options);
 /// Turn it on with a store of one's own (nullptr turns it off).
 void enable_operation_cache(std::shared_ptr<OperationStore> store, const OperationCacheOptions& options = {});
+/// Turn it off, the results not yet kept kept first.
 void disable_operation_cache();
+/// Check and keep the results deferred (OperationCacheOptions::deferred) so far, on this
+/// thread; returns how many were kept. What the results' check needs is bytes alone, so the
+/// shapes of the operations may have changed since, or be gone.
+std::size_t flush_operation_cache();
 bool operation_cache_enabled();
 
 /// Counts and times of this process's lookups since the cache was turned on (or reset).
@@ -81,8 +91,9 @@ struct OperationCacheStats {
     /// rebuild (a representation type it doesn't know).
     std::uint64_t bypassed = 0;
     double computed_ms = 0, hit_ms = 0, saved_ms = 0;
-    double key_ms = 0;    ///< writing and hashing the inputs, on every lookup
-    double store_ms = 0;  ///< encoding, checking and writing entries
+    double key_ms = 0;     ///< writing and hashing the inputs, on every lookup
+    double encode_ms = 0;  ///< a miss's snapshot, taken as the operation ends
+    double store_ms = 0;   ///< checking and keeping entries (deferred: when they are flushed)
     std::vector<Row> by_operation;
     /// Why results were not kept, with counts ("not reproduced", "history", ...).
     std::vector<std::pair<std::string, std::uint64_t>> rejections;

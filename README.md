@@ -169,11 +169,11 @@ themselves, not just compiled:
   (points, axes, mass properties, file contents, …). All of them match.
 - All 24 of build123d's official algebra examples are ported in `examples/`. The 47 objects they
   show match their Python originals the same way.
-- `tests/test_*.cpp` has 91 unit tests for the C++ API itself (static result types, joints and
+- `tests/test_*.cpp` has 92 unit tests for the C++ API itself (static result types, joints and
   tree semantics, error handling, file round trips, PCBWay uploads against a local server, the
   operation cache).
 
-With OCCT 8.0.1 all of them pass: 91/91 unit tests, 3,288/3,288 cases and 47/47 example
+With OCCT 8.0.1 all of them pass: 92/92 unit tests, 3,288/3,288 cases and 47/47 example
 objects, against Python build123d 0.13 on the same OCCT (its OCP wheel is 8.0.1). They pass
 with 8.0.0 too: there `export_step` gives the STEP writer the defaults 8.0.1 gives it (OCCT
 #1334), without which 8.0.0 drops cones that narrow along their axis, such as a chamfer on a
@@ -245,7 +245,9 @@ keyed by its arguments and its inputs' content, and reads it back when the same 
 comes again, in this process or another. A hit gives what computing gave, down to the bytes:
 the same shape, sharing the same sub-shapes with its inputs, the inputs changed in place as
 OCCT changes them, the same warnings and history. Each entry is checked against the
-computation before it is written. It is off unless turned on.
+computation before it is written. A host can have the checking and writing wait until its
+build has answered (`.deferred = true`, then `flush_operation_cache()`), so a build that finds
+nothing kept is not slowed by keeping what it computed. It is off unless turned on.
 [`docs/operation-cache.md`](docs/operation-cache.md) has the design;
 `scripts/opcache_gate.py` runs the unit tests, examples and comparison cases with it off,
 cold and warm.

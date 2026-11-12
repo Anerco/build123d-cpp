@@ -8,9 +8,13 @@
 
 namespace gate {
 
-/// The cache on, keeping every operation, when BUILD123D_OPCACHE_DIR names its folder;
-/// done before main() runs, and again by tests that turn the cache off.
+/// The cache on, keeping every operation, when BUILD123D_OPCACHE_DIR names its folder, its
+/// stores deferred when BUILD123D_OPCACHE_DEFERRED is set too (for a program that calls
+/// finish() as it ends); done before main() runs, and again by tests that turn the cache off.
 void enable_from_environment();
+
+/// The deferred stores flushed, as a host flushes them once its build has answered.
+void finish();
 
 /// A hash of the shape's bytes (serialize_shape), for runs compared byte for byte, when
 /// BUILD123D_SHOW_BREP is set; empty otherwise.

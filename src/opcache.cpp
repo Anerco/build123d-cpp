@@ -1308,8 +1308,8 @@ Hit apply(const Entry& e, const std::vector<TopoDS_Shape>& inputs, const Walk& i
 // Lookups
 // ---------------------------------------------------------------------------
 
-void tally(const std::string& operation, bool hit, bool stored, const std::string& rejected, double computed_ms,
-           double hit_ms, double saved_ms, double key_ms, double store_ms) {
+void tally(const std::string& operation, bool hit, double hit_ms, double saved_ms, double computed_ms, double key_ms,
+           double encode_ms) {
     const std::lock_guard<std::mutex> lock(stats_mutex);
     auto& row = row_of(operation);
     ++stats.lookups;
@@ -1321,15 +1321,6 @@ void tally(const std::string& operation, bool hit, bool stored, const std::strin
         ++stats.misses;
         ++row.misses;
     }
-    if (stored) {
-        ++stats.stored;
-        ++row.stored;
-    }
-    if (!rejected.empty()) {
-        ++stats.rejected;
-        ++row.rejected;
-        ++rejection_counts[rejected];
-    }
     stats.computed_ms += computed_ms;
     row.computed_ms += computed_ms;
     stats.hit_ms += hit_ms;
@@ -1337,30 +1328,51 @@ void tally(const std::string& operation, bool hit, bool stored, const std::strin
     stats.saved_ms += saved_ms;
     row.saved_ms += saved_ms;
     stats.key_ms += key_ms;
-    stats.store_ms += store_ms;
+    stats.encode_ms += encode_ms;
 }
 
-/// The entry for a computed operation, if it reproduces the computation (else why not).
-std::optional<Entry> make_entry(const std::vector<TopoDS_Shape>& inputs, const std::string& inputs_before,
-                                const std::string& state_before, const Walk& walk_before, const Outcome& outcome,
-                                std::vector<std::string> warnings, double compute_ms, std::string& rejected) {
+XXH128_hash_t hash128(const std::string& s) { return XXH3_128bits(s.data(), s.size()); }
+bool same(const XXH128_hash_t& a, const XXH128_hash_t& b) { return a.low64 == b.low64 && a.high64 == b.high64; }
+
+/// A miss's entry, made in two halves. While the operation's shapes are live, its snapshot:
+/// the inputs after it and its results written together, its links and its history
+/// (encode_entry). Later, on bytes alone, so at any time and on any thread, the check that
+/// it reproduces the computation, and the keeping (check_entry, keep_entry).
+struct Pending {
+    std::string key, operation;
+    std::shared_ptr<OperationStore> store;
+    double min_ms = 0;
+    Entry entry;  ///< all but `mutated`, which the check finds
+    std::string inputs_before, state_before;  ///< the key's bytes, and the state BinTools reads back otherwise
+    XXH128_hash_t before_signature{}, after_signature{};  ///< the inputs' walk before, the inputs' and results' after
+    std::mutex mutex;
+    bool checked = false, kept = false;
+    std::string payload;   ///< the entry or its marker, once checked
+    std::string rejected;  ///< why it is a marker
+    double check_ms = 0;
+};
+
+/// The snapshot, or why the result can't be kept.
+std::shared_ptr<Pending> encode_entry(const std::vector<TopoDS_Shape>& inputs, std::string inputs_before,
+                                      std::string state_before, const Walk& walk_before, const Outcome& outcome,
+                                      std::vector<std::string> warnings, double compute_ms, std::string& rejected) {
     std::vector<TopoDS_Shape> roots = inputs;
     roots.insert(roots.end(), outcome.shapes.begin(), outcome.shapes.end());
     const Walk w = walk_of(roots);
     if (w.unsupported) {
         rejected = "unsupported result";
-        return std::nullopt;
+        return nullptr;
     }
-    Entry e;
+    auto p = std::make_shared<Pending>();
+    Entry& e = p->entry;
     e.inputs = static_cast<std::uint32_t>(inputs.size());
     e.results = static_cast<std::uint32_t>(outcome.shapes.size());
     e.walk_count = static_cast<std::uint32_t>(w.objects.size());
     e.walk_signature = w.signature_hash();
     e.shapes = write_together(roots);
     e.state = w.state;
-    e.mutated = write_together(inputs) != inputs_before || walk_of(inputs).signature != walk_before.signature;
-    for (std::uint32_t p = 0; p < w.objects.size(); ++p) {
-        if (const std::uint32_t* at = walk_before.index.find(w.objects[p].get())) e.links.emplace_back(p, *at);
+    for (std::uint32_t k = 0; k < w.objects.size(); ++k) {
+        if (const std::uint32_t* at = walk_before.index.find(w.objects[k].get())) e.links.emplace_back(k, *at);
     }
     if (outcome.history) {
         try {
@@ -1368,47 +1380,125 @@ std::optional<Entry> make_entry(const std::vector<TopoDS_Shape>& inputs, const s
             e.has_history = true;
         } catch (const NotEncodable&) {
             rejected = "history";
-            return std::nullopt;
+            return nullptr;
         }
     }
     e.warnings = std::move(warnings);
     e.compute_ms = compute_ms;
+    p->inputs_before = std::move(inputs_before);
+    p->state_before = std::move(state_before);
+    p->before_signature = hash128(walk_before.signature);
+    p->after_signature = hash128(w.signature);
+    return p;
+}
 
-    // Held to the computation: the inputs as they were, read back from the key's bytes,
-    // given the entry as a hit gives it, must come out as the live inputs and results are.
+/// Held to the computation, on bytes alone: the inputs as they were, read back from the key's
+/// bytes, given the entry as a hit gives it, must come out as the inputs and results the
+/// snapshot holds; whether the operation changed its inputs is read from it too. Its payload,
+/// the entry or a marker of why not.
+void check_entry(Pending& p) {
+    const auto t0 = Clock::now();
+    Entry& e = p.entry;
+    const auto reject = [&p](const char* why) { p.rejected = why; };
     try {
-        const std::vector<TopoDS_Shape> before = read_exact(inputs_before, state_before, inputs.size());
+        const std::vector<TopoDS_Shape> after = read_exact(e.shapes, e.state, e.inputs + e.results);
+        const std::vector<TopoDS_Shape> inputs_after(after.begin(), after.begin() + e.inputs);
+        e.mutated = write_together(inputs_after) != p.inputs_before || !same(hash128(walk_of(inputs_after).signature), p.before_signature);
+        const std::vector<TopoDS_Shape> before = read_exact(p.inputs_before, p.state_before, e.inputs);
         const Walk before_walk = walk_of(before);
-        if (before_walk.signature != walk_before.signature) {
-            rejected = "inputs read back otherwise";
-            return std::nullopt;
-        }
-        const Hit hit = apply(Entry::decode(e.encode()), before, before_walk);
-        std::vector<TopoDS_Shape> replayed = before;
-        replayed.insert(replayed.end(), hit.outcome.shapes.begin(), hit.outcome.shapes.end());
-        if (write_together(replayed) != e.shapes) {
-            rejected = "not reproduced";
-            return std::nullopt;
-        }
-        if (walk_of(replayed).signature != w.signature) {
-            rejected = "structure not reproduced";
-            return std::nullopt;
-        }
-        if (e.has_history && encode_history(*hit.outcome.history, before, hit.outcome.shapes) != e.history) {
-            rejected = "history not reproduced";
-            return std::nullopt;
+        if (!same(hash128(before_walk.signature), p.before_signature)) {
+            reject("inputs read back otherwise");
+        } else {
+            const Hit hit = apply(Entry::decode(e.encode()), before, before_walk);
+            std::vector<TopoDS_Shape> replayed = before;
+            replayed.insert(replayed.end(), hit.outcome.shapes.begin(), hit.outcome.shapes.end());
+            if (write_together(replayed) != e.shapes) {
+                reject("not reproduced");
+            } else if (!same(hash128(walk_of(replayed).signature), p.after_signature)) {
+                reject("structure not reproduced");
+            } else if (e.has_history && encode_history(*hit.outcome.history, before, hit.outcome.shapes) != e.history) {
+                reject("history not reproduced");
+            }
         }
     } catch (const NotEncodable&) {
-        rejected = "history not reproduced";
-        return std::nullopt;
+        reject("history not reproduced");
     } catch (const Standard_Failure&) {
-        rejected = "not read back";
-        return std::nullopt;
+        reject("not read back");
     } catch (const std::exception&) {
-        rejected = "not read back";
-        return std::nullopt;
+        reject("not read back");
     }
-    return e;
+    p.check_ms = ms_since(t0);
+    // Worth keeping only if reading it back is much cheaper than computing it: a hit costs
+    // about what the check took, which reads it back once. (A threshold of 0 keeps everything,
+    // for tests.)
+    if (p.rejected.empty() && p.min_ms > 0 && p.check_ms * 0.5 >= e.compute_ms) reject("not worth reading back");
+    if (p.rejected.empty()) {
+        p.payload = e.encode();
+    } else {
+        Entry marker;
+        marker.rejected = p.rejected;
+        p.payload = marker.encode();
+    }
+    // What the check alone needed
+    std::string().swap(p.inputs_before);
+    std::string().swap(p.state_before);
+    p.checked = true;
+}
+
+// The snapshots not yet kept, in the order they were made: by key too, so a lookup of one in
+// this process finds it.
+std::mutex pending_mutex;
+std::vector<std::shared_ptr<Pending>> pending_order;
+std::unordered_map<std::string, std::shared_ptr<Pending>> pending_by_key;
+
+void queue(const std::shared_ptr<Pending>& p) {
+    const std::lock_guard<std::mutex> lock(pending_mutex);
+    if (pending_by_key.emplace(p->key, p).second) pending_order.push_back(p);
+}
+
+std::shared_ptr<Pending> pending_of(const std::string& key) {
+    const std::lock_guard<std::mutex> lock(pending_mutex);
+    const auto it = pending_by_key.find(key);
+    return it == pending_by_key.end() ? nullptr : it->second;
+}
+
+/// Checked (once, whichever thread asks first).
+void checked(Pending& p) {
+    const std::lock_guard<std::mutex> lock(p.mutex);
+    if (!p.checked) check_entry(p);
+}
+
+/// Checked and handed to its store, once; whether it was kept there.
+bool keep_entry(Pending& p) {
+    const auto t0 = Clock::now();
+    bool stored = false;
+    double check_ms = 0;
+    {
+        const std::lock_guard<std::mutex> lock(p.mutex);
+        if (p.kept) return false;
+        if (!p.checked) check_entry(p);
+        check_ms = p.check_ms;
+        stored = p.store->put(p.key, std::vector<std::uint8_t>(p.payload.begin(), p.payload.end())) && p.rejected.empty();
+        p.kept = true;
+    }
+    {
+        const std::lock_guard<std::mutex> lock(pending_mutex);
+        pending_by_key.erase(p.key);
+    }
+    const double ms = ms_since(t0);
+    const std::lock_guard<std::mutex> lock(stats_mutex);
+    auto& row = row_of(p.operation);
+    if (stored) {
+        ++stats.stored;
+        ++row.stored;
+    }
+    if (!p.rejected.empty()) {
+        ++stats.rejected;
+        ++row.rejected;
+        ++rejection_counts[p.rejected];
+    }
+    stats.store_ms += std::max(ms, check_ms);
+    return stored;
 }
 
 }  // namespace
@@ -1484,16 +1574,23 @@ Outcome run(const Args& args, const std::vector<TopoDS_Shape>& inputs, const std
     event.operation = op;
     event.key = key;
 
-    // A hit
+    // A hit: an entry kept, or one this process made and has not kept yet
     bool known_rejected = false;
-    if (std::optional<std::vector<std::uint8_t>> bytes = st->store->get(key)) {
+    std::optional<std::vector<std::uint8_t>> bytes = st->store->get(key);
+    if (!bytes) {
+        if (const std::shared_ptr<Pending> p = pending_of(key)) {
+            checked(*p);
+            bytes.emplace(p->payload.begin(), p->payload.end());
+        }
+    }
+    if (bytes) {
         try {
             const Entry e = Entry::decode(std::string(bytes->begin(), bytes->end()));
             if (!e.rejected.empty()) throw Rejected();
             Hit hit = apply(e, inputs, walk);
             for (const auto& m : hit.warnings) warn(m);
             const double ms = ms_since(t0);
-            tally(op, true, false, "", 0, ms, hit.compute_ms - ms, key_ms, 0);
+            tally(op, true, ms, hit.compute_ms - ms, 0, key_ms, 0);
             event.hit = true;
             event.ms = ms;
             event.computed_ms = hit.compute_ms;
@@ -1521,28 +1618,38 @@ Outcome run(const Args& args, const std::vector<TopoDS_Shape>& inputs, const std
         warnings = std::move(capture.messages);
     }
     const double compute_ms = ms_since(c0);
-    bool stored = false;
-    std::string rejected;
-    double store_ms = 0;
+    double encode_ms = 0;
+    std::shared_ptr<Pending> p;
     if (compute_ms >= st->options.min_ms && !known_rejected) {
-        const auto s0 = Clock::now();
-        std::optional<Entry> e = make_entry(inputs, written, state_before, walk, outcome, warnings, compute_ms, rejected);
-        // Worth keeping only if reading it back is much cheaper than computing it: a hit
-        // costs about what the check above took, which reads it back once. (A threshold
-        // of 0 keeps everything, for tests.)
-        if (e && st->options.min_ms > 0 && ms_since(s0) * 0.5 >= compute_ms) rejected = "not worth reading back";
-        if (!rejected.empty()) {
-            e = Entry{};
-            e->rejected = rejected;
+        const auto e0 = Clock::now();
+        std::string rejected;
+        p = encode_entry(inputs, std::move(written), state_before, walk, outcome, warnings, compute_ms, rejected);
+        if (!p) {
+            // A result that can't be kept at all: a marker, so it is not tried again.
+            p = std::make_shared<Pending>();
+            p->rejected = rejected;
+            Entry marker;
+            marker.rejected = rejected;
+            p->payload = marker.encode();
+            p->checked = true;
         }
-        const std::string payload = e->encode();
-        stored = st->store->put(key, std::vector<std::uint8_t>(payload.begin(), payload.end())) && rejected.empty();
-        store_ms = ms_since(s0);
+        p->key = key;
+        p->operation = op;
+        p->store = st->store;
+        p->min_ms = st->options.min_ms;
+        encode_ms = ms_since(e0);
+    }
+    tally(op, false, 0, 0, compute_ms, key_ms, encode_ms);
+    if (p) {
+        if (st->options.deferred) {
+            queue(p);
+            event.deferred = true;
+        } else {
+            event.stored = keep_entry(*p);
+            event.rejected = p->rejected;
+        }
     }
     const double ms = ms_since(t0);
-    tally(op, false, stored, rejected, compute_ms, 0, 0, key_ms, store_ms);
-    event.stored = stored;
-    event.rejected = rejected;
     event.ms = ms;
     event.computed_ms = compute_ms;
     if (st->options.on_lookup) st->options.on_lookup(event);
@@ -1584,8 +1691,21 @@ void enable_operation_cache(const OperationCacheOptions& options) {
     enable_operation_cache(folder_operation_store(options.folder, options.budget_bytes), options);
 }
 
+std::size_t flush_operation_cache() {
+    using namespace detail::opcache;
+    std::vector<std::shared_ptr<Pending>> todo;
+    {
+        const std::lock_guard<std::mutex> lock(pending_mutex);
+        todo.swap(pending_order);
+    }
+    std::size_t kept = 0;
+    for (const auto& p : todo) kept += keep_entry(*p) ? 1 : 0;
+    return kept;
+}
+
 void disable_operation_cache() {
     using namespace detail::opcache;
+    flush_operation_cache();
     on.store(false, std::memory_order_release);
     const std::lock_guard<std::mutex> lock(state_mutex);
     state.reset();

@@ -126,6 +126,40 @@ Only the operations listed below are looked up. Each one runs through
 A result that took long enough but can't be kept leaves a marker entry with
 the reason, so later builds compute it without checking it again.
 
+### When it is checked and kept: as the operation ends, or deferred
+
+A miss's entry is made in two halves (`encode_entry` and `check_entry` in
+`opcache.cpp`):
+
+1. **The snapshot**, as the operation ends, while its shapes are as computing
+   left them: the inputs and results written together, their state, the
+   link table (by pointer identity, so it can't wait) and the history. A
+   later operation may change these shapes in place, so nothing about them
+   can be read later.
+2. **The check and the keeping**, on bytes alone: the snapshot, the key's
+   bytes and the state before. It can run at any time, on any thread, after
+   the shapes have changed or are gone. Whether the operation changed its
+   inputs is found here too, from the snapshot's copies of the inputs
+   against the key's bytes.
+
+With `OperationCacheOptions::deferred` the second half waits for
+`flush_operation_cache()`, which a host calls once its build has answered,
+so the answer waits for the snapshots alone. Without it, it runs as the
+operation ends. Both keep the same entries: `opcache_deferred` compares them
+byte for byte, the time computing took aside. A lookup that finds a snapshot
+of this process not yet kept checks it then and uses it, so a repeat within a
+build still hits. `disable_operation_cache()` flushes first.
+
+Measured on the four documents of vibe123d's sweep at their defaults (host
+`--run`, an empty cache each time, five rounds alternated with uncached
+builds): checking and keeping entries as each operation ends made a cold
+build's answer 18–37% slower on Faraday, the drain cover and Pod Mod (the
+check reads each entry back, applies it and writes it again). Deferred,
+what is left is the keys and the snapshots: Faraday 14 ms of keys and 23 ms
+of snapshots on a 640 ms answer, MagSafe 38 and 87 ms on 3.5 s. Every
+snapshot was of an operation that took at least 8 times its key and
+snapshot together, so none is worth leaving out.
+
 | operation | key arguments | inputs | history |
 |---|---|---|---|
 | booleans with history (`+ - &`, `fuse`, `cut`, `intersect`) | op, fuzzy value, glue, how many are arguments | arguments, tools | yes |
@@ -309,11 +343,13 @@ struct OperationCacheOptions {
     std::string folder;                       // created if missing
     std::uint64_t budget_bytes = 1ull << 30;
     double min_ms = 5.0;                      // keep operations that took at least this
+    bool deferred = false;                    // check and keep at flush_operation_cache()
     std::function<void(const OperationCacheEvent&)> on_lookup;  // each lookup, as it ends
 };
 void enable_operation_cache(const OperationCacheOptions&);
 void enable_operation_cache(std::shared_ptr<OperationStore>, const OperationCacheOptions& = {});
-void disable_operation_cache();
+void disable_operation_cache();               // the deferred kept first
+std::size_t flush_operation_cache();          // the deferred checked and kept, on this thread
 OperationCacheStats operation_cache_stats();   // per process
 void incremental_mesh(const TopoDS_Shape&, double linear, bool relative, double angular, bool parallel);
 ```
@@ -321,11 +357,13 @@ void incremental_mesh(const TopoDS_Shape&, double linear, bool relative, double 
 The statistics: lookups, hits, misses, entries stored, results rejected (by
 reason), lookups bypassed, the milliseconds computing took, hits took and hits
 saved (what computing took when kept, less what reading took), and the time
-spent on keys and on checking and writing entries, each also by operation.
+spent on keys, on snapshots and on checking and writing entries, each also by
+operation.
 
 **A host** turns it on once, in the process its builds are forked from, with
-a folder of its own and a budget. Each build's child inherits it. A host
-that meshes a build's shapes itself calls `incremental_mesh` in place of
+a store of its own, deferred, and flushes in each build once the build has
+answered. Each build's child inherits it. A host that meshes a build's
+shapes itself calls `incremental_mesh` in place of
 `BRepMesh_IncrementalMesh`, so the triangles of a kept shape are kept too.
 
 ## Concurrency
@@ -337,7 +375,9 @@ that meshes a build's shapes itself calls `incremental_mesh` in place of
   names of its own, and the warning capture is per thread. A hit raises its
   operation's warnings with `warn()` on the thread that asked, from inside
   the same call, so a host that places a warning by the thread's stack
-  places it where computing would have. Two threads that compute the same
+  places it where computing would have. The snapshots not yet kept are a
+  list and a table by key under a mutex, each checked once under a mutex of
+  its own, whichever thread asks first. Two threads that compute the same
   key at once both compute it, each on its own inputs; the first entry
   linked stays and the other's `put` returns false. Each operation's key and
   walk read only its own inputs. Two threads must not run operations on the
@@ -375,6 +415,9 @@ that meshes a build's shapes itself calls `incremental_mesh` in place of
   - a changed argument, or an input moved by 1e-9, misses;
   - a fillet of other edges of the same box misses;
   - meshing is kept;
+  - deferred: nothing is written before the flush, a repeat before it hits
+    the snapshot, a result changed after its operation is kept as computing
+    gave it, and the entries are the ones kept as each operation ends;
   - a hit is a copy: changing what one hit gave doesn't change the next;
   - two equal locations whose `gp_Trsf` padding differs are one key;
   - eight threads computing the same keys at once, cold and then warm, each
@@ -393,4 +436,6 @@ that meshes a build's shapes itself calls `incremental_mesh` in place of
   the same bytes in all five off runs must be the same bytes cold and warm,
   unless a second look finds what the cache gave with the cache off: the case
   or example alone under 16 more heap layouts, then its whole program under 4
-  more. Each run has a temporary folder of its own.
+  more. Each run has a temporary folder of its own. Then cold and warm again
+  in a folder of their own, the unit tests and the cases deferring their
+  stores and flushing as they end (`gate::finish()`), as a host does.

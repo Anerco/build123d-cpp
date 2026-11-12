@@ -8,9 +8,11 @@ namespace gate {
 
 void enable_from_environment() {
     if (const char* dir = std::getenv("BUILD123D_OPCACHE_DIR")) {
-        build123d::enable_operation_cache({.folder = dir, .min_ms = 0});
+        build123d::enable_operation_cache({.folder = dir, .min_ms = 0, .deferred = std::getenv("BUILD123D_OPCACHE_DEFERRED") != nullptr});
     }
 }
+
+void finish() { build123d::flush_operation_cache(); }
 
 std::string brep_hash(const build123d::Shape& shape) {
     if (!std::getenv("BUILD123D_SHOW_BREP")) return "";

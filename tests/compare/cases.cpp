@@ -412,5 +412,6 @@ int main(int argc, char** argv) {
             std::cout << "{\"name\": \"" << e.name << "\", \"error\": \"" << escape(ex.what()) << "\"}" << std::endl;
         }
     }
+    gate::finish();
     return 0;
 }

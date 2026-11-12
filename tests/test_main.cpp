@@ -20,6 +20,7 @@
 #include <type_traits>
 #include <vector>
 
+#include "gate.hpp"
 #include "test_framework.hpp"
 
 using namespace build123d;
@@ -378,5 +379,6 @@ int main(int argc, char** argv) {
         }
     }
     std::cout << "\n" << run - failed << "/" << run << " tests passed\n";
+    gate::finish();  // the operation cache's gate (tests/gate)
     return failed ? 1 : 0;
 }

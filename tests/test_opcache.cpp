@@ -10,6 +10,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <set>
 #include <sstream>
 #include <string>
@@ -29,10 +30,10 @@ namespace {
 /// the gate turned on (tests/gate) is turned on again after.
 struct TestCache {
     fs::path folder;
-    explicit TestCache(const std::string& name, std::uint64_t budget = 1ull << 30) {
+    explicit TestCache(const std::string& name, std::uint64_t budget = 1ull << 30, bool deferred = false) {
         folder = fs::temp_directory_path() / ("build123d_test_opcache_" + name + "_" + std::to_string(::getpid()));
         fs::remove_all(folder);
-        enable_operation_cache({.folder = folder.string(), .budget_bytes = budget, .min_ms = 0});
+        enable_operation_cache({.folder = folder.string(), .budget_bytes = budget, .min_ms = 0, .deferred = deferred});
         reset_operation_cache_stats();
     }
     ~TestCache() {
@@ -341,4 +342,59 @@ TEST(opcache_threads) {
         temporaries += e.path().filename().string().rfind(".", 0) == 0 && e.path().extension() == ".tmp";
     }
     CHECK(temporaries == 0);
+}
+
+TEST(opcache_deferred) {
+    // Deferred, a miss keeps a snapshot of its result and nothing more until the flush: no
+    // entry is written while the build runs, a repeat in this process hits the snapshot, and
+    // what is kept is what computing gave, even when the result was changed (meshed, a
+    // destructive boolean) before the flush.
+    disable_operation_cache();
+    const std::string computed = together({box_minus_cylinder().result.wrapped()});
+    const auto entries = [](const fs::path& folder) {
+        std::size_t n = 0;
+        for (const auto& e : fs::recursive_directory_iterator(folder)) n += e.is_regular_file() && e.path().filename().string()[0] != '.';
+        return n;
+    };
+    {
+        const TestCache cache("deferred", 1ull << 30, true);
+        Part first = box_minus_cylinder().result;
+        CHECK(together({first.wrapped()}) == computed);
+        CHECK(entries(cache.folder) == 0);
+        first.mesh(0.01);
+        (void)(first + Pos(5, 0, 0) * Box(10, 10, 10));
+        const Part again = box_minus_cylinder().result;  // a hit on the snapshot, not yet kept
+        CHECK(operation_cache_stats().hits >= 1);
+        CHECK(together({again.wrapped()}) == computed);
+        CHECK(entries(cache.folder) == 0);
+        CHECK(flush_operation_cache() >= 1);
+        CHECK(entries(cache.folder) >= 1);
+        CHECK(flush_operation_cache() == 0);
+        // the entries kept, read by another lookup as a later build reads them
+        reset_operation_cache_stats();
+        const Part warm = box_minus_cylinder().result;
+        CHECK(operation_cache_stats().hits >= 1);
+        CHECK(together({warm.wrapped()}) == computed);
+    }
+    // what a deferred build keeps is what an immediate one keeps
+    std::map<std::string, std::string> kept[2];
+    for (const bool deferred : {false, true}) {
+        const TestCache cache("deferred_same", 1ull << 30, deferred);
+        (void)box_minus_cylinder();
+        flush_operation_cache();
+        for (const auto& e : fs::recursive_directory_iterator(cache.folder)) {
+            if (!e.is_regular_file() || e.path().filename().string()[0] == '.') continue;
+            std::ifstream f(e.path(), std::ios::binary);
+            std::string bytes(std::istreambuf_iterator<char>(f), {});
+            // but for the time computing took (the payload's last 8 bytes) and so the payload's
+            // hash (the header's last 16, opcache_store.cpp)
+            if (bytes.size() > 68 + 8) {
+                std::fill(bytes.begin() + 52, bytes.begin() + 68, '\0');
+                std::fill(bytes.end() - 8, bytes.end(), '\0');
+            }
+            kept[deferred][e.path().filename().string()] = bytes;
+        }
+    }
+    CHECK(!kept[0].empty());
+    CHECK(kept[0] == kept[1]);
 }
