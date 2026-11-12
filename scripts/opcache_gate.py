@@ -149,7 +149,8 @@ def second_look(key, wanted):
     then, unless `wanted` was among those, in its whole program under FULL_LAYOUTS (None for
     an output that has no case or example of its own)."""
     words = key.split(" ")
-    if words[0] == "cases" and len(words) == 2 and not words[1].startswith("#"):
+    # a case's line, or the hash of its shape's bytes the case says on a line of its own
+    if words[0] == "cases" and (len(words) == 2 or words[2:] == ["brep"]) and not words[1].startswith("#"):
         def one(tunables, work, whole):
             args = [os.path.join(BUILD, "compare_cases")] + ([] if whole else [words[1]])
             r = subprocess.run(args, cwd=work, capture_output=True, env=environment(tunables, None, work))
